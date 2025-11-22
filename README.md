@@ -60,6 +60,72 @@ A hardened license server and client that leverage TPM-backed signing, per-devic
    The CLI will display the server it will contact, prompt for the license credentials, and persist the encrypted payload to `~/.myapp/.license.dat` with `0600` permissions.
 3. **Verification:** subsequent runs skip activation, verify the TPM signature, confirm the encrypted payload matches the current device fingerprint, and refuse to continue if the license is revoked or expired.
 
+### Client Configuration Options
+
+The CLI layers configuration in the following order: command-line flags → environment variables → baked-in defaults. This lets you keep sane defaults for local development while still overriding any field in CI/CD pipelines or packaged binaries.
+
+| Flag | Env Var | Description | Default |
+| --- | --- | --- | --- |
+| `--activation-mode` | — | Chooses the activation strategy (`auto`, `env`, `prompt`, `verify`). | `auto` |
+| `--config-dir` | `LICENSE_CLIENT_CONFIG_DIR` | Directory that stores the encrypted license payload. | `$HOME/.myapp` |
+| `--license-file` | `LICENSE_CLIENT_LICENSE_FILE` | File name (placed under `config-dir`) for the encrypted license blob. | `.license.dat` |
+| `--server-url` | `LICENSE_CLIENT_SERVER` | Licensing server base URL. | `http://localhost:8080` |
+| `--http-timeout` | `LICENSE_CLIENT_HTTP_TIMEOUT` | HTTP client timeout (Go duration, e.g. `20s`, `1m`). | `15s` |
+
+Example:
+
+```bash
+LICENSE_CLIENT_CONFIG_DIR=/var/lib/myapp-licenses \
+LICENSE_CLIENT_LICENSE_FILE=myapp.lic \
+go run ./client --server-url https://licensing.example.com --http-timeout 20s
+```
+
+### Activation Strategies
+
+| Mode | Flow | When to use |
+| --- | --- | --- |
+| `auto` | Runs verification if a license already exists. Otherwise attempts environment activation, falling back to the interactive prompt. | Production defaults where you want non-interactive first, but still allow manual entry. |
+| `env` | Requires `LICENSE_CLIENT_EMAIL`, `LICENSE_CLIENT_USERNAME`, and `LICENSE_CLIENT_LICENSE_KEY`. Fails fast if any field is missing. | Headless containers/CI that receive license secrets via env/secret stores. |
+| `prompt` | Always prompt for email/username/license key in the terminal. | Local development, demos, or manual activation scripts. |
+| `verify` | Only verifies an already-activated license; never prompts or uses env credentials. | Hardened production startups where activations happen during image build time. |
+
+### Exercising Each Mode
+
+Use the new flags to test every path without touching code:
+
+1. **Auto (default layering demo):**
+   ```bash
+   go run ./client \
+     --activation-mode auto \
+     --config-dir /tmp/myapp-licenses \
+     --license-file demo.lic \
+     --server-url http://localhost:8080
+   ```
+   Verifies existing licenses, tries environment activation, then prompts as a last resort.
+
+2. **Environment activation:**
+   ```bash
+   export LICENSE_CLIENT_EMAIL=john@example.com
+   export LICENSE_CLIENT_USERNAME=john
+   export LICENSE_CLIENT_LICENSE_KEY=ABCDE-12345-FGHIJ-67890
+   go run ./client --activation-mode env --http-timeout 25s
+   ```
+   Confirms that non-interactive activation succeeds (or fails with a descriptive error if credentials are wrong).
+
+3. **Interactive prompt:**
+   ```bash
+   go run ./client --activation-mode prompt --server-url https://licensing.example.com
+   ```
+   Forces the CLI to ask for credentials even if env vars are present, useful for support/debugging.
+
+4. **Verification-only:**
+   ```bash
+   go run ./client --activation-mode verify --config-dir /tmp/myapp-licenses
+   ```
+   Ensures the runner aborts if the license file is missing or tampered with, mimicking production boot checks.
+
+Each command honors the layered config above, so you can mix flags and env vars to mimic the environments where your application will ship.
+
 ## How Server & Client Communicate
 
 1. The client derives a stable device fingerprint (hostname, OS, CPU brand, and MAC hash) and posts it with the license key to `/api/activate`.
