@@ -15,11 +15,13 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/google/uuid"
+	"golang.org/x/crypto/bcrypt"
 )
 
 type LicenseManager struct {
@@ -28,6 +30,7 @@ type LicenseManager struct {
 	signingHandle uint32
 	privateKey    *rsa.PrivateKey
 	publicKey     *rsa.PublicKey
+	publicKeyPath string
 	mu            sync.RWMutex
 }
 
@@ -54,17 +57,19 @@ func NewLicenseManager(storage Storage) (*LicenseManager, error) {
 		publicKey:     pubKey,
 	}
 
-	if err := lm.savePublicKey(); err != nil {
+	path, err := lm.savePublicKey()
+	if err != nil {
 		return nil, fmt.Errorf("failed to save public key: %w", err)
 	}
+	lm.publicKeyPath = path
 
 	return lm, nil
 }
 
-func (lm *LicenseManager) savePublicKey() error {
+func (lm *LicenseManager) savePublicKey() (string, error) {
 	pubKeyBytes, err := x509.MarshalPKIXPublicKey(lm.publicKey)
 	if err != nil {
-		return err
+		return "", err
 	}
 
 	pubKeyPEM := pem.EncodeToMemory(&pem.Block{
@@ -72,7 +77,133 @@ func (lm *LicenseManager) savePublicKey() error {
 		Bytes: pubKeyBytes,
 	})
 
-	return os.WriteFile("server_public_key.pem", pubKeyPEM, 0644)
+	homeDir, err := os.UserHomeDir()
+	if err != nil {
+		return "", fmt.Errorf("failed to resolve home directory: %w", err)
+	}
+	secureDir := filepath.Join(homeDir, ".licensing")
+	if err := os.MkdirAll(secureDir, 0o700); err != nil {
+		return "", fmt.Errorf("failed to create secure directory: %w", err)
+	}
+	pubKeyPath := filepath.Join(secureDir, "server_public_key.pem")
+	tmpPath := pubKeyPath + ".tmp"
+	if err := os.WriteFile(tmpPath, pubKeyPEM, 0o600); err != nil {
+		return "", fmt.Errorf("failed to write public key: %w", err)
+	}
+	if err := os.Rename(tmpPath, pubKeyPath); err != nil {
+		return "", fmt.Errorf("failed to finalize public key: %w", err)
+	}
+	return pubKeyPath, nil
+}
+
+func (lm *LicenseManager) PublicKeyPath() string {
+	lm.mu.RLock()
+	defer lm.mu.RUnlock()
+	return lm.publicKeyPath
+}
+
+func (lm *LicenseManager) EnsureDefaultAdmin(ctx context.Context) (*AdminUser, string, string, error) {
+	users, err := lm.storage.ListAdminUsers(ctx)
+	if err != nil {
+		return nil, "", "", err
+	}
+	if len(users) > 0 {
+		return nil, "", "", nil
+	}
+	password, err := lm.randomSecret(16)
+	if err != nil {
+		return nil, "", "", err
+	}
+	user, err := lm.CreateAdminUser(ctx, "admin", password)
+	if err != nil {
+		return nil, "", "", err
+	}
+	apiKey, _, err := lm.GenerateAPIKey(ctx, user.ID)
+	if err != nil {
+		return user, password, "", err
+	}
+	return user, password, apiKey, nil
+}
+
+func (lm *LicenseManager) CreateAdminUser(ctx context.Context, username, password string) (*AdminUser, error) {
+	username = strings.TrimSpace(username)
+	password = strings.TrimSpace(password)
+	if username == "" {
+		return nil, fmt.Errorf("admin username is required")
+	}
+	if len(password) < 8 {
+		return nil, fmt.Errorf("password must be at least 8 characters")
+	}
+	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+	if err != nil {
+		return nil, fmt.Errorf("failed to hash password: %w", err)
+	}
+	now := time.Now()
+	user := &AdminUser{
+		ID:           uuid.New().String(),
+		Username:     username,
+		PasswordHash: hash,
+		CreatedAt:    now,
+		UpdatedAt:    now,
+	}
+	if err := lm.storage.CreateAdminUser(ctx, user); err != nil {
+		return nil, err
+	}
+	return user, nil
+}
+
+func (lm *LicenseManager) ListAdminUsers(ctx context.Context) ([]*AdminUser, error) {
+	return lm.storage.ListAdminUsers(ctx)
+}
+
+func (lm *LicenseManager) GenerateAPIKey(ctx context.Context, userID string) (string, *APIKeyRecord, error) {
+	if _, err := lm.storage.GetAdminUser(ctx, userID); err != nil {
+		return "", nil, err
+	}
+	secret, err := lm.randomSecret(24)
+	if err != nil {
+		return "", nil, err
+	}
+	hash := hashAPIKey(secret)
+	record := &APIKeyRecord{
+		ID:        uuid.New().String(),
+		UserID:    userID,
+		Hash:      hash,
+		Prefix:    strings.ToUpper(secret[:8]),
+		CreatedAt: time.Now(),
+	}
+	if err := lm.storage.SaveAPIKey(ctx, record); err != nil {
+		return "", nil, err
+	}
+	return secret, record, nil
+}
+
+func (lm *LicenseManager) ListAPIKeysByUser(ctx context.Context, userID string) ([]*APIKeyRecord, error) {
+	if _, err := lm.storage.GetAdminUser(ctx, userID); err != nil {
+		return nil, err
+	}
+	return lm.storage.ListAPIKeysByUser(ctx, userID)
+}
+
+func (lm *LicenseManager) ValidateAPIKey(ctx context.Context, token string) (*AdminUser, error) {
+	token = strings.TrimSpace(token)
+	if token == "" {
+		return nil, fmt.Errorf("api key required")
+	}
+	hash := hashAPIKey(token)
+	record, err := lm.storage.GetAPIKeyByHash(ctx, hash)
+	if err != nil {
+		return nil, err
+	}
+	user, err := lm.storage.GetAdminUser(ctx, record.UserID)
+	if err != nil {
+		return nil, err
+	}
+	record.LastUsed = time.Now()
+	if err := lm.storage.UpdateAPIKey(ctx, record); err != nil {
+		log.Printf("failed to update api key usage: %v", err)
+	}
+	return user, nil
 }
 
 func (lm *LicenseManager) CreateClient(ctx context.Context, email, username string) (*Client, error) {
@@ -238,6 +369,22 @@ func (lm *LicenseManager) generateLicenseKey(email, username string) string {
 	}
 
 	return strings.Join(parts, "-")
+}
+
+func (lm *LicenseManager) randomSecret(numBytes int) (string, error) {
+	if numBytes <= 0 {
+		numBytes = 16
+	}
+	raw, err := lm.tpm.GetRandom(numBytes)
+	if err != nil {
+		return "", err
+	}
+	return strings.ToUpper(hex.EncodeToString(raw)), nil
+}
+
+func hashAPIKey(token string) string {
+	sum := sha256.Sum256([]byte(strings.TrimSpace(token)))
+	return hex.EncodeToString(sum[:])
 }
 
 func (lm *LicenseManager) ActivateLicense(ctx context.Context, req *ActivationRequest) (*ActivationResponse, error) {

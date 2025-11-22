@@ -6,6 +6,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -19,13 +20,33 @@ import (
 )
 
 type Server struct {
-	lm           *LicenseManager
-	port         string
-	rateLimiter  *RateLimiter
-	apiKeyHashes [][]byte
-	tlsCertPath  string
-	tlsKeyPath   string
-	clientCAPath string
+	lm                 *LicenseManager
+	port               string
+	rateLimiter        *RateLimiter
+	legacyAPIKeyHashes [][]byte
+	tlsCertPath        string
+	tlsKeyPath         string
+	clientCAPath       string
+}
+
+type adminUserResponse struct {
+	ID        string    `json:"id"`
+	Username  string    `json:"username"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
+type apiKeyMetadata struct {
+	ID        string    `json:"id"`
+	UserID    string    `json:"user_id"`
+	Prefix    string    `json:"prefix"`
+	CreatedAt time.Time `json:"created_at"`
+	LastUsed  time.Time `json:"last_used_at,omitempty"`
+}
+
+type apiKeyIssueResponse struct {
+	Token    string         `json:"token"`
+	Metadata apiKeyMetadata `json:"metadata"`
 }
 
 func hashAPIKeys(keys []string) ([][]byte, error) {
@@ -59,25 +80,51 @@ func parseAPIKeys(raw string) []string {
 	return keys
 }
 
+func newAdminUserResponse(user *AdminUser) adminUserResponse {
+	if user == nil {
+		return adminUserResponse{}
+	}
+	return adminUserResponse{
+		ID:        user.ID,
+		Username:  user.Username,
+		CreatedAt: user.CreatedAt,
+		UpdatedAt: user.UpdatedAt,
+	}
+}
+
+func newAPIKeyMetadata(record *APIKeyRecord) apiKeyMetadata {
+	if record == nil {
+		return apiKeyMetadata{}
+	}
+	return apiKeyMetadata{
+		ID:        record.ID,
+		UserID:    record.UserID,
+		Prefix:    record.Prefix,
+		CreatedAt: record.CreatedAt,
+		LastUsed:  record.LastUsed,
+	}
+}
+
 func NewServer(lm *LicenseManager, port string, apiKeys []string, limiter *RateLimiter, tlsCertPath, tlsKeyPath, clientCAPath string) (*Server, error) {
-	if len(apiKeys) == 0 {
-		return nil, fmt.Errorf("at least one API key is required")
+	var hashes [][]byte
+	var err error
+	if len(apiKeys) > 0 {
+		hashes, err = hashAPIKeys(apiKeys)
+		if err != nil {
+			return nil, err
+		}
 	}
 	if limiter == nil {
 		limiter = NewRateLimiter(60, time.Minute)
 	}
-	hashes, err := hashAPIKeys(apiKeys)
-	if err != nil {
-		return nil, err
-	}
 	return &Server{
-		lm:           lm,
-		port:         port,
-		rateLimiter:  limiter,
-		apiKeyHashes: hashes,
-		tlsCertPath:  tlsCertPath,
-		tlsKeyPath:   tlsKeyPath,
-		clientCAPath: clientCAPath,
+		lm:                 lm,
+		port:               port,
+		rateLimiter:        limiter,
+		legacyAPIKeyHashes: hashes,
+		tlsCertPath:        tlsCertPath,
+		tlsKeyPath:         tlsKeyPath,
+		clientCAPath:       clientCAPath,
 	}, nil
 }
 
@@ -111,11 +158,16 @@ func (s *Server) authorizeAdmin(w http.ResponseWriter, r *http.Request) bool {
 		s.respondError(w, http.StatusUnauthorized, "Unauthorized")
 		return false
 	}
-	providedHash := sha256.Sum256([]byte(providedKey))
-	for _, allowed := range s.apiKeyHashes {
-		if subtle.ConstantTimeCompare(providedHash[:], allowed) == 1 {
-			return true
+	if len(s.legacyAPIKeyHashes) > 0 {
+		providedHash := sha256.Sum256([]byte(providedKey))
+		for _, allowed := range s.legacyAPIKeyHashes {
+			if subtle.ConstantTimeCompare(providedHash[:], allowed) == 1 {
+				return true
+			}
 		}
+	}
+	if _, err := s.lm.ValidateAPIKey(r.Context(), providedKey); err == nil {
+		return true
 	}
 	s.respondError(w, http.StatusUnauthorized, "Unauthorized")
 	return false
@@ -253,6 +305,106 @@ func (s *Server) handleLicenses(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		s.respondJSON(w, http.StatusCreated, license)
+	default:
+		s.respondError(w, http.StatusMethodNotAllowed, "Method not allowed")
+	}
+}
+
+func (s *Server) handleAdminUsers(w http.ResponseWriter, r *http.Request) {
+	if !s.enforceRateLimit(w, r) {
+		return
+	}
+	if !s.authorizeAdmin(w, r) {
+		return
+	}
+
+	switch r.Method {
+	case http.MethodGet:
+		users, err := s.lm.ListAdminUsers(r.Context())
+		if err != nil {
+			s.respondError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		resp := make([]adminUserResponse, 0, len(users))
+		for _, user := range users {
+			resp = append(resp, newAdminUserResponse(user))
+		}
+		if resp == nil {
+			resp = []adminUserResponse{}
+		}
+		s.respondJSON(w, http.StatusOK, resp)
+	case http.MethodPost:
+		var req createAdminUserRequest
+		if !s.decodeJSONBody(w, r, &req, maxAdminPayloadBytes) {
+			return
+		}
+		user, err := s.lm.CreateAdminUser(r.Context(), req.Username, req.Password)
+		if err != nil {
+			s.respondError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		s.respondJSON(w, http.StatusCreated, newAdminUserResponse(user))
+	default:
+		s.respondError(w, http.StatusMethodNotAllowed, "Method not allowed")
+	}
+}
+
+func (s *Server) handleAdminAPIKeys(w http.ResponseWriter, r *http.Request) {
+	if !s.enforceRateLimit(w, r) {
+		return
+	}
+	if !s.authorizeAdmin(w, r) {
+		return
+	}
+
+	switch r.Method {
+	case http.MethodGet:
+		userID := strings.TrimSpace(r.URL.Query().Get("user_id"))
+		if userID == "" {
+			s.respondError(w, http.StatusBadRequest, "user_id is required")
+			return
+		}
+		keys, err := s.lm.ListAPIKeysByUser(r.Context(), userID)
+		if err != nil {
+			if errors.Is(err, errUserMissing) {
+				s.respondError(w, http.StatusNotFound, "admin user not found")
+			} else {
+				s.respondError(w, http.StatusInternalServerError, err.Error())
+			}
+			return
+		}
+		resp := make([]apiKeyMetadata, 0, len(keys))
+		for _, key := range keys {
+			resp = append(resp, newAPIKeyMetadata(key))
+		}
+		if resp == nil {
+			resp = []apiKeyMetadata{}
+		}
+		s.respondJSON(w, http.StatusOK, resp)
+	case http.MethodPost:
+		var req createAPIKeyRequest
+		if !s.decodeJSONBody(w, r, &req, maxAdminPayloadBytes) {
+			return
+		}
+		req.UserID = strings.TrimSpace(req.UserID)
+		if req.UserID == "" {
+			s.respondError(w, http.StatusBadRequest, "user_id is required")
+			return
+		}
+		token, record, err := s.lm.GenerateAPIKey(r.Context(), req.UserID)
+		if err != nil {
+			if errors.Is(err, errUserMissing) {
+				s.respondError(w, http.StatusNotFound, "admin user not found")
+			} else {
+				s.respondError(w, http.StatusBadRequest, err.Error())
+			}
+			return
+		}
+		resp := apiKeyIssueResponse{
+			Token:    token,
+			Metadata: newAPIKeyMetadata(record),
+		}
+		s.respondJSON(w, http.StatusCreated, resp)
 	default:
 		s.respondError(w, http.StatusMethodNotAllowed, "Method not allowed")
 	}
@@ -437,6 +589,8 @@ func (s *Server) Start() error {
 	mux.HandleFunc("/api/licenses/", s.handleLicenseActions)
 	mux.HandleFunc("/api/clients", s.handleClients)
 	mux.HandleFunc("/api/clients/", s.handleClientActions)
+	mux.HandleFunc("/api/admin/users", s.handleAdminUsers)
+	mux.HandleFunc("/api/admin/api-keys", s.handleAdminAPIKeys)
 	mux.HandleFunc("/health", s.handleHealth)
 
 	server := &http.Server{
@@ -460,8 +614,13 @@ func (s *Server) Start() error {
 	log.Printf("   GET    %s://localhost%s/api/licenses", scheme, s.port)
 	log.Printf("   POST   %s://localhost%s/api/licenses", scheme, s.port)
 	log.Printf("   POST   %s://localhost%s/api/licenses/{id}/revoke", scheme, s.port)
+	log.Printf("   GET    %s://localhost%s/api/clients", scheme, s.port)
 	log.Printf("   POST   %s://localhost%s/api/clients", scheme, s.port)
 	log.Printf("   POST   %s://localhost%s/api/clients/{id}/ban", scheme, s.port)
+	log.Printf("   GET    %s://localhost%s/api/admin/users", scheme, s.port)
+	log.Printf("   POST   %s://localhost%s/api/admin/users", scheme, s.port)
+	log.Printf("   GET    %s://localhost%s/api/admin/api-keys?user_id={id}", scheme, s.port)
+	log.Printf("   POST   %s://localhost%s/api/admin/api-keys", scheme, s.port)
 	log.Printf("   GET    %s://localhost%s/health", scheme, s.port)
 
 	if useTLS {

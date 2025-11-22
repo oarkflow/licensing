@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 )
 
 type Storage interface {
@@ -24,6 +25,14 @@ type Storage interface {
 	ListLicenses(ctx context.Context) ([]*License, error)
 	RecordActivation(ctx context.Context, record *ActivationRecord) error
 	ListActivations(ctx context.Context, licenseID string) ([]*ActivationRecord, error)
+	CreateAdminUser(ctx context.Context, user *AdminUser) error
+	GetAdminUser(ctx context.Context, userID string) (*AdminUser, error)
+	GetAdminUserByUsername(ctx context.Context, username string) (*AdminUser, error)
+	ListAdminUsers(ctx context.Context) ([]*AdminUser, error)
+	SaveAPIKey(ctx context.Context, key *APIKeyRecord) error
+	UpdateAPIKey(ctx context.Context, key *APIKeyRecord) error
+	GetAPIKeyByHash(ctx context.Context, hash string) (*APIKeyRecord, error)
+	ListAPIKeysByUser(ctx context.Context, userID string) ([]*APIKeyRecord, error)
 }
 
 var (
@@ -31,7 +40,47 @@ var (
 	errClientMissing  = errors.New("client not found")
 	errLicenseExists  = errors.New("license already exists")
 	errLicenseMissing = errors.New("license not found")
+	errUserExists     = errors.New("user already exists")
+	errUserMissing    = errors.New("user not found")
+	errAPIKeyExists   = errors.New("api key already exists")
+	errAPIKeyMissing  = errors.New("api key not found")
 )
+
+type AdminUser struct {
+	ID           string    `json:"id"`
+	Username     string    `json:"username"`
+	PasswordHash []byte    `json:"password_hash"`
+	CreatedAt    time.Time `json:"created_at"`
+	UpdatedAt    time.Time `json:"updated_at"`
+}
+
+type APIKeyRecord struct {
+	ID        string    `json:"id"`
+	UserID    string    `json:"user_id"`
+	Hash      string    `json:"hash"`
+	Prefix    string    `json:"prefix"`
+	CreatedAt time.Time `json:"created_at"`
+	LastUsed  time.Time `json:"last_used_at,omitempty"`
+}
+
+func cloneAdminUser(user *AdminUser) *AdminUser {
+	if user == nil {
+		return nil
+	}
+	clone := *user
+	if len(user.PasswordHash) > 0 {
+		clone.PasswordHash = append([]byte(nil), user.PasswordHash...)
+	}
+	return &clone
+}
+
+func cloneAPIKeyRecord(key *APIKeyRecord) *APIKeyRecord {
+	if key == nil {
+		return nil
+	}
+	clone := *key
+	return &clone
+}
 
 type InMemoryStorage struct {
 	mu             sync.RWMutex
@@ -40,6 +89,11 @@ type InMemoryStorage struct {
 	licenses       map[string]*License
 	licensesByKey  map[string]string
 	activations    map[string][]*ActivationRecord
+	adminUsers     map[string]*AdminUser
+	adminByName    map[string]string
+	apiKeys        map[string]*APIKeyRecord
+	apiKeysByHash  map[string]string
+	apiKeysByUser  map[string]map[string]struct{}
 }
 
 func NewInMemoryStorage() *InMemoryStorage {
@@ -49,6 +103,11 @@ func NewInMemoryStorage() *InMemoryStorage {
 		licenses:       make(map[string]*License),
 		licensesByKey:  make(map[string]string),
 		activations:    make(map[string][]*ActivationRecord),
+		adminUsers:     make(map[string]*AdminUser),
+		adminByName:    make(map[string]string),
+		apiKeys:        make(map[string]*APIKeyRecord),
+		apiKeysByHash:  make(map[string]string),
+		apiKeysByUser:  make(map[string]map[string]struct{}),
 	}
 }
 
@@ -56,6 +115,8 @@ type storageSnapshot struct {
 	Clients     map[string]*Client             `json:"clients"`
 	Licenses    map[string]*License            `json:"licenses"`
 	Activations map[string][]*ActivationRecord `json:"activations"`
+	AdminUsers  map[string]*AdminUser          `json:"admin_users"`
+	APIKeys     map[string]*APIKeyRecord       `json:"api_keys"`
 }
 
 func (s *InMemoryStorage) SaveClient(_ context.Context, client *Client) error {
@@ -226,6 +287,126 @@ func (s *InMemoryStorage) ListActivations(_ context.Context, licenseID string) (
 	return result, nil
 }
 
+func (s *InMemoryStorage) CreateAdminUser(_ context.Context, user *AdminUser) error {
+	if user == nil {
+		return fmt.Errorf("user is nil")
+	}
+	username := strings.ToLower(strings.TrimSpace(user.Username))
+	if username == "" {
+		return fmt.Errorf("username is required")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, exists := s.adminUsers[user.ID]; exists {
+		return errUserExists
+	}
+	if _, exists := s.adminByName[username]; exists {
+		return errUserExists
+	}
+	clone := cloneAdminUser(user)
+	s.adminUsers[user.ID] = clone
+	s.adminByName[username] = user.ID
+	return nil
+}
+
+func (s *InMemoryStorage) GetAdminUser(_ context.Context, userID string) (*AdminUser, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	user, ok := s.adminUsers[userID]
+	if !ok {
+		return nil, errUserMissing
+	}
+	return cloneAdminUser(user), nil
+}
+
+func (s *InMemoryStorage) GetAdminUserByUsername(_ context.Context, username string) (*AdminUser, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	id, ok := s.adminByName[strings.ToLower(strings.TrimSpace(username))]
+	if !ok {
+		return nil, errUserMissing
+	}
+	return cloneAdminUser(s.adminUsers[id]), nil
+}
+
+func (s *InMemoryStorage) ListAdminUsers(_ context.Context) ([]*AdminUser, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	users := make([]*AdminUser, 0, len(s.adminUsers))
+	for _, user := range s.adminUsers {
+		users = append(users, cloneAdminUser(user))
+	}
+	return users, nil
+}
+
+func (s *InMemoryStorage) SaveAPIKey(_ context.Context, key *APIKeyRecord) error {
+	if key == nil {
+		return fmt.Errorf("api key is nil")
+	}
+	if key.Hash == "" {
+		return fmt.Errorf("api key hash required")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, exists := s.apiKeys[key.ID]; exists {
+		return errAPIKeyExists
+	}
+	if _, exists := s.apiKeysByHash[key.Hash]; exists {
+		return errAPIKeyExists
+	}
+	clone := cloneAPIKeyRecord(key)
+	s.apiKeys[key.ID] = clone
+	s.apiKeysByHash[key.Hash] = key.ID
+	if _, ok := s.apiKeysByUser[key.UserID]; !ok {
+		s.apiKeysByUser[key.UserID] = make(map[string]struct{})
+	}
+	s.apiKeysByUser[key.UserID][key.ID] = struct{}{}
+	return nil
+}
+
+func (s *InMemoryStorage) UpdateAPIKey(_ context.Context, key *APIKeyRecord) error {
+	if key == nil {
+		return fmt.Errorf("api key is nil")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	stored, exists := s.apiKeys[key.ID]
+	if !exists {
+		return errAPIKeyMissing
+	}
+	if stored.Hash != key.Hash {
+		return fmt.Errorf("api key hash mismatch")
+	}
+	s.apiKeys[key.ID] = cloneAPIKeyRecord(key)
+	return nil
+}
+
+func (s *InMemoryStorage) GetAPIKeyByHash(_ context.Context, hash string) (*APIKeyRecord, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	id, ok := s.apiKeysByHash[hash]
+	if !ok {
+		return nil, errAPIKeyMissing
+	}
+	return cloneAPIKeyRecord(s.apiKeys[id]), nil
+}
+
+func (s *InMemoryStorage) ListAPIKeysByUser(_ context.Context, userID string) ([]*APIKeyRecord, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	keyIDs := s.apiKeysByUser[userID]
+	if len(keyIDs) == 0 {
+		return []*APIKeyRecord{}, nil
+	}
+	keys := make([]*APIKeyRecord, 0, len(keyIDs))
+	for keyID := range keyIDs {
+		if record, ok := s.apiKeys[keyID]; ok {
+			keys = append(keys, cloneAPIKeyRecord(record))
+		}
+	}
+	return keys, nil
+}
+
 func (s *InMemoryStorage) snapshot() *storageSnapshot {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -233,6 +414,8 @@ func (s *InMemoryStorage) snapshot() *storageSnapshot {
 		Clients:     make(map[string]*Client, len(s.clients)),
 		Licenses:    make(map[string]*License, len(s.licenses)),
 		Activations: make(map[string][]*ActivationRecord, len(s.activations)),
+		AdminUsers:  make(map[string]*AdminUser, len(s.adminUsers)),
+		APIKeys:     make(map[string]*APIKeyRecord, len(s.apiKeys)),
 	}
 	for id, client := range s.clients {
 		snapshot.Clients[id] = cloneClient(client)
@@ -246,6 +429,12 @@ func (s *InMemoryStorage) snapshot() *storageSnapshot {
 			clones = append(clones, cloneActivationRecord(record))
 		}
 		snapshot.Activations[id] = clones
+	}
+	for id, user := range s.adminUsers {
+		snapshot.AdminUsers[id] = cloneAdminUser(user)
+	}
+	for id, key := range s.apiKeys {
+		snapshot.APIKeys[id] = cloneAPIKeyRecord(key)
 	}
 	return snapshot
 }
@@ -277,6 +466,25 @@ func (s *InMemoryStorage) loadSnapshot(snapshot *storageSnapshot) {
 			clones = append(clones, cloneActivationRecord(record))
 		}
 		s.activations[id] = clones
+	}
+	s.adminUsers = make(map[string]*AdminUser, len(snapshot.AdminUsers))
+	s.adminByName = make(map[string]string, len(snapshot.AdminUsers))
+	for id, user := range snapshot.AdminUsers {
+		cloned := cloneAdminUser(user)
+		s.adminUsers[id] = cloned
+		s.adminByName[strings.ToLower(strings.TrimSpace(cloned.Username))] = id
+	}
+	s.apiKeys = make(map[string]*APIKeyRecord, len(snapshot.APIKeys))
+	s.apiKeysByHash = make(map[string]string, len(snapshot.APIKeys))
+	s.apiKeysByUser = make(map[string]map[string]struct{})
+	for id, key := range snapshot.APIKeys {
+		cloned := cloneAPIKeyRecord(key)
+		s.apiKeys[id] = cloned
+		s.apiKeysByHash[cloned.Hash] = id
+		if _, ok := s.apiKeysByUser[cloned.UserID]; !ok {
+			s.apiKeysByUser[cloned.UserID] = make(map[string]struct{})
+		}
+		s.apiKeysByUser[cloned.UserID][id] = struct{}{}
 	}
 }
 
@@ -362,6 +570,47 @@ func (ps *PersistentStorage) RecordActivation(ctx context.Context, record *Activ
 
 func (ps *PersistentStorage) ListActivations(ctx context.Context, licenseID string) ([]*ActivationRecord, error) {
 	return ps.backend.ListActivations(ctx, licenseID)
+}
+
+func (ps *PersistentStorage) CreateAdminUser(ctx context.Context, user *AdminUser) error {
+	if err := ps.backend.CreateAdminUser(ctx, user); err != nil {
+		return err
+	}
+	return ps.persist()
+}
+
+func (ps *PersistentStorage) GetAdminUser(ctx context.Context, userID string) (*AdminUser, error) {
+	return ps.backend.GetAdminUser(ctx, userID)
+}
+
+func (ps *PersistentStorage) GetAdminUserByUsername(ctx context.Context, username string) (*AdminUser, error) {
+	return ps.backend.GetAdminUserByUsername(ctx, username)
+}
+
+func (ps *PersistentStorage) ListAdminUsers(ctx context.Context) ([]*AdminUser, error) {
+	return ps.backend.ListAdminUsers(ctx)
+}
+
+func (ps *PersistentStorage) SaveAPIKey(ctx context.Context, key *APIKeyRecord) error {
+	if err := ps.backend.SaveAPIKey(ctx, key); err != nil {
+		return err
+	}
+	return ps.persist()
+}
+
+func (ps *PersistentStorage) UpdateAPIKey(ctx context.Context, key *APIKeyRecord) error {
+	if err := ps.backend.UpdateAPIKey(ctx, key); err != nil {
+		return err
+	}
+	return ps.persist()
+}
+
+func (ps *PersistentStorage) GetAPIKeyByHash(ctx context.Context, hash string) (*APIKeyRecord, error) {
+	return ps.backend.GetAPIKeyByHash(ctx, hash)
+}
+
+func (ps *PersistentStorage) ListAPIKeysByUser(ctx context.Context, userID string) ([]*APIKeyRecord, error) {
+	return ps.backend.ListAPIKeysByUser(ctx, userID)
 }
 
 func (ps *PersistentStorage) persist() error {

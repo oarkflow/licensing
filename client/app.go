@@ -12,24 +12,29 @@ import (
 	"encoding/json"
 	"encoding/pem"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"runtime"
 	"strings"
+	"syscall"
 	"time"
 )
 
 // ==================== Configuration ====================
 
 const (
-	LICENSE_FILE   = ".license.dat"
-	CONFIG_DIR     = ".myapp"
-	LICENSE_SERVER = "http://localhost:8080"
-	APP_NAME       = "MySecureApp"
-	APP_VERSION    = "1.0.0"
+	LICENSE_FILE       = ".license.dat"
+	CONFIG_DIR         = ".myapp"
+	LICENSE_SERVER     = "http://localhost:8080"
+	LICENSE_SERVER_ENV = "LICENSE_CLIENT_SERVER"
+	HTTP_TIMEOUT       = 15 * time.Second
+	APP_NAME           = "MySecureApp"
+	APP_VERSION        = "1.0.0"
 )
 
 // ==================== Data Structures ====================
@@ -61,13 +66,27 @@ type StoredLicense struct {
 }
 
 type LicenseData struct {
-	ID                string    `json:"id"`
-	Email             string    `json:"email"`
-	Username          string    `json:"username"`
-	LicenseKey        string    `json:"license_key"`
-	DeviceFingerprint string    `json:"device_fingerprint"`
-	IssuedAt          time.Time `json:"issued_at"`
-	ExpiresAt         time.Time `json:"expires_at"`
+	ID                 string          `json:"id"`
+	ClientID           string          `json:"client_id"`
+	Email              string          `json:"email"`
+	Username           string          `json:"username"`
+	LicenseKey         string          `json:"license_key"`
+	IssuedAt           time.Time       `json:"issued_at"`
+	ExpiresAt          time.Time       `json:"expires_at"`
+	LastActivatedAt    time.Time       `json:"last_activated_at"`
+	MaxActivations     int             `json:"max_activations"`
+	CurrentActivations int             `json:"current_activations"`
+	IsRevoked          bool            `json:"is_revoked"`
+	RevokedAt          time.Time       `json:"revoked_at"`
+	RevokeReason       string          `json:"revoke_reason"`
+	Devices            []LicenseDevice `json:"devices"`
+	DeviceFingerprint  string          `json:"-"`
+}
+
+type LicenseDevice struct {
+	Fingerprint string    `json:"fingerprint"`
+	ActivatedAt time.Time `json:"activated_at"`
+	LastSeenAt  time.Time `json:"last_seen_at"`
 }
 
 // ==================== License Client ====================
@@ -76,6 +95,8 @@ type LicenseClient struct {
 	configPath  string
 	licensePath string
 	publicKey   *rsa.PublicKey
+	serverURL   string
+	httpClient  *http.Client
 }
 
 func NewLicenseClient() (*LicenseClient, error) {
@@ -91,10 +112,42 @@ func NewLicenseClient() (*LicenseClient, error) {
 
 	licensePath := filepath.Join(configPath, LICENSE_FILE)
 
+	serverURL := strings.TrimSpace(os.Getenv(LICENSE_SERVER_ENV))
+	if serverURL == "" {
+		serverURL = LICENSE_SERVER
+	}
+	serverURL = strings.TrimRight(serverURL, "/")
+	client := &http.Client{Timeout: HTTP_TIMEOUT}
+
 	return &LicenseClient{
 		configPath:  configPath,
 		licensePath: licensePath,
+		serverURL:   serverURL,
+		httpClient:  client,
 	}, nil
+}
+
+func (lc *LicenseClient) baseURL() string {
+	if lc.serverURL != "" {
+		return lc.serverURL
+	}
+	return LICENSE_SERVER
+}
+
+func (lc *LicenseClient) apiURL(path string) string {
+	base := lc.baseURL()
+	if !strings.HasPrefix(path, "/") {
+		path = "/" + path
+	}
+	return base + path
+}
+
+func (lc *LicenseClient) ServerURL() string {
+	return lc.baseURL()
+}
+
+func (lc *LicenseClient) userAgent() string {
+	return fmt.Sprintf("%s/%s", APP_NAME, APP_VERSION)
 }
 
 // ==================== Device Fingerprinting ====================
@@ -213,6 +266,9 @@ func (lc *LicenseClient) getCPUInfo() (string, error) {
 
 func (lc *LicenseClient) Activate(email, username, licenseKey string) error {
 	fmt.Println("\n🔐 Starting license activation...")
+	email = strings.TrimSpace(email)
+	username = strings.TrimSpace(username)
+	licenseKey = strings.TrimSpace(licenseKey)
 
 	// Generate device fingerprint
 	fmt.Println("🔍 Generating device fingerprint...")
@@ -220,7 +276,7 @@ func (lc *LicenseClient) Activate(email, username, licenseKey string) error {
 	if err != nil {
 		return fmt.Errorf("failed to generate fingerprint: %w", err)
 	}
-	fmt.Printf("   Device ID: %s...\n", fingerprint[:16])
+	fmt.Printf("   Device ID: %s...\n", truncateFingerprint(fingerprint))
 
 	// Prepare activation request
 	activationReq := ActivationRequest{
@@ -237,11 +293,25 @@ func (lc *LicenseClient) Activate(email, username, licenseKey string) error {
 
 	// Send activation request
 	fmt.Println("📡 Contacting license server...")
-	resp, err := http.Post(LICENSE_SERVER+"/api/activate", "application/json", bytes.NewBuffer(reqBody))
+	if lc.httpClient == nil {
+		lc.httpClient = &http.Client{Timeout: HTTP_TIMEOUT}
+	}
+	req, err := http.NewRequest(http.MethodPost, lc.apiURL("/api/activate"), bytes.NewBuffer(reqBody))
+	if err != nil {
+		return fmt.Errorf("failed to build request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("User-Agent", lc.userAgent())
+	resp, err := lc.httpClient.Do(req)
 	if err != nil {
 		return fmt.Errorf("failed to contact license server: %w", err)
 	}
 	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		return fmt.Errorf("license server responded %s: %s", resp.Status, strings.TrimSpace(string(body)))
+	}
 
 	var activationResp ActivationResponse
 	if err := json.NewDecoder(resp.Body).Decode(&activationResp); err != nil {
@@ -250,6 +320,9 @@ func (lc *LicenseClient) Activate(email, username, licenseKey string) error {
 
 	if !activationResp.Success {
 		return fmt.Errorf("activation failed: %s", activationResp.Message)
+	}
+	if activationResp.EncryptedLicense == "" || activationResp.Nonce == "" || activationResp.Signature == "" || activationResp.PublicKey == "" {
+		return fmt.Errorf("activation payload missing cryptographic material")
 	}
 
 	fmt.Println("✓ License validated by server")
@@ -297,7 +370,6 @@ func (lc *LicenseClient) Activate(email, username, licenseKey string) error {
 	}
 	fmt.Println("✓ Signature verified")
 
-	// Store license
 	storedLicense := StoredLicense{
 		EncryptedData:     encryptedData,
 		Nonce:             nonce,
@@ -307,29 +379,57 @@ func (lc *LicenseClient) Activate(email, username, licenseKey string) error {
 		ExpiresAt:         activationResp.ExpiresAt,
 	}
 
-	licenseJSON, err := json.Marshal(storedLicense)
-	if err != nil {
-		return fmt.Errorf("failed to marshal stored license: %w", err)
-	}
-
 	fmt.Println("💾 Saving license file...")
-	if err := os.WriteFile(lc.licensePath, licenseJSON, 0600); err != nil {
-		return fmt.Errorf("failed to save license: %w", err)
+	if err := lc.writeLicenseFile(&storedLicense); err != nil {
+		return err
 	}
 
 	fmt.Printf("✓ License saved to: %s\n", lc.licensePath)
 	return nil
 }
 
+func (lc *LicenseClient) writeLicenseFile(stored *StoredLicense) error {
+	if stored == nil {
+		return fmt.Errorf("license payload missing")
+	}
+	licenseJSON, err := json.Marshal(stored)
+	if err != nil {
+		return fmt.Errorf("failed to marshal stored license: %w", err)
+	}
+	tmpPath := lc.licensePath + ".tmp"
+	if err := os.WriteFile(tmpPath, licenseJSON, 0o600); err != nil {
+		return fmt.Errorf("failed to write license: %w", err)
+	}
+	if err := os.Rename(tmpPath, lc.licensePath); err != nil {
+		return fmt.Errorf("failed to finalize license: %w", err)
+	}
+	return nil
+}
+
+func (lc *LicenseClient) ensureLicenseFileSecure(info os.FileInfo) error {
+	if runtime.GOOS == "windows" {
+		return nil
+	}
+	if info.Mode().Perm()&0o077 != 0 {
+		return fmt.Errorf("license file %s has insecure permissions (%#o) - run 'chmod 600'", lc.licensePath, info.Mode().Perm())
+	}
+	return nil
+}
+
 // ==================== License Verification ====================
 
 func (lc *LicenseClient) Verify() (*LicenseData, error) {
-	// Check if license file exists
-	if _, err := os.Stat(lc.licensePath); os.IsNotExist(err) {
-		return nil, fmt.Errorf("license not found - please activate first")
+	info, err := os.Stat(lc.licensePath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, fmt.Errorf("license not found - please activate first")
+		}
+		return nil, fmt.Errorf("failed to stat license file: %w", err)
+	}
+	if err := lc.ensureLicenseFileSecure(info); err != nil {
+		return nil, err
 	}
 
-	// Load stored license
 	licenseJSON, err := os.ReadFile(lc.licensePath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read license file: %w", err)
@@ -340,7 +440,6 @@ func (lc *LicenseClient) Verify() (*LicenseData, error) {
 		return nil, fmt.Errorf("failed to parse license file: %w", err)
 	}
 
-	// Parse public key
 	publicKeyInterface, err := x509.ParsePKIXPublicKey(storedLicense.PublicKey)
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse public key: %w", err)
@@ -353,157 +452,80 @@ func (lc *LicenseClient) Verify() (*LicenseData, error) {
 
 	lc.publicKey = publicKey
 
-	// Verify signature
 	dataHash := sha256.Sum256(storedLicense.EncryptedData)
 	if err := rsa.VerifyPSS(publicKey, crypto.SHA256, dataHash[:], storedLicense.Signature, nil); err != nil {
 		return nil, fmt.Errorf("signature verification failed - license may be tampered")
 	}
 
-	// Verify device fingerprint
 	currentFingerprint, err := lc.generateDeviceFingerprint()
 	if err != nil {
 		return nil, fmt.Errorf("failed to generate current fingerprint: %w", err)
 	}
-
 	if storedLicense.DeviceFingerprint != currentFingerprint {
 		return nil, fmt.Errorf("device fingerprint mismatch - license is tied to different device")
 	}
 
-	// Decrypt license data
 	licenseData, err := lc.decryptLicense(&storedLicense)
 	if err != nil {
 		return nil, fmt.Errorf("failed to decrypt license: %w", err)
 	}
 
-	// Check expiration
 	if time.Now().After(storedLicense.ExpiresAt) {
 		return nil, fmt.Errorf("license expired on %s", storedLicense.ExpiresAt.Format("2006-01-02"))
+	}
+	if licenseData.IsRevoked {
+		reason := licenseData.RevokeReason
+		if reason == "" {
+			reason = "no reason provided"
+		}
+		return nil, fmt.Errorf("license revoked: %s", reason)
 	}
 
 	return licenseData, nil
 }
 
 func (lc *LicenseClient) decryptLicense(stored *StoredLicense) (*LicenseData, error) {
-	// The server sent encrypted data that contains: [32-byte AES key][license JSON]
-	// First, we need to decrypt the whole package using a temporary approach
-	// Then extract the AES key and license data
-
-	// For simplicity in this implementation, we'll decrypt directly
-	// The encrypted data from server contains AES key + license data
-
-	// Since server uses random AES key and includes it in the encrypted payload,
-	// we need to decrypt with a derived key based on device fingerprint
-
-	fingerprint, err := lc.generateDeviceFingerprint()
+	if stored == nil {
+		return nil, fmt.Errorf("stored license missing")
+	}
+	transportKey, err := lc.deriveTransportKey(stored.DeviceFingerprint, stored.Nonce)
 	if err != nil {
 		return nil, err
 	}
-
-	// Create a deterministic key from device fingerprint for re-encryption
-	fpHash := sha256.Sum256([]byte(fingerprint + "SECURE_SALT"))
-	deviceKey := fpHash[:]
-
-	// The server's encrypted data contains [aesKey + licenseJSON]
-	// We need to extract them after decryption
-	// But server encrypted with random AES - we need to decrypt that first
-
-	// Actually, let's decrypt the server's package with GCM
-	// The nonce and encrypted data are what we received
-
-	// First attempt: try to extract embedded AES key directly
-	block, err := aes.NewCipher(deviceKey)
+	block, err := aes.NewCipher(transportKey)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create cipher: %w", err)
 	}
-
 	gcm, err := cipher.NewGCM(block)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create GCM: %w", err)
 	}
-
-	// Try to open with device key (this will fail, but let's prepare for the real approach)
-	decryptedData, err := gcm.Open(nil, stored.Nonce, stored.EncryptedData, nil)
-	if err != nil {
-		// Expected to fail - now we use the correct approach
-		// The server encrypted [aesKey + licenseJSON] together
-		// We need to decrypt it, then parse
-		return lc.decryptServerPackage(stored)
-	}
-
-	var licenseData LicenseData
-	if err := json.Unmarshal(decryptedData, &licenseData); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal license data: %w", err)
-	}
-
-	return &licenseData, nil
-}
-
-func (lc *LicenseClient) decryptServerPackage(stored *StoredLicense) (*LicenseData, error) {
-	// The server package structure: server encrypts [32-byte-AES-key + license-JSON]
-	// Server uses GCM with random AES key, stores nonce, and signs the ciphertext
-	// Client receives: encryptedData, nonce, signature
-
-	// Problem: We need the AES key that server used, which is embedded in encryptedData
-	// Solution: Server should have encrypted it in a way we can extract
-
-	// Since we've already verified the signature, the data is authentic
-	// The server embedded the AES key in the encrypted payload
-	// We need to decrypt with... the embedded key (circular problem!)
-
-	// ACTUAL SOLUTION: Server should encrypt with a key derived from device fingerprint
-	// OR send the AES key encrypted separately
-	// OR we re-implement: Server sends [license JSON] encrypted, and key material separately
-
-	// For now, let's assume server encrypted license JSON directly with random key
-	// and we have access to decrypt it since it's embedded in first 32 bytes after decryption
-
-	// Let me try a different approach: extract AES key that's embedded after GCM decryption
-	// We'll need to use the nonce and try decrypting with pattern matching
-
-	// The cleanest fix: decrypt using embedded key approach
-	// Encrypted data structure from server: GCM([aesKey || licenseData])
-	// We need the outer AES key which is... the problem.
-
-	// SOLUTION: Use device fingerprint to encrypt/decrypt the transport layer
-	fingerprint, err := lc.generateDeviceFingerprint()
-	if err != nil {
-		return nil, err
-	}
-
-	// Derive key from fingerprint + nonce for security
-	keyMaterial := fingerprint + hex.EncodeToString(stored.Nonce)
-	keyHash := sha256.Sum256([]byte(keyMaterial))
-	transportKey := keyHash[:]
-
-	block, err := aes.NewCipher(transportKey)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create transport cipher: %w", err)
-	}
-
-	gcm, err := cipher.NewGCM(block)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create GCM: %w", err)
-	}
-
-	// Decrypt to get [aesKey + licenseJSON]
 	decryptedPackage, err := gcm.Open(nil, stored.Nonce, stored.EncryptedData, nil)
 	if err != nil {
 		return nil, fmt.Errorf("decryption failed: %w", err)
 	}
-
 	if len(decryptedPackage) < 32 {
-		return nil, fmt.Errorf("invalid package size")
+		return nil, fmt.Errorf("decrypted payload too small")
 	}
-
-	// Extract license JSON (skip AES key in first 32 bytes)
 	licenseJSON := decryptedPackage[32:]
-
 	var licenseData LicenseData
 	if err := json.Unmarshal(licenseJSON, &licenseData); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal license: %w", err)
 	}
-
+	licenseData.DeviceFingerprint = stored.DeviceFingerprint
 	return &licenseData, nil
+}
+
+func (lc *LicenseClient) deriveTransportKey(fingerprint string, nonce []byte) ([]byte, error) {
+	if fingerprint == "" {
+		return nil, fmt.Errorf("device fingerprint missing")
+	}
+	if len(nonce) == 0 {
+		return nil, fmt.Errorf("nonce missing")
+	}
+	material := fingerprint + hex.EncodeToString(nonce)
+	hash := sha256.Sum256([]byte(material))
+	return hash[:], nil
 }
 
 func (lc *LicenseClient) IsActivated() bool {
@@ -521,30 +543,58 @@ func showBanner() {
 }
 
 func setupLicense(client *LicenseClient) error {
-	fmt.Println("\n⚠️  License activation required\n")
+	fmt.Println()
+	fmt.Println("⚠️  License activation required")
+	fmt.Println()
 
 	var email, username, licenseKey string
 
 	fmt.Print("Enter email: ")
 	fmt.Scanln(&email)
+	email = strings.TrimSpace(email)
 
 	fmt.Print("Enter username: ")
 	fmt.Scanln(&username)
+	username = strings.TrimSpace(username)
 
 	fmt.Print("Enter license key: ")
 	fmt.Scanln(&licenseKey)
+	licenseKey = strings.TrimSpace(licenseKey)
 
 	return client.Activate(email, username, licenseKey)
 }
 
 func showLicenseInfo(license *LicenseData) {
+	if license == nil {
+		return
+	}
 	fmt.Println("\n📄 License Information:")
 	fmt.Println("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
 	fmt.Printf("  User: %s\n", license.Username)
 	fmt.Printf("  Email: %s\n", license.Email)
-	fmt.Printf("  Device: %s...\n", license.DeviceFingerprint[:16])
+	if license.ClientID != "" {
+		fmt.Printf("  Client ID: %s\n", license.ClientID)
+	}
+	fmt.Printf("  License ID: %s\n", license.ID)
+	if license.DeviceFingerprint != "" {
+		fmt.Printf("  This device: %s...\n", truncateFingerprint(license.DeviceFingerprint))
+	}
 	fmt.Printf("  Issued: %s\n", license.IssuedAt.Format("2006-01-02 15:04:05"))
 	fmt.Printf("  Expires: %s\n", license.ExpiresAt.Format("2006-01-02 15:04:05"))
+	fmt.Printf("  Activations: %d / %d\n", license.CurrentActivations, license.MaxActivations)
+	if len(license.Devices) > 0 {
+		fmt.Println("  Registered devices:")
+		for _, device := range license.Devices {
+			if device.Fingerprint == "" {
+				continue
+			}
+			fmt.Printf("    • %s... | activated %s | last seen %s\n",
+				truncateFingerprint(device.Fingerprint),
+				formatTimestamp(device.ActivatedAt),
+				formatTimestamp(device.LastSeenAt),
+			)
+		}
+	}
 
 	daysLeft := int(time.Until(license.ExpiresAt).Hours() / 24)
 	if daysLeft > 0 {
@@ -556,7 +606,9 @@ func showLicenseInfo(license *LicenseData) {
 }
 
 func runApplication(license *LicenseData) {
-	fmt.Println("\n🚀 Starting application...\n")
+	fmt.Println()
+	fmt.Println("🚀 Starting application...")
+	fmt.Println()
 	fmt.Println("╔═══════════════════════════════════════════╗")
 	fmt.Printf("║  Welcome, %s!%-25s║\n", license.Username, strings.Repeat(" ", max(0, 25-len(license.Username))))
 	fmt.Println("║                                           ║")
@@ -577,8 +629,27 @@ func runApplication(license *LicenseData) {
 	fmt.Println("\n💡 Your actual application logic would run here...")
 	fmt.Println("\nPress Ctrl+C to exit")
 
-	// Keep application running
-	select {}
+	// Keep application running until interrupted
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM)
+	defer signal.Stop(sigCh)
+	<-sigCh
+
+	fmt.Println("\n🛑 Shutdown signal received. Exiting...")
+}
+
+func truncateFingerprint(fp string) string {
+	if len(fp) <= 16 {
+		return fp
+	}
+	return fp[:16]
+}
+
+func formatTimestamp(ts time.Time) string {
+	if ts.IsZero() {
+		return "n/a"
+	}
+	return ts.Format("2006-01-02 15:04:05")
 }
 
 func max(a, b int) int {
@@ -596,6 +667,7 @@ func main() {
 	if err != nil {
 		log.Fatalf("Failed to initialize license client: %v", err)
 	}
+	fmt.Printf("🔗 License server: %s\n", client.ServerURL())
 
 	// Check if already activated
 	if !client.IsActivated() {
