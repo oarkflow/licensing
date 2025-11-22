@@ -7,15 +7,19 @@ import (
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/sha256"
+	"crypto/subtle"
 	"crypto/x509"
 	"encoding/hex"
 	"encoding/json"
 	"encoding/pem"
+	"errors"
 	"fmt"
 	"io"
 	"log"
+	"net"
 	"net/http"
 	"os"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -132,7 +136,7 @@ func (t *TPM) GetRandom(numBytes int) ([]byte, error) {
 
 // ==================== License Manager ====================
 
-type User struct {
+type Client struct {
 	ID        string    `json:"id"`
 	Email     string    `json:"email"`
 	Username  string    `json:"username"`
@@ -141,14 +145,14 @@ type User struct {
 
 type License struct {
 	ID                 string    `json:"id"`
-	UserID             string    `json:"user_id"`
+	ClientID           string    `json:"client_id"`
 	Email              string    `json:"email"`
 	Username           string    `json:"username"`
 	LicenseKey         string    `json:"license_key"`
 	DeviceFingerprint  string    `json:"device_fingerprint,omitempty"`
 	IsActivated        bool      `json:"is_activated"`
 	IssuedAt           time.Time `json:"issued_at"`
-	ActivatedAt        time.Time `json:"activated_at,omitempty"`
+	ActivatedAt        time.Time `json:"activated_at"`
 	ExpiresAt          time.Time `json:"expires_at"`
 	MaxActivations     int       `json:"max_activations"`
 	CurrentActivations int       `json:"current_activations"`
@@ -171,10 +175,39 @@ type ActivationResponse struct {
 	ExpiresAt        time.Time `json:"expires_at,omitempty"`
 }
 
+var (
+	emailRegex       = regexp.MustCompile(`^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$`)
+	licenseKeyRegex  = regexp.MustCompile(`^[A-F0-9]{4}(?:-[A-F0-9]{4}){7}$`)
+	fingerprintRegex = regexp.MustCompile(`^[A-Za-z0-9_-]{16,128}$`)
+)
+
+const maxActivationPayloadBytes = 1 << 20
+
+func normalizeLicenseKey(key string) string {
+	cleaned := strings.ToUpper(strings.TrimSpace(key))
+	return strings.ReplaceAll(cleaned, " ", "")
+}
+
+func validateActivationRequest(req *ActivationRequest) error {
+	if !emailRegex.MatchString(req.Email) {
+		return errors.New("invalid email address")
+	}
+	if req.Username == "" || len(req.Username) > 64 {
+		return errors.New("username is required and must be <= 64 characters")
+	}
+	if !licenseKeyRegex.MatchString(req.LicenseKey) {
+		return errors.New("invalid license key format")
+	}
+	if !fingerprintRegex.MatchString(req.DeviceFingerprint) {
+		return errors.New("invalid device fingerprint format")
+	}
+	return nil
+}
+
 type LicenseManager struct {
-	users         map[string]*User
+	clients       map[string]*Client
 	licenses      map[string]*License
-	emailToUser   map[string]string
+	emailToClient map[string]string
 	keyToLicense  map[string]string
 	tpm           *TPM
 	signingHandle uint32
@@ -195,9 +228,9 @@ func NewLicenseManager() (*LicenseManager, error) {
 	}
 
 	lm := &LicenseManager{
-		users:         make(map[string]*User),
+		clients:       make(map[string]*Client),
 		licenses:      make(map[string]*License),
-		emailToUser:   make(map[string]string),
+		emailToClient: make(map[string]string),
 		keyToLicense:  make(map[string]string),
 		tpm:           tpm,
 		signingHandle: signingHandle,
@@ -227,46 +260,46 @@ func (lm *LicenseManager) savePublicKey() error {
 	return os.WriteFile("server_public_key.pem", pubKeyPEM, 0644)
 }
 
-func (lm *LicenseManager) CreateUser(email, username string) (*User, error) {
+func (lm *LicenseManager) CreateClient(email, username string) (*Client, error) {
 	lm.mu.Lock()
 	defer lm.mu.Unlock()
 
-	// Check if user exists
-	if _, exists := lm.emailToUser[email]; exists {
-		return nil, fmt.Errorf("user with email already exists")
+	// Check if client exists
+	if _, exists := lm.emailToClient[email]; exists {
+		return nil, fmt.Errorf("client with email already exists")
 	}
 
-	user := &User{
+	client := &Client{
 		ID:        uuid.New().String(),
 		Email:     email,
 		Username:  username,
 		CreatedAt: time.Now(),
 	}
 
-	lm.users[user.ID] = user
-	lm.emailToUser[email] = user.ID
+	lm.clients[client.ID] = client
+	lm.emailToClient[email] = client.ID
 
-	log.Printf("Created user: %s (%s)", username, email)
-	return user, nil
+	log.Printf("Created client: %s (%s)", username, email)
+	return client, nil
 }
 
-func (lm *LicenseManager) GenerateLicense(userID string, duration time.Duration, maxActivations int) (*License, error) {
+func (lm *LicenseManager) GenerateLicense(clientID string, duration time.Duration, maxActivations int) (*License, error) {
 	lm.mu.Lock()
 	defer lm.mu.Unlock()
 
-	user, exists := lm.users[userID]
+	client, exists := lm.clients[clientID]
 	if !exists {
-		return nil, fmt.Errorf("user not found")
+		return nil, fmt.Errorf("client not found")
 	}
 
 	// Generate license key
-	licenseKey := lm.generateLicenseKey(user.Email, user.Username)
+	licenseKey := lm.generateLicenseKey(client.Email, client.Username)
 
 	license := &License{
 		ID:             uuid.New().String(),
-		UserID:         userID,
-		Email:          user.Email,
-		Username:       user.Username,
+		ClientID:       clientID,
+		Email:          client.Email,
+		Username:       client.Username,
 		LicenseKey:     licenseKey,
 		IsActivated:    false,
 		IssuedAt:       time.Now(),
@@ -277,7 +310,7 @@ func (lm *LicenseManager) GenerateLicense(userID string, duration time.Duration,
 	lm.licenses[license.ID] = license
 	lm.keyToLicense[licenseKey] = license.ID
 
-	log.Printf("Generated license for user %s: %s", user.Username, licenseKey)
+	log.Printf("Generated license for client %s: %s", client.Username, licenseKey)
 	return license, nil
 }
 
@@ -306,6 +339,7 @@ func (lm *LicenseManager) generateLicenseKey(email, username string) string {
 }
 
 func (lm *LicenseManager) ActivateLicense(req *ActivationRequest) (*ActivationResponse, error) {
+	req.LicenseKey = normalizeLicenseKey(req.LicenseKey)
 	lm.mu.Lock()
 	defer lm.mu.Unlock()
 
@@ -320,7 +354,7 @@ func (lm *LicenseManager) ActivateLicense(req *ActivationRequest) (*ActivationRe
 
 	license := lm.licenses[licenseID]
 
-	// Verify user credentials
+	// Verify client credentials
 	if license.Email != req.Email || license.Username != req.Username {
 		return &ActivationResponse{
 			Success: false,
@@ -470,16 +504,104 @@ func (lm *LicenseManager) ListLicenses() []*License {
 
 // ==================== HTTP Server ====================
 
-type Server struct {
-	lm   *LicenseManager
-	port string
+type RateLimiter struct {
+	mu          sync.Mutex
+	requests    map[string]*clientRequestWindow
+	maxRequests int
+	window      time.Duration
 }
 
-func NewServer(lm *LicenseManager, port string) *Server {
-	return &Server{
-		lm:   lm,
-		port: port,
+type clientRequestWindow struct {
+	count   int
+	resetAt time.Time
+}
+
+func NewRateLimiter(maxRequests int, window time.Duration) *RateLimiter {
+	if maxRequests <= 0 {
+		maxRequests = 60
 	}
+	if window <= 0 {
+		window = time.Minute
+	}
+	return &RateLimiter{
+		requests:    make(map[string]*clientRequestWindow),
+		maxRequests: maxRequests,
+		window:      window,
+	}
+}
+
+func (rl *RateLimiter) Allow(key string) bool {
+	rl.mu.Lock()
+	defer rl.mu.Unlock()
+
+	now := time.Now()
+	window, exists := rl.requests[key]
+	if !exists || now.After(window.resetAt) {
+		rl.requests[key] = &clientRequestWindow{count: 1, resetAt: now.Add(rl.window)}
+		return true
+	}
+
+	if window.count >= rl.maxRequests {
+		return false
+	}
+
+	window.count++
+	return true
+}
+
+type Server struct {
+	lm          *LicenseManager
+	port        string
+	apiKey      string
+	rateLimiter *RateLimiter
+}
+
+func NewServer(lm *LicenseManager, port, apiKey string, limiter *RateLimiter) (*Server, error) {
+	if apiKey == "" {
+		return nil, fmt.Errorf("API key is required")
+	}
+	if limiter == nil {
+		limiter = NewRateLimiter(60, time.Minute)
+	}
+	return &Server{
+		lm:          lm,
+		port:        port,
+		apiKey:      apiKey,
+		rateLimiter: limiter,
+	}, nil
+}
+
+func clientIP(r *http.Request) string {
+	if forwarded := r.Header.Get("X-Forwarded-For"); forwarded != "" {
+		parts := strings.Split(forwarded, ",")
+		return strings.TrimSpace(parts[0])
+	}
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		return r.RemoteAddr
+	}
+	return host
+}
+
+func (s *Server) enforceRateLimit(w http.ResponseWriter, r *http.Request) bool {
+	if s.rateLimiter == nil {
+		return true
+	}
+	ip := clientIP(r)
+	if !s.rateLimiter.Allow(ip) {
+		http.Error(w, "Too many requests", http.StatusTooManyRequests)
+		return false
+	}
+	return true
+}
+
+func (s *Server) authorizeAdmin(w http.ResponseWriter, r *http.Request) bool {
+	providedKey := strings.TrimSpace(r.Header.Get("X-API-Key"))
+	if subtle.ConstantTimeCompare([]byte(providedKey), []byte(s.apiKey)) != 1 {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return false
+	}
+	return true
 }
 
 func (s *Server) handleActivate(w http.ResponseWriter, r *http.Request) {
@@ -487,10 +609,21 @@ func (s *Server) handleActivate(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
+	if !s.enforceRateLimit(w, r) {
+		return
+	}
+
+	limitedBody := http.MaxBytesReader(w, r.Body, maxActivationPayloadBytes)
+	defer limitedBody.Close()
 
 	var req ActivationRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := json.NewDecoder(limitedBody).Decode(&req); err != nil {
 		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+	req.LicenseKey = normalizeLicenseKey(req.LicenseKey)
+	if err := validateActivationRequest(&req); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 
@@ -509,6 +642,12 @@ func (s *Server) handleLicenses(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
+	if !s.enforceRateLimit(w, r) {
+		return
+	}
+	if !s.authorizeAdmin(w, r) {
+		return
+	}
 
 	licenses := s.lm.ListLicenses()
 	w.Header().Set("Content-Type", "application/json")
@@ -516,6 +655,9 @@ func (s *Server) handleLicenses(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
+	if !s.enforceRateLimit(w, r) {
+		return
+	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
 }
@@ -549,25 +691,34 @@ func main() {
 		log.Fatalf("Failed to initialize License Manager: %v", err)
 	}
 
-	// Create demo users and licenses
-	fmt.Println("📋 Creating demo users and licenses...")
+	// Create demo clients and licenses
+	fmt.Println("📋 Creating demo clients and licenses...")
 
-	user1, _ := lm.CreateUser("john@example.com", "john_doe")
-	license1, _ := lm.GenerateLicense(user1.ID, 365*24*time.Hour, 1)
-	fmt.Printf("   ✓ User: %s | License: %s\n", user1.Email, license1.LicenseKey)
+	client1, _ := lm.CreateClient("john@example.com", "john_doe")
+	license1, _ := lm.GenerateLicense(client1.ID, 365*24*time.Hour, 1)
+	fmt.Printf("   ✓ Client: %s | License: %s\n", client1.Email, license1.LicenseKey)
 
-	user2, _ := lm.CreateUser("jane@example.com", "jane_smith")
-	license2, _ := lm.GenerateLicense(user2.ID, 30*24*time.Hour, 2)
-	fmt.Printf("   ✓ User: %s | License: %s\n", user2.Email, license2.LicenseKey)
+	client2, _ := lm.CreateClient("jane@example.com", "jane_smith")
+	license2, _ := lm.GenerateLicense(client2.ID, 30*24*time.Hour, 2)
+	fmt.Printf("   ✓ Client: %s | License: %s\n", client2.Email, license2.LicenseKey)
 
-	user3, _ := lm.CreateUser("bob@example.com", "bob_jones")
-	license3, _ := lm.GenerateLicense(user3.ID, 90*24*time.Hour, 1)
-	fmt.Printf("   ✓ User: %s | License: %s\n", user3.Email, license3.LicenseKey)
+	client3, _ := lm.CreateClient("bob@example.com", "bob_jones")
+	license3, _ := lm.GenerateLicense(client3.ID, 90*24*time.Hour, 1)
+	fmt.Printf("   ✓ Client: %s | License: %s\n", client3.Email, license3.LicenseKey)
 
 	fmt.Println()
 
+	apiKey := os.Getenv("LICENSE_SERVER_API_KEY")
+	if apiKey == "" {
+		log.Fatalf("LICENSE_SERVER_API_KEY environment variable is required")
+	}
+	rateLimiter := NewRateLimiter(30, time.Minute)
+	server, err := NewServer(lm, ":8080", apiKey, rateLimiter)
+	if err != nil {
+		log.Fatalf("Failed to initialize server: %v", err)
+	}
+
 	// Start HTTP server
-	server := NewServer(lm, ":8080")
 	if err := server.Start(); err != nil {
 		log.Fatalf("Server error: %v", err)
 	}
