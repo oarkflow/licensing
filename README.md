@@ -1,17 +1,17 @@
-# TPM License Manager
+# Hardware-Key License Manager
 
-A hardened license server and client that leverage TPM-backed signing, per-device activation, and encrypted transport to keep software licenses tamper resistant.
+A hardened license server and client that leverage pluggable signing providers (software, file-based HSM, or TPM), per-device activation, and encrypted transport to keep software licenses tamper resistant.
 
 ## Features
 
-- **TPM-backed signing:** every activation payload is signed by a TPM-generated RSA key whose public half is exported once to `~/.licensing/server_public_key.pem` with `0600` permissions.
+- **Hardware-backed signing:** every activation payload is signed by a configurable provider (software RSA for development, file-based keys, or a TPM 2.0 device). The server exports the public half to `~/.licensing/server_public_key.pem` with `0600` permissions.
 - **Per-device locking:** activations require a deterministic device fingerprint and are bounded by `max_activations` per license.
 - **Encrypted license transport:** licenses are encrypted with AES-GCM using a key derived from the device fingerprint and nonce before being stored client-side.
 - **Integrity-bound checksum:** the client seals a SHA-256 checksum of the on-disk license blob using the device fingerprint so tampering attempts are detected before parsing, and it re-validates with the server before recreating a lost checksum.
 - **Session-keyed channel:** once activated, each device receives a unique transport key embedded inside the license payload, and subsequent HTTP traffic is re-encrypted with that key so no pre-shared secrets are required beyond TLS.
 - **Audit + admin APIs:** rate-limited HTTP endpoints for managing clients, issuing licenses, banning/unbanning, and revoking/reinstating licenses.
-- **Pluggable storage:** choose in-memory or JSON-on-disk storage via environment variables; disk snapshots are written atomically with `0600` permissions.
-- **Secure client storage:** the CLI enforces `chmod 600` on `~/.myapp/.license.dat`, verifies TPM signatures, and refuses to run if the payload or fingerprint diverge.
+- **Pluggable storage:** choose in-memory, SQLite, or JSON-on-disk storage via environment variables; disk snapshots are written atomically with `0600` permissions.
+- **Secure client storage:** the CLI enforces `chmod 600` on `~/.myapp/.license.dat`, verifies server signatures, and refuses to run if the payload or fingerprint diverge.
 
 ## Requirements
 
@@ -30,16 +30,28 @@ A hardened license server and client that leverage TPM-backed signing, per-devic
    # Optional comma-separated list alternative:
    # export LICENSE_SERVER_API_KEYS="key-one,key-two"
 
-   # Storage backend: "memory" (default) or "file"
-   export LICENSE_SERVER_STORAGE="file"
-   # When using file storage the server persists to this path (default: ./data/licensing-state.json)
+   # Storage backend: "memory" (default), "file", or "sqlite"
+   export LICENSE_SERVER_STORAGE="sqlite"
+
+   # JSON file storage path (default: ./data/licensing-state.json)
    export LICENSE_SERVER_STORAGE_FILE="/var/lib/licensing/state.json"
+
+   # SQLite database path (default: ./data/licensing.db)
+   export LICENSE_SERVER_STORAGE_SQLITE_PATH="/var/lib/licensing/licensing.db"
 
    # TLS (optional but recommended)
    export LICENSE_SERVER_TLS_CERT="/path/to/server.crt"
    export LICENSE_SERVER_TLS_KEY="/path/to/server.key"
    # Enable mutual TLS by providing a client CA bundle
    export LICENSE_SERVER_CLIENT_CA="/path/to/clients.pem"
+
+   # Signing provider (software, file, or tpm)
+   export LICENSE_SERVER_KEY_PROVIDER="software"
+   # When using "file" specify the PEM private key and optional passphrase
+   export LICENSE_SERVER_KEY_FILE="/var/lib/licensing/server.key"
+   export LICENSE_SERVER_KEY_PASSPHRASE="change-me"
+   # When using "tpm" target a specific device path (defaults to /dev/tpmrm0)
+   export LICENSE_SERVER_TPM_DEVICE="/dev/tpmrm0"
    ```
 3. **Run the server:**
    ```bash
@@ -60,7 +72,7 @@ A hardened license server and client that leverage TPM-backed signing, per-devic
    go run ./client
    ```
    The CLI will display the server it will contact, prompt for the license credentials, and persist the encrypted payload to `~/.myapp/.license.dat` with `0600` permissions.
-3. **Verification:** subsequent runs skip activation, verify the TPM signature, confirm the encrypted payload matches the current device fingerprint, and refuse to continue if the license is revoked or expired.
+3. **Verification:** subsequent runs skip activation, verify the server signature, confirm the encrypted payload matches the current device fingerprint, and refuse to continue if the license is revoked or expired.
 
 ### Client Configuration Options
 
@@ -152,17 +164,17 @@ Each command honors the layered config above, so you can mix flags and env vars 
 
 1. The client derives a stable device fingerprint (hostname, OS, CPU brand, and MAC hash) and posts it with the license key to `/api/activate`.
 2. The server validates the request (API rate limit, client ban status, license quotas) before encrypting `[random 32-byte transport key || license JSON]` with AES-GCM using a key derived from the device fingerprint + nonce.
-3. The ciphertext is signed by the TPM key and returned together with the PEM-encoded public key and expiration metadata.
+3. The ciphertext is signed by the active signing provider and returned together with the PEM-encoded public key and expiration metadata.
 4. The client verifies the signature, derives the same transport key, decrypts the payload, persists it, and caches the transport key for future HTTPS payload encryption.
 5. Subsequent client requests and server responses are re-encrypted with that cached transport key (and identify themselves via headers) so plaintext never crosses process boundaries even if TLS terminates upstream.
 6. Every launch replays those checks, enforces file permissions, and prints detailed device + activation telemetry.
 
 ## Tamper-Resistance Guidelines
 
-- **Public key hygiene:** the server writes `server_public_key.pem` only inside `~/.licensing/` with permissions `0700/0600`. Delete the file if you rotate TPM keys; it will be re-created on next start.
+- **Public key hygiene:** the server writes `server_public_key.pem` only inside `~/.licensing/` with permissions `0700/0600`. Delete the file if you rotate signing keys; it will be re-created on next start.
 - **Client license file:** if the CLI detects that `~/.myapp/.license.dat` is world-readable it aborts with instructions to `chmod 600`.
 - **Detached checksum vault:** every activation records an encrypted checksum next to the license file; if it goes missing the client recontacts the server to reissue the license before recreating the checksum, and it still aborts if the checksum diverges.
-- **Signatures first:** both activation time and runtime verification fail fast if the TPM signature or ciphertext hash mismatches.
+- **Signatures first:** both activation time and runtime verification fail fast if the signature or ciphertext hash mismatches.
 - **Device binding:** moving the license file to a different machine fails because the fingerprint becomes invalid and the transport key cannot be recreated.
 - **Admin controls:** revoke or ban clients to immediately block further activations; reinstating can be done via the admin endpoints without server restarts.
 
@@ -196,7 +208,7 @@ Each command honors the layered config above, so you can mix flags and env vars 
 ```
 go.mod              # module definition
 licensing.go        # entry point + wiring
-license_manager.go  # core business logic + TPM integration
+license_manager.go  # core business logic + signing provider integration
 server.go           # HTTP handlers, security middleware
 storage.go          # in-memory + persistent storage backends
 client/app.go       # CLI activation + runtime verification

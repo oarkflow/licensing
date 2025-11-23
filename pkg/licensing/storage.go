@@ -659,6 +659,18 @@ func BuildStorageFromEnv() (Storage, string, error) {
 			return nil, "", err
 		}
 		return storage, fmt.Sprintf("file:%s", path), nil
+	case "sqlite", "sql", "sqlite3":
+		path := strings.TrimSpace(os.Getenv("LICENSE_SERVER_STORAGE_SQLITE_PATH"))
+		if path == "" {
+			path = filepath.Join("data", "licensing.db")
+		} else {
+			path = filepath.Clean(path)
+		}
+		storage, err := NewSQLiteStorage(path)
+		if err != nil {
+			return nil, "", err
+		}
+		return storage, fmt.Sprintf("sqlite:%s", path), nil
 	default:
 		return nil, "", fmt.Errorf("unsupported storage mode %q", mode)
 	}

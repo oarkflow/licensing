@@ -5,7 +5,6 @@ import (
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/rand"
-	"crypto/rsa"
 	"crypto/sha256"
 	"crypto/x509"
 	"encoding/hex"
@@ -26,10 +25,8 @@ import (
 
 type LicenseManager struct {
 	storage       Storage
-	tpm           *TPM
-	signingHandle uint32
-	privateKey    *rsa.PrivateKey
-	publicKey     *rsa.PublicKey
+	signer        SigningProvider
+	signerID      string
 	publicKeyPath string
 	mu            sync.RWMutex
 }
@@ -39,26 +36,20 @@ func NewLicenseManager(storage Storage) (*LicenseManager, error) {
 		return nil, fmt.Errorf("storage implementation is required")
 	}
 
-	tpm := NewTPM()
-	if err := tpm.Startup(); err != nil {
-		return nil, fmt.Errorf("failed to start TPM: %w", err)
-	}
-
-	signingHandle, pubKey, privKey, err := tpm.CreatePrimary(TPM_RH_OWNER, 2048)
+	signer, err := BuildSigningProviderFromEnv()
 	if err != nil {
-		return nil, fmt.Errorf("failed to create signing key: %w", err)
+		return nil, fmt.Errorf("failed to configure signing provider: %w", err)
 	}
 
 	lm := &LicenseManager{
-		storage:       storage,
-		tpm:           tpm,
-		signingHandle: signingHandle,
-		privateKey:    privKey,
-		publicKey:     pubKey,
+		storage:  storage,
+		signer:   signer,
+		signerID: signer.ID(),
 	}
 
 	path, err := lm.savePublicKey()
 	if err != nil {
+		_ = signer.Close()
 		return nil, fmt.Errorf("failed to save public key: %w", err)
 	}
 	lm.publicKeyPath = path
@@ -67,7 +58,14 @@ func NewLicenseManager(storage Storage) (*LicenseManager, error) {
 }
 
 func (lm *LicenseManager) savePublicKey() (string, error) {
-	pubKeyBytes, err := x509.MarshalPKIXPublicKey(lm.publicKey)
+	if lm.signer == nil {
+		return "", fmt.Errorf("signing provider is not configured")
+	}
+	pubKey := lm.signer.PublicKey()
+	if pubKey == nil {
+		return "", fmt.Errorf("signing provider returned nil public key")
+	}
+	pubKeyBytes, err := x509.MarshalPKIXPublicKey(pubKey)
 	if err != nil {
 		return "", err
 	}
@@ -100,6 +98,23 @@ func (lm *LicenseManager) PublicKeyPath() string {
 	lm.mu.RLock()
 	defer lm.mu.RUnlock()
 	return lm.publicKeyPath
+}
+
+func (lm *LicenseManager) SigningProviderID() string {
+	lm.mu.RLock()
+	defer lm.mu.RUnlock()
+	return lm.signerID
+}
+
+func (lm *LicenseManager) Close() error {
+	lm.mu.Lock()
+	defer lm.mu.Unlock()
+	if lm.signer != nil {
+		err := lm.signer.Close()
+		lm.signer = nil
+		return err
+	}
+	return nil
 }
 
 func (lm *LicenseManager) EnsureDefaultAdmin(ctx context.Context) (*AdminUser, string, string, error) {
@@ -344,7 +359,7 @@ func (lm *LicenseManager) ReinstateLicense(ctx context.Context, licenseID string
 
 func (lm *LicenseManager) generateLicenseKey(email, username string) string {
 	// Generate cryptographically secure license key
-	randomBytes, err := lm.tpm.GetRandom(16)
+	randomBytes, err := lm.randomBytes(16)
 	if err != nil {
 		randomBytes = make([]byte, 16)
 		if _, fallbackErr := rand.Read(randomBytes); fallbackErr != nil {
@@ -375,7 +390,7 @@ func (lm *LicenseManager) randomSecret(numBytes int) (string, error) {
 	if numBytes <= 0 {
 		numBytes = 16
 	}
-	raw, err := lm.tpm.GetRandom(numBytes)
+	raw, err := lm.randomBytes(numBytes)
 	if err != nil {
 		return "", err
 	}
@@ -385,6 +400,17 @@ func (lm *LicenseManager) randomSecret(numBytes int) (string, error) {
 func hashAPIKey(token string) string {
 	sum := sha256.Sum256([]byte(strings.TrimSpace(token)))
 	return hex.EncodeToString(sum[:])
+}
+
+func (lm *LicenseManager) randomBytes(numBytes int) ([]byte, error) {
+	if numBytes <= 0 {
+		return nil, fmt.Errorf("numBytes must be positive")
+	}
+	buf := make([]byte, numBytes)
+	if _, err := rand.Read(buf); err != nil {
+		return nil, fmt.Errorf("failed to read secure random bytes: %w", err)
+	}
+	return buf, nil
 }
 
 func (lm *LicenseManager) ActivateLicense(ctx context.Context, req *ActivationRequest) (*ActivationResponse, error) {
@@ -433,7 +459,7 @@ func (lm *LicenseManager) ActivateLicense(ctx context.Context, req *ActivationRe
 			lm.recordActivationAttempt(ctx, license, req, false, message)
 			return &ActivationResponse{Success: false, Message: message}, nil
 		}
-		transportKey, err := lm.tpm.GetRandom(32)
+		transportKey, err := lm.randomBytes(32)
 		if err != nil {
 			return nil, fmt.Errorf("failed to generate transport key: %w", err)
 		}
@@ -447,7 +473,7 @@ func (lm *LicenseManager) ActivateLicense(ctx context.Context, req *ActivationRe
 	} else {
 		device.LastSeenAt = now
 		if len(device.TransportKey) == 0 {
-			transportKey, err := lm.tpm.GetRandom(32)
+			transportKey, err := lm.randomBytes(32)
 			if err != nil {
 				return nil, fmt.Errorf("failed to refresh transport key: %w", err)
 			}
@@ -485,7 +511,7 @@ func (lm *LicenseManager) issueEncryptedLicenseResponse(license *License, finger
 	if err != nil {
 		return nil, fmt.Errorf("failed to marshal license: %w", err)
 	}
-	nonce, err := lm.tpm.GetRandom(12)
+	nonce, err := lm.randomBytes(12)
 	if err != nil {
 		return nil, fmt.Errorf("failed to generate nonce: %w", err)
 	}
@@ -504,11 +530,15 @@ func (lm *LicenseManager) issueEncryptedLicenseResponse(license *License, finger
 	}
 	encryptedData := gcm.Seal(nil, nonce, plaintext, nil)
 	dataHash := sha256.Sum256(encryptedData)
-	signature, err := lm.tpm.Sign(lm.signingHandle, dataHash[:])
+	signature, err := lm.signer.Sign(dataHash[:])
 	if err != nil {
 		return nil, fmt.Errorf("failed to sign: %w", err)
 	}
-	pubKeyBytes, err := x509.MarshalPKIXPublicKey(lm.publicKey)
+	pubKey := lm.signer.PublicKey()
+	if pubKey == nil {
+		return nil, fmt.Errorf("signing provider returned nil public key")
+	}
+	pubKeyBytes, err := x509.MarshalPKIXPublicKey(pubKey)
 	if err != nil {
 		return nil, fmt.Errorf("failed to marshal public key: %w", err)
 	}
@@ -566,7 +596,7 @@ func (lm *LicenseManager) VerifyLicense(ctx context.Context, req *ActivationRequ
 		return &ActivationResponse{Success: false, Message: message}, nil
 	}
 	if len(device.TransportKey) != 32 {
-		transportKey, err := lm.tpm.GetRandom(32)
+		transportKey, err := lm.randomBytes(32)
 		if err != nil {
 			return nil, fmt.Errorf("failed to refresh transport key: %w", err)
 		}

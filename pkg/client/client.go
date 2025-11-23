@@ -124,8 +124,8 @@ type LicenseDevice struct {
 	LastSeenAt  time.Time `json:"last_seen_at"`
 }
 
-// NewClient constructs a licensing client using the provided configuration.
-func NewClient(cfg Config) (*Client, error) {
+// New constructs a licensing client using the provided configuration.
+func New(cfg Config) (*Client, error) {
 	normalized, err := normalizeConfig(cfg)
 	if err != nil {
 		return nil, err

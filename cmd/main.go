@@ -17,7 +17,7 @@ import (
 func main() {
 	fmt.Println("╔═══════════════════════════════════════════╗")
 	fmt.Println("║    License Manager Server                 ║")
-	fmt.Println("║    TPM-Based Licensing System             ║")
+	fmt.Println("║    Hardware-Secured Licensing System      ║")
 	fmt.Println("╚═══════════════════════════════════════════╝")
 	fmt.Println()
 
@@ -31,10 +31,16 @@ func main() {
 	if err != nil {
 		log.Fatalf("Failed to initialize License Manager: %v", err)
 	}
+	defer func() {
+		if err := lm.Close(); err != nil {
+			log.Printf("Error closing license manager: %v", err)
+		}
+	}()
 	log.Printf("📦 Storage backend: %s", storageMode)
 	if pubPath := lm.PublicKeyPath(); pubPath != "" {
 		log.Printf("🔑 Public key stored at %s", pubPath)
 	}
+	log.Printf("🔏 Signing provider: %s", lm.SigningProviderID())
 	adminUser, bootstrapPassword, bootstrapKey, err := lm.EnsureDefaultAdmin(ctx)
 	if err != nil {
 		log.Fatalf("Failed to initialize admin user: %v", err)
@@ -46,22 +52,13 @@ func main() {
 		log.Printf("   Rotate these credentials immediately after logging in.")
 	}
 
-	// Create demo clients and licenses
-	fmt.Println("📋 Creating demo clients and licenses...")
-
-	client1, _ := lm.CreateClient(ctx, "john@example.com", "john_doe")
-	license1, _ := lm.GenerateLicense(ctx, client1.ID, 365*24*time.Hour, 3)
-	fmt.Printf("   ✓ Client: %s | License: %s\n", client1.Email, license1.LicenseKey)
-
-	client2, _ := lm.CreateClient(ctx, "jane@example.com", "jane_smith")
-	license2, _ := lm.GenerateLicense(ctx, client2.ID, 30*24*time.Hour, 5)
-	fmt.Printf("   ✓ Client: %s | License: %s\n", client2.Email, license2.LicenseKey)
-
-	client3, _ := lm.CreateClient(ctx, "bob@example.com", "bob_jones")
-	license3, _ := lm.GenerateLicense(ctx, client3.ID, 90*24*time.Hour, 2)
-	fmt.Printf("   ✓ Client: %s | License: %s\n", client3.Email, license3.LicenseKey)
-
-	fmt.Println()
+	if shouldBootstrapDemoData() {
+		if err := createDemoData(ctx, lm); err != nil {
+			log.Printf("⚠️ Failed to bootstrap demo data: %v", err)
+		}
+	} else {
+		log.Printf("📋 Demo bootstrap skipped (set LICENSE_SERVER_BOOTSTRAP_DEMO=true to enable)")
+	}
 
 	rawAPIKeys := os.Getenv("LICENSE_SERVER_API_KEYS")
 	apiKeys := utils.ParseAPIKeys(rawAPIKeys)
@@ -95,4 +92,44 @@ func main() {
 	if err := server.Start(); err != nil {
 		log.Fatalf("Server error: %v", err)
 	}
+}
+
+func shouldBootstrapDemoData() bool {
+	flag := strings.TrimSpace(os.Getenv("LICENSE_SERVER_BOOTSTRAP_DEMO"))
+	if flag == "" {
+		return false
+	}
+	switch strings.ToLower(flag) {
+	case "1", "true", "yes", "on":
+		return true
+	default:
+		return false
+	}
+}
+
+func createDemoData(ctx context.Context, lm *licensing.LicenseManager) error {
+	log.Printf("📋 Creating demo clients and licenses...")
+	type seed struct {
+		email    string
+		user     string
+		duration time.Duration
+		max      int
+	}
+	seeds := []seed{
+		{"john@example.com", "john_doe", 365 * 24 * time.Hour, 3},
+		{"jane@example.com", "jane_smith", 30 * 24 * time.Hour, 5},
+		{"bob@example.com", "bob_jones", 90 * 24 * time.Hour, 2},
+	}
+	for _, s := range seeds {
+		client, err := lm.CreateClient(ctx, s.email, s.user)
+		if err != nil {
+			return err
+		}
+		license, err := lm.GenerateLicense(ctx, client.ID, s.duration, s.max)
+		if err != nil {
+			return err
+		}
+		log.Printf("   ✓ Client: %s | License: %s", client.Email, license.LicenseKey)
+	}
+	return nil
 }
