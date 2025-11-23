@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -120,72 +121,18 @@ func durationFromEnv(key string) time.Duration {
 	return dur
 }
 
-func showLicenseInfo(license *client.LicenseData) {
-	if license == nil {
-		return
-	}
-	fmt.Println("\n📄 License Information:")
-	fmt.Println("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-	fmt.Printf("  User: %s\n", license.Username)
-	fmt.Printf("  Email: %s\n", license.Email)
-	if license.ClientID != "" {
-		fmt.Printf("  Client ID: %s\n", license.ClientID)
-	}
-	fmt.Printf("  License ID: %s\n", license.ID)
-	if license.DeviceFingerprint != "" {
-		fmt.Printf("  This device: %s...\n", truncateFingerprint(license.DeviceFingerprint))
-	}
-	fmt.Printf("  Issued: %s\n", license.IssuedAt.Format("2006-01-02 15:04:05"))
-	fmt.Printf("  Expires: %s\n", license.ExpiresAt.Format("2006-01-02 15:04:05"))
-	fmt.Printf("  Activations: %d / %d\n", license.CurrentActivations, license.MaxActivations)
-	if len(license.Devices) > 0 {
-		fmt.Println("  Registered devices:")
-		for _, device := range license.Devices {
-			if device.Fingerprint == "" {
-				continue
-			}
-			fmt.Printf("    • %s... | activated %s | last seen %s\n",
-				truncateFingerprint(device.Fingerprint),
-				formatTimestamp(device.ActivatedAt),
-				formatTimestamp(device.LastSeenAt),
-			)
-		}
-	}
-
-	daysLeft := int(time.Until(license.ExpiresAt).Hours() / 24)
-	if daysLeft > 0 {
-		fmt.Printf("  Days remaining: %d\n", daysLeft)
-	} else {
-		fmt.Println("  Status: ⚠️  EXPIRED")
-	}
-	fmt.Println("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-}
-
 func runApplication(ctx context.Context, license *client.LicenseData) error {
 	fmt.Println()
 	fmt.Println("🚀 Starting application...")
-	fmt.Println()
-	fmt.Println("╔═══════════════════════════════════════════╗")
-	fmt.Printf("║  Welcome, %s!%-25s║\n", license.Username, strings.Repeat(" ", max(0, 25-len(license.Username))))
-	fmt.Println("║                                           ║")
-	fmt.Println("║  Your application is running with a       ║")
-	fmt.Println("║  valid TPM-protected license.             ║")
-	fmt.Println("║                                           ║")
-	fmt.Println("║  All operations are cryptographically     ║")
-	fmt.Println("║  verified and device-locked.              ║")
-	fmt.Println("╚═══════════════════════════════════════════╝")
-
-	fmt.Println("\n📊 Application Status:")
-	fmt.Println("  ✓ License verified")
-	fmt.Println("  ✓ Device authenticated")
-	fmt.Println("  ✓ Signature validated")
-	fmt.Println("  ✓ All systems operational")
-
-	showLicenseInfo(license)
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		fmt.Fprintf(w, "Hello, world! License holder: %s\n", license.Username)
+		// Add license information to request context
+		ctx := context.WithValue(r.Context(), "license", license)
+		r = r.WithContext(ctx)
+		data, _ := json.Marshal(license)
+		w.Header().Set("Content-Type", "application/json")
+		w.Write(data)
 	})
 
 	server := &http.Server{Addr: ":8081", Handler: mux}
@@ -227,25 +174,4 @@ func showBanner() {
 	fmt.Printf("║  %s v%s%-20s║\n", APP_NAME, APP_VERSION, "")
 	fmt.Println("║  TPM-Protected Licensed Application       ║")
 	fmt.Println("╚═══════════════════════════════════════════╝")
-}
-
-func truncateFingerprint(fp string) string {
-	if len(fp) <= 16 {
-		return fp
-	}
-	return fp[:16]
-}
-
-func formatTimestamp(ts time.Time) string {
-	if ts.IsZero() {
-		return "n/a"
-	}
-	return ts.Format("2006-01-02 15:04:05")
-}
-
-func max(a, b int) int {
-	if a > b {
-		return a
-	}
-	return b
 }
