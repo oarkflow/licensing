@@ -240,6 +240,33 @@ func (s *Server) handleActivate(w http.ResponseWriter, r *http.Request) {
 	s.respondJSON(w, http.StatusOK, resp)
 }
 
+func (s *Server) handleVerify(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		s.respondError(w, http.StatusMethodNotAllowed, "Method not allowed")
+		return
+	}
+	if !s.enforceRateLimit(w, r) {
+		return
+	}
+	var req ActivationRequest
+	if !s.decodeJSONBody(w, r, &req, maxActivationPayloadBytes) {
+		return
+	}
+	if err := validateActivationRequest(&req); err != nil {
+		s.respondError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	req.LicenseKey = normalizeLicenseKey(req.LicenseKey)
+	req.IPAddress = clientIP(r)
+	req.UserAgent = r.UserAgent()
+	resp, err := s.lm.VerifyLicense(r.Context(), &req)
+	if err != nil {
+		s.respondError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	s.respondJSON(w, http.StatusOK, resp)
+}
+
 func (s *Server) handleLicenses(w http.ResponseWriter, r *http.Request) {
 	if !s.enforceRateLimit(w, r) {
 		return
@@ -556,6 +583,7 @@ func (s *Server) Start() error {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/activate", s.handleActivate)
 	mux.HandleFunc("/api/licenses", s.handleLicenses)
+	mux.HandleFunc("/api/verify", s.handleVerify)
 	mux.HandleFunc("/api/licenses/", s.handleLicenseActions)
 	mux.HandleFunc("/api/clients", s.handleClients)
 	mux.HandleFunc("/api/clients/", s.handleClientActions)
@@ -581,6 +609,7 @@ func (s *Server) Start() error {
 	log.Printf("🚀 License Manager Server starting on port %s", s.port)
 	log.Printf("📝 Endpoints:")
 	log.Printf("   POST   %s://localhost%s/api/activate", scheme, s.port)
+	log.Printf("   POST   %s://localhost%s/api/verify", scheme, s.port)
 	log.Printf("   GET    %s://localhost%s/api/licenses", scheme, s.port)
 	log.Printf("   POST   %s://localhost%s/api/licenses", scheme, s.port)
 	log.Printf("   POST   %s://localhost%s/api/licenses/{id}/revoke", scheme, s.port)

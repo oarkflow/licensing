@@ -450,61 +450,119 @@ func (lm *LicenseManager) ActivateLicense(ctx context.Context, req *ActivationRe
 		return nil, fmt.Errorf("failed to persist license state: %w", err)
 	}
 
+	resp, err := lm.issueEncryptedLicenseResponse(license, req.DeviceFingerprint)
+	if err != nil {
+		return nil, err
+	}
+	resp.Message = "License activated successfully"
+	log.Printf("Activated license for %s on device %s", license.Email, truncateFingerprint(req.DeviceFingerprint))
+	lm.recordActivationAttempt(ctx, license, req, true, resp.Message)
+	return resp, nil
+}
+
+func (lm *LicenseManager) issueEncryptedLicenseResponse(license *License, fingerprint string) (*ActivationResponse, error) {
+	if license == nil {
+		return nil, fmt.Errorf("license missing")
+	}
 	licenseData := lm.buildLicensePayload(license)
 	licenseJSON, err := json.Marshal(licenseData)
 	if err != nil {
 		return nil, fmt.Errorf("failed to marshal license: %w", err)
 	}
-
 	nonce, err := lm.tpm.GetRandom(12)
 	if err != nil {
 		return nil, fmt.Errorf("failed to generate nonce: %w", err)
 	}
-
-	transportKeyMaterial := req.DeviceFingerprint + hex.EncodeToString(nonce)
+	transportKeyMaterial := fingerprint + hex.EncodeToString(nonce)
 	transportHash := sha256.Sum256([]byte(transportKeyMaterial))
 	transportKey := transportHash[:]
-
 	aesKey, err := lm.tpm.GetRandom(32)
 	if err != nil {
 		return nil, fmt.Errorf("failed to generate AES key: %w", err)
 	}
-
 	dataToEncrypt := append(aesKey, licenseJSON...)
 	block, err := aes.NewCipher(transportKey)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create cipher: %w", err)
 	}
-
 	gcm, err := cipher.NewGCM(block)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create GCM: %w", err)
 	}
-
 	encryptedData := gcm.Seal(nil, nonce, dataToEncrypt, nil)
 	dataHash := sha256.Sum256(encryptedData)
 	signature, err := lm.tpm.Sign(lm.signingHandle, dataHash[:])
 	if err != nil {
 		return nil, fmt.Errorf("failed to sign: %w", err)
 	}
-
 	pubKeyBytes, err := x509.MarshalPKIXPublicKey(lm.publicKey)
 	if err != nil {
 		return nil, fmt.Errorf("failed to marshal public key: %w", err)
 	}
-
 	pubKeyPEM := pem.EncodeToMemory(&pem.Block{Type: "PUBLIC KEY", Bytes: pubKeyBytes})
-
-	log.Printf("Activated license for %s on device %s", license.Email, truncateFingerprint(req.DeviceFingerprint))
-	resp := &ActivationResponse{
+	return &ActivationResponse{
 		Success:          true,
-		Message:          "License activated successfully",
 		EncryptedLicense: hex.EncodeToString(encryptedData),
 		Nonce:            hex.EncodeToString(nonce),
 		Signature:        hex.EncodeToString(signature),
 		PublicKey:        string(pubKeyPEM),
 		ExpiresAt:        license.ExpiresAt,
+	}, nil
+}
+
+func (lm *LicenseManager) VerifyLicense(ctx context.Context, req *ActivationRequest) (*ActivationResponse, error) {
+	req.LicenseKey = normalizeLicenseKey(req.LicenseKey)
+	license, err := lm.storage.GetLicenseByKey(ctx, req.LicenseKey)
+	if err != nil {
+		return &ActivationResponse{Success: false, Message: "Invalid license key"}, nil
 	}
+	if license.Email != req.Email || license.Username != req.Username {
+		message := "Email or username does not match license"
+		lm.recordActivationAttempt(ctx, license, req, false, message)
+		return &ActivationResponse{Success: false, Message: message}, nil
+	}
+	client, err := lm.storage.GetClient(ctx, license.ClientID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load client: %w", err)
+	}
+	if client.Status == ClientStatusBanned {
+		message := "Client is banned"
+		lm.recordActivationAttempt(ctx, license, req, false, message)
+		return &ActivationResponse{Success: false, Message: message}, nil
+	}
+	now := time.Now()
+	if license.IsRevoked {
+		message := "License has been revoked"
+		lm.recordActivationAttempt(ctx, license, req, false, message)
+		return &ActivationResponse{Success: false, Message: message}, nil
+	}
+	if now.After(license.ExpiresAt) {
+		message := fmt.Sprintf("License expired on %s", license.ExpiresAt.Format("2006-01-02"))
+		lm.recordActivationAttempt(ctx, license, req, false, message)
+		return &ActivationResponse{Success: false, Message: message}, nil
+	}
+	if license.Devices == nil {
+		message := "Device not previously activated"
+		lm.recordActivationAttempt(ctx, license, req, false, message)
+		return &ActivationResponse{Success: false, Message: message}, nil
+	}
+	device, exists := license.Devices[req.DeviceFingerprint]
+	if !exists {
+		message := "Device not previously activated"
+		lm.recordActivationAttempt(ctx, license, req, false, message)
+		return &ActivationResponse{Success: false, Message: message}, nil
+	}
+	device.LastSeenAt = now
+	license.LastActivatedAt = now
+	license.CurrentActivations = len(license.Devices)
+	if err := lm.storage.UpdateLicense(ctx, license); err != nil {
+		return nil, fmt.Errorf("failed to persist license state: %w", err)
+	}
+	resp, err := lm.issueEncryptedLicenseResponse(license, req.DeviceFingerprint)
+	if err != nil {
+		return nil, err
+	}
+	resp.Message = "License verified successfully"
 	lm.recordActivationAttempt(ctx, license, req, true, resp.Message)
 	return resp, nil
 }

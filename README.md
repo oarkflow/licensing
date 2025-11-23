@@ -7,6 +7,7 @@ A hardened license server and client that leverage TPM-backed signing, per-devic
 - **TPM-backed signing:** every activation payload is signed by a TPM-generated RSA key whose public half is exported once to `~/.licensing/server_public_key.pem` with `0600` permissions.
 - **Per-device locking:** activations require a deterministic device fingerprint and are bounded by `max_activations` per license.
 - **Encrypted license transport:** licenses are encrypted with AES-GCM using a key derived from the device fingerprint and nonce before being stored client-side.
+- **Integrity-bound checksum:** the client seals a SHA-256 checksum of the on-disk license blob using the device fingerprint so tampering attempts are detected before parsing, and it re-validates with the server before recreating a lost checksum.
 - **Audit + admin APIs:** rate-limited HTTP endpoints for managing clients, issuing licenses, banning/unbanning, and revoking/reinstating licenses.
 - **Pluggable storage:** choose in-memory or JSON-on-disk storage via environment variables; disk snapshots are written atomically with `0600` permissions.
 - **Secure client storage:** the CLI enforces `chmod 600` on `~/.myapp/.license.dat`, verifies TPM signatures, and refuses to run if the payload or fingerprint diverge.
@@ -138,6 +139,7 @@ Each command honors the layered config above, so you can mix flags and env vars 
 
 - **Public key hygiene:** the server writes `server_public_key.pem` only inside `~/.licensing/` with permissions `0700/0600`. Delete the file if you rotate TPM keys; it will be re-created on next start.
 - **Client license file:** if the CLI detects that `~/.myapp/.license.dat` is world-readable it aborts with instructions to `chmod 600`.
+- **Detached checksum vault:** every activation records an encrypted checksum next to the license file; if it goes missing the client recontacts the server to reissue the license before recreating the checksum, and it still aborts if the checksum diverges.
 - **Signatures first:** both activation time and runtime verification fail fast if the TPM signature or ciphertext hash mismatches.
 - **Device binding:** moving the license file to a different machine fails because the fingerprint becomes invalid and the transport key cannot be recreated.
 - **Admin controls:** revoke or ban clients to immediately block further activations; reinstating can be done via the admin endpoints without server restarts.

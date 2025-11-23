@@ -11,6 +11,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"encoding/pem"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -35,6 +36,8 @@ const (
 	defaultHTTPTimeout = 15 * time.Second
 )
 
+const checksumFileSuffix = ".chk"
+
 // Config controls how the licensing client persists data and contacts the server.
 type Config struct {
 	ConfigDir   string
@@ -47,11 +50,12 @@ type Config struct {
 
 // Client manages license activation and verification for Go applications.
 type Client struct {
-	config      Config
-	configDir   string
-	licensePath string
-	publicKey   *rsa.PublicKey
-	httpClient  *http.Client
+	config       Config
+	configDir    string
+	licensePath  string
+	checksumPath string
+	publicKey    *rsa.PublicKey
+	httpClient   *http.Client
 }
 
 // ActivationRequest is sent to the licensing server.
@@ -119,10 +123,11 @@ func NewClient(cfg Config) (*Client, error) {
 	httpClient := &http.Client{Timeout: normalized.HTTPTimeout}
 
 	client := &Client{
-		config:      normalized,
-		configDir:   normalized.ConfigDir,
-		licensePath: filepath.Join(normalized.ConfigDir, normalized.LicenseFile),
-		httpClient:  httpClient,
+		config:       normalized,
+		configDir:    normalized.ConfigDir,
+		licensePath:  filepath.Join(normalized.ConfigDir, normalized.LicenseFile),
+		checksumPath: filepath.Join(normalized.ConfigDir, normalized.LicenseFile+checksumFileSuffix),
+		httpClient:   httpClient,
 	}
 
 	return client, nil
@@ -261,57 +266,16 @@ func (lc *Client) Activate(email, username, licenseKey string) error {
 
 	fmt.Println("✓ License validated by server")
 
-	encryptedData, err := hex.DecodeString(activationResp.EncryptedLicense)
-	if err != nil {
-		return fmt.Errorf("failed to decode encrypted license: %w", err)
-	}
-
-	nonce, err := hex.DecodeString(activationResp.Nonce)
-	if err != nil {
-		return fmt.Errorf("failed to decode nonce: %w", err)
-	}
-
-	signature, err := hex.DecodeString(activationResp.Signature)
-	if err != nil {
-		return fmt.Errorf("failed to decode signature: %w", err)
-	}
-
 	fmt.Println("🔑 Parsing server public key...")
-	publicKeyBlock, _ := pem.Decode([]byte(activationResp.PublicKey))
-	if publicKeyBlock == nil {
-		return fmt.Errorf("failed to parse public key PEM")
-	}
-
-	publicKeyInterface, err := x509.ParsePKIXPublicKey(publicKeyBlock.Bytes)
-	if err != nil {
-		return fmt.Errorf("failed to parse public key: %w", err)
-	}
-
-	publicKey, ok := publicKeyInterface.(*rsa.PublicKey)
-	if !ok {
-		return fmt.Errorf("not an RSA public key")
-	}
-
-	lc.publicKey = publicKey
-
 	fmt.Println("✍️  Verifying signature...")
-	dataHash := sha256.Sum256(encryptedData)
-	if err := rsa.VerifyPSS(publicKey, crypto.SHA256, dataHash[:], signature, nil); err != nil {
-		return fmt.Errorf("signature verification failed: %w", err)
+	storedLicense, err := lc.buildStoredLicenseFromResponse(&activationResp, fingerprint)
+	if err != nil {
+		return err
 	}
 	fmt.Println("✓ Signature verified")
 
-	storedLicense := StoredLicense{
-		EncryptedData:     encryptedData,
-		Nonce:             nonce,
-		Signature:         signature,
-		PublicKey:         publicKeyBlock.Bytes,
-		DeviceFingerprint: fingerprint,
-		ExpiresAt:         activationResp.ExpiresAt,
-	}
-
 	fmt.Println("💾 Saving license file...")
-	if err := lc.writeLicenseFile(&storedLicense); err != nil {
+	if err := lc.writeLicenseFile(storedLicense); err != nil {
 		return err
 	}
 
@@ -331,10 +295,149 @@ func (lc *Client) writeLicenseFile(stored *StoredLicense) error {
 	if err := os.WriteFile(tmpPath, licenseJSON, 0o600); err != nil {
 		return fmt.Errorf("failed to write license: %w", err)
 	}
+	if err := lc.persistLicenseChecksum(stored.DeviceFingerprint, licenseJSON); err != nil {
+		_ = os.Remove(tmpPath)
+		return fmt.Errorf("failed to secure license checksum: %w", err)
+	}
 	if err := os.Rename(tmpPath, lc.licensePath); err != nil {
+		_ = os.Remove(tmpPath)
+		_ = os.Remove(lc.checksumPath)
 		return fmt.Errorf("failed to finalize license: %w", err)
 	}
 	return nil
+}
+
+func (lc *Client) buildStoredLicenseFromResponse(resp *ActivationResponse, fingerprint string) (*StoredLicense, error) {
+	if resp == nil {
+		return nil, fmt.Errorf("activation response missing")
+	}
+	if strings.TrimSpace(resp.EncryptedLicense) == "" || strings.TrimSpace(resp.Nonce) == "" || strings.TrimSpace(resp.Signature) == "" || strings.TrimSpace(resp.PublicKey) == "" {
+		return nil, fmt.Errorf("activation payload missing cryptographic material")
+	}
+	encryptedData, err := hex.DecodeString(resp.EncryptedLicense)
+	if err != nil {
+		return nil, fmt.Errorf("failed to decode encrypted license: %w", err)
+	}
+	nonce, err := hex.DecodeString(resp.Nonce)
+	if err != nil {
+		return nil, fmt.Errorf("failed to decode nonce: %w", err)
+	}
+	signature, err := hex.DecodeString(resp.Signature)
+	if err != nil {
+		return nil, fmt.Errorf("failed to decode signature: %w", err)
+	}
+	publicKeyBlock, _ := pem.Decode([]byte(resp.PublicKey))
+	if publicKeyBlock == nil {
+		return nil, fmt.Errorf("failed to parse public key PEM")
+	}
+	publicKeyInterface, err := x509.ParsePKIXPublicKey(publicKeyBlock.Bytes)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse public key: %w", err)
+	}
+	publicKey, ok := publicKeyInterface.(*rsa.PublicKey)
+	if !ok {
+		return nil, fmt.Errorf("not an RSA public key")
+	}
+	dataHash := sha256.Sum256(encryptedData)
+	if err := rsa.VerifyPSS(publicKey, crypto.SHA256, dataHash[:], signature, nil); err != nil {
+		return nil, fmt.Errorf("signature verification failed: %w", err)
+	}
+	lc.publicKey = publicKey
+	storedLicense := &StoredLicense{
+		EncryptedData:     encryptedData,
+		Nonce:             nonce,
+		Signature:         signature,
+		PublicKey:         publicKeyBlock.Bytes,
+		DeviceFingerprint: fingerprint,
+		ExpiresAt:         resp.ExpiresAt,
+	}
+	return storedLicense, nil
+}
+
+func (lc *Client) loadStoredLicense(raw []byte) (*StoredLicense, error) {
+	var stored StoredLicense
+	if err := json.Unmarshal(raw, &stored); err != nil {
+		return nil, fmt.Errorf("failed to parse license file: %w", err)
+	}
+	if err := lc.validateStoredLicenseSignature(&stored); err != nil {
+		return nil, err
+	}
+	return &stored, nil
+}
+
+func (lc *Client) validateStoredLicenseSignature(stored *StoredLicense) error {
+	if stored == nil {
+		return fmt.Errorf("stored license missing")
+	}
+	publicKeyInterface, err := x509.ParsePKIXPublicKey(stored.PublicKey)
+	if err != nil {
+		return fmt.Errorf("failed to parse public key: %w", err)
+	}
+	publicKey, ok := publicKeyInterface.(*rsa.PublicKey)
+	if !ok {
+		return fmt.Errorf("invalid public key type")
+	}
+	lc.publicKey = publicKey
+	dataHash := sha256.Sum256(stored.EncryptedData)
+	if err := rsa.VerifyPSS(publicKey, crypto.SHA256, dataHash[:], stored.Signature, nil); err != nil {
+		return fmt.Errorf("signature verification failed - license may be tampered")
+	}
+	return nil
+}
+
+func (lc *Client) recoverLicenseFromServer(stored *StoredLicense) (*StoredLicense, error) {
+	if stored == nil {
+		return nil, fmt.Errorf("stored license missing")
+	}
+	licenseData, err := lc.decryptLicense(stored)
+	if err != nil {
+		return nil, fmt.Errorf("failed to decrypt license for server verification: %w", err)
+	}
+	verificationReq := ActivationRequest{
+		Email:             licenseData.Email,
+		Username:          licenseData.Username,
+		LicenseKey:        licenseData.LicenseKey,
+		DeviceFingerprint: stored.DeviceFingerprint,
+	}
+	body, err := json.Marshal(verificationReq)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal verification request: %w", err)
+	}
+	req, err := http.NewRequest(http.MethodPost, lc.apiURL("/api/verify"), bytes.NewBuffer(body))
+	if err != nil {
+		return nil, fmt.Errorf("failed to build verification request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("User-Agent", lc.userAgent())
+	resp, err := lc.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to contact license server: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		bodyBytes, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		return nil, fmt.Errorf("license server responded %s: %s", resp.Status, strings.TrimSpace(string(bodyBytes)))
+	}
+	var verificationResp ActivationResponse
+	if err := json.NewDecoder(resp.Body).Decode(&verificationResp); err != nil {
+		return nil, fmt.Errorf("failed to decode verification response: %w", err)
+	}
+	if !verificationResp.Success {
+		message := verificationResp.Message
+		if message == "" {
+			message = "license verification failed"
+		}
+		return nil, fmt.Errorf("server rejected license verification: %s", message)
+	}
+	updated, err := lc.buildStoredLicenseFromResponse(&verificationResp, stored.DeviceFingerprint)
+	if err != nil {
+		return nil, err
+	}
+	fmt.Println("🔄 License refreshed from server")
+	if err := lc.writeLicenseFile(updated); err != nil {
+		return nil, err
+	}
+	return updated, nil
 }
 
 func (lc *Client) ensureLicenseFileSecure(info os.FileInfo) error {
@@ -365,37 +468,48 @@ func (lc *Client) Verify() (*LicenseData, error) {
 		return nil, fmt.Errorf("failed to read license file: %w", err)
 	}
 
-	var storedLicense StoredLicense
-	if err := json.Unmarshal(licenseJSON, &storedLicense); err != nil {
-		return nil, fmt.Errorf("failed to parse license file: %w", err)
-	}
-
-	publicKeyInterface, err := x509.ParsePKIXPublicKey(storedLicense.PublicKey)
+	storedLicense, err := lc.loadStoredLicense(licenseJSON)
 	if err != nil {
-		return nil, fmt.Errorf("failed to parse public key: %w", err)
-	}
-
-	publicKey, ok := publicKeyInterface.(*rsa.PublicKey)
-	if !ok {
-		return nil, fmt.Errorf("invalid public key type")
-	}
-
-	lc.publicKey = publicKey
-
-	dataHash := sha256.Sum256(storedLicense.EncryptedData)
-	if err := rsa.VerifyPSS(publicKey, crypto.SHA256, dataHash[:], storedLicense.Signature, nil); err != nil {
-		return nil, fmt.Errorf("signature verification failed - license may be tampered")
+		return nil, err
 	}
 
 	currentFingerprint, err := lc.generateDeviceFingerprint()
 	if err != nil {
 		return nil, fmt.Errorf("failed to generate current fingerprint: %w", err)
 	}
+
 	if storedLicense.DeviceFingerprint != currentFingerprint {
 		return nil, fmt.Errorf("device fingerprint mismatch - license is tied to different device")
 	}
 
-	licenseData, err := lc.decryptLicense(&storedLicense)
+	if err := lc.verifyStoredChecksum(currentFingerprint, licenseJSON); err != nil {
+		if errors.Is(err, errChecksumMissing) {
+			fmt.Println("⚠️  License checksum missing — revalidating with server...")
+			recovered, recErr := lc.recoverLicenseFromServer(storedLicense)
+			if recErr != nil {
+				return nil, recErr
+			}
+			storedLicense = recovered
+			licenseJSON, err = os.ReadFile(lc.licensePath)
+			if err != nil {
+				return nil, fmt.Errorf("failed to read refreshed license file: %w", err)
+			}
+			if err := lc.verifyStoredChecksum(currentFingerprint, licenseJSON); err != nil {
+				return nil, err
+			}
+			storedLicense, err = lc.loadStoredLicense(licenseJSON)
+			if err != nil {
+				return nil, err
+			}
+			if storedLicense.DeviceFingerprint != currentFingerprint {
+				return nil, fmt.Errorf("device fingerprint mismatch after server verification")
+			}
+		} else {
+			return nil, err
+		}
+	}
+
+	licenseData, err := lc.decryptLicense(storedLicense)
 	if err != nil {
 		return nil, fmt.Errorf("failed to decrypt license: %w", err)
 	}
