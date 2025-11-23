@@ -11,9 +11,9 @@ import (
 	"syscall"
 	"time"
 
-	licensinglayer "github.com/oarflow/licensing/pkg/licensing"
-	licensingclient "github.com/oarflow/licensing/pkg/licensingclient"
-	clientactivation "github.com/oarflow/licensing/pkg/licensingclient/activation"
+	"github.com/oarflow/licensing/pkg/activation"
+	"github.com/oarflow/licensing/pkg/client"
+	"github.com/oarflow/licensing/pkg/runner"
 )
 
 const (
@@ -28,9 +28,9 @@ const (
 
 var (
 	activationMode  = flag.String("activation-mode", defaultActivationMode, "Activation strategy: auto, env, prompt, verify")
-	configDirFlag   = flag.String("config-dir", "", fmt.Sprintf("Directory for license data (default $HOME/%s or $%s)", licensingclient.DefaultConfigDir, EnvConfigDir))
-	licenseFileFlag = flag.String("license-file", "", fmt.Sprintf("License file name (default %s or $%s)", licensingclient.DefaultLicenseFile, EnvLicenseFile))
-	serverURLFlag   = flag.String("server-url", "", fmt.Sprintf("Licensing server URL (default $%s or %s)", licensingclient.EnvServerURL, licensingclient.DefaultServerURL))
+	configDirFlag   = flag.String("config-dir", "", fmt.Sprintf("Directory for license data (default $HOME/%s or $%s)", client.DefaultConfigDir, EnvConfigDir))
+	licenseFileFlag = flag.String("license-file", "", fmt.Sprintf("License file name (default %s or $%s)", client.DefaultLicenseFile, EnvLicenseFile))
+	serverURLFlag   = flag.String("server-url", "", fmt.Sprintf("Licensing server URL (default $%s or %s)", client.EnvServerURL, client.DefaultServerURL))
 	httpTimeoutFlag = flag.Duration("http-timeout", 0, fmt.Sprintf("HTTP timeout (e.g. 15s). Defaults to internal value or $%s", EnvHTTPTimeout))
 )
 
@@ -38,33 +38,39 @@ func main() {
 	flag.Parse()
 	showBanner()
 
-	runner, err := configureRunner()
+	mode := strings.ToLower(strings.TrimSpace(*activationMode))
+	runner, err := configureRunner(mode)
 	if err != nil {
 		log.Fatalf("Failed to configure licensing runner: %v", err)
 	}
 
-	if err := runner.Run(context.Background(), func(ctx context.Context, license *licensingclient.LicenseData) error {
-		return runApplication(ctx, license)
-	}); err != nil {
+	appFn := runApplication
+	if mode == "verify" {
+		appFn = func(ctx context.Context, license *client.LicenseData) error {
+			fmt.Println("\nVerification complete. No application code executed.")
+			return nil
+		}
+	}
+
+	if err := runner.Run(context.Background(), appFn); err != nil {
 		log.Fatalf("\n❌ %v", err)
 	}
 }
 
-func configureRunner() (*licensinglayer.Runner[*licensingclient.LicenseData], error) {
+func configureRunner(mode string) (*runner.Runner[*client.LicenseData], error) {
 	clientCfg := resolveClientConfig()
 
-	factory := func() (licensinglayer.Client[*licensingclient.LicenseData], error) {
-		return licensingclient.NewClient(clientCfg)
+	factory := func() (runner.Client[*client.LicenseData], error) {
+		return client.NewClient(clientCfg)
 	}
 
-	mode := strings.ToLower(strings.TrimSpace(*activationMode))
-	activationStrategy := clientactivation.Strategy(mode, clientactivation.PromptIO{In: os.Stdin, Out: os.Stdout})
+	activationStrategy := activation.Strategy(mode, activation.PromptIO{In: os.Stdin, Out: os.Stdout})
 
-	return licensinglayer.NewRunner(licensinglayer.Config[*licensingclient.LicenseData]{
+	return runner.NewRunner(runner.Config[*client.LicenseData]{
 		ClientFactory: factory,
 		Activation:    activationStrategy,
-		Hooks: licensinglayer.Hooks[*licensingclient.LicenseData]{
-			AfterVerify: func(ctx context.Context, license *licensingclient.LicenseData) error {
+		Hooks: runner.Hooks[*client.LicenseData]{
+			AfterVerify: func(ctx context.Context, license *client.LicenseData) error {
 				fmt.Println("✓ License verified successfully")
 				showLicenseInfo(license)
 				return nil
@@ -74,8 +80,8 @@ func configureRunner() (*licensinglayer.Runner[*licensingclient.LicenseData], er
 	})
 }
 
-func resolveClientConfig() licensingclient.Config {
-	cfg := licensingclient.Config{
+func resolveClientConfig() client.Config {
+	cfg := client.Config{
 		AppName:    APP_NAME,
 		AppVersion: APP_VERSION,
 	}
@@ -94,7 +100,7 @@ func resolveClientConfig() licensingclient.Config {
 
 	if value := strings.TrimSpace(*serverURLFlag); value != "" {
 		cfg.ServerURL = value
-	} else if env := envOrEmpty(licensingclient.EnvServerURL); env != "" {
+	} else if env := envOrEmpty(client.EnvServerURL); env != "" {
 		cfg.ServerURL = env
 	}
 
@@ -124,7 +130,7 @@ func durationFromEnv(key string) time.Duration {
 	return dur
 }
 
-func showLicenseInfo(license *licensingclient.LicenseData) {
+func showLicenseInfo(license *client.LicenseData) {
 	if license == nil {
 		return
 	}
@@ -165,7 +171,7 @@ func showLicenseInfo(license *licensingclient.LicenseData) {
 	fmt.Println("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
 }
 
-func runApplication(ctx context.Context, license *licensingclient.LicenseData) error {
+func runApplication(ctx context.Context, license *client.LicenseData) error {
 	fmt.Println()
 	fmt.Println("🚀 Starting application...")
 	fmt.Println()

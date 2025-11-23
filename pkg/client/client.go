@@ -1,4 +1,4 @@
-package licensingclient
+package client
 
 import (
 	"bytes"

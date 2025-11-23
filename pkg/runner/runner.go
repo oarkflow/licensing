@@ -1,4 +1,4 @@
-package licensing
+package runner
 
 import (
 	"context"

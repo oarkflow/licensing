@@ -1,4 +1,4 @@
-package main
+package licensing
 
 import (
 	"crypto/sha256"
@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/oarflow/licensing/pkg/utils"
 )
 
 type Server struct {
@@ -49,37 +50,6 @@ type apiKeyIssueResponse struct {
 	Metadata apiKeyMetadata `json:"metadata"`
 }
 
-func hashAPIKeys(keys []string) ([][]byte, error) {
-	hashes := make([][]byte, 0, len(keys))
-	for _, key := range keys {
-		trimmed := strings.TrimSpace(key)
-		if trimmed == "" {
-			continue
-		}
-		hash := sha256.Sum256([]byte(trimmed))
-		copyHash := make([]byte, len(hash))
-		copy(copyHash, hash[:])
-		hashes = append(hashes, copyHash)
-	}
-	if len(hashes) == 0 {
-		return nil, fmt.Errorf("no valid API keys provided")
-	}
-	return hashes, nil
-}
-
-func parseAPIKeys(raw string) []string {
-	parts := strings.Split(raw, ",")
-	keys := make([]string, 0, len(parts))
-	for _, part := range parts {
-		trimmed := strings.TrimSpace(part)
-		if trimmed == "" {
-			continue
-		}
-		keys = append(keys, trimmed)
-	}
-	return keys
-}
-
 func newAdminUserResponse(user *AdminUser) adminUserResponse {
 	if user == nil {
 		return adminUserResponse{}
@@ -109,7 +79,7 @@ func NewServer(lm *LicenseManager, port string, apiKeys []string, limiter *RateL
 	var hashes [][]byte
 	var err error
 	if len(apiKeys) > 0 {
-		hashes, err = hashAPIKeys(apiKeys)
+		hashes, err = utils.HashAPIKeys(apiKeys)
 		if err != nil {
 			return nil, err
 		}

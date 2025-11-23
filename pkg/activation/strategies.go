@@ -9,8 +9,8 @@ import (
 	"os"
 	"strings"
 
-	licensinglayer "github.com/oarflow/licensing/pkg/licensing"
-	licensingclient "github.com/oarflow/licensing/pkg/licensingclient"
+	licensingclient "github.com/oarflow/licensing/pkg/client"
+	"github.com/oarflow/licensing/pkg/runner"
 )
 
 const (
@@ -26,53 +26,48 @@ type PromptIO struct {
 }
 
 // Strategy builds a composed activation strategy for the requested mode.
-func Strategy(mode string, io PromptIO) licensinglayer.ActivationStrategy[*licensingclient.LicenseData] {
-	normalized := strings.ToLower(strings.TrimSpace(mode))
-	switch normalized {
+func Strategy(mode string, io PromptIO) runner.ActivationStrategy[*licensingclient.LicenseData] {
+	switch strings.ToLower(strings.TrimSpace(mode)) {
 	case "env":
-		return licensinglayer.ComposeActivation(
-			licensinglayer.EnsureExistingActivation[*licensingclient.LicenseData]{},
-			Env(),
-		)
+		return Env()
 	case "prompt":
-		return licensinglayer.ComposeActivation(
-			licensinglayer.EnsureExistingActivation[*licensingclient.LicenseData]{},
-			Prompt(io),
-		)
+		return Prompt(io)
 	case "verify":
 		return VerifyOnly()
+	case "auto", "":
+		return Auto(io)
 	default:
 		return Auto(io)
 	}
 }
 
 // Auto ensures an existing activation, then tries env-based activation, then interactive activation.
-func Auto(io PromptIO) licensinglayer.ActivationStrategy[*licensingclient.LicenseData] {
-	return licensinglayer.ComposeActivation(
-		licensinglayer.EnsureExistingActivation[*licensingclient.LicenseData]{},
+func Auto(io PromptIO) runner.ActivationStrategy[*licensingclient.LicenseData] {
+	return runner.ComposeActivation(
+		runner.EnsureExistingActivation[*licensingclient.LicenseData]{},
 		Env(),
 		Prompt(io),
 	)
 }
 
 // Env attempts activation using environment variables.
-func Env() licensinglayer.ActivationStrategy[*licensingclient.LicenseData] {
+func Env() runner.ActivationStrategy[*licensingclient.LicenseData] {
 	return envActivationStrategy{}
 }
 
 // Prompt collects credentials from the provided IO streams.
-func Prompt(io PromptIO) licensinglayer.ActivationStrategy[*licensingclient.LicenseData] {
+func Prompt(io PromptIO) runner.ActivationStrategy[*licensingclient.LicenseData] {
 	return promptActivationStrategy{io: io}
 }
 
 // VerifyOnly only allows already activated clients to proceed.
-func VerifyOnly() licensinglayer.ActivationStrategy[*licensingclient.LicenseData] {
-	return licensinglayer.EnsureExistingActivation[*licensingclient.LicenseData]{}
+func VerifyOnly() runner.ActivationStrategy[*licensingclient.LicenseData] {
+	return runner.EnsureExistingActivation[*licensingclient.LicenseData]{}
 }
 
 type envActivationStrategy struct{}
 
-func (envActivationStrategy) EnsureActivated(ctx context.Context, client licensinglayer.Client[*licensingclient.LicenseData]) error {
+func (envActivationStrategy) EnsureActivated(ctx context.Context, client runner.Client[*licensingclient.LicenseData]) error {
 	typed, ok := client.(*licensingclient.Client)
 	if !ok {
 		return fmt.Errorf("environment activation requires *licensingclient.Client")
@@ -100,7 +95,7 @@ type promptActivationStrategy struct {
 	io PromptIO
 }
 
-func (s promptActivationStrategy) EnsureActivated(ctx context.Context, client licensinglayer.Client[*licensingclient.LicenseData]) error {
+func (s promptActivationStrategy) EnsureActivated(ctx context.Context, client runner.Client[*licensingclient.LicenseData]) error {
 	typed, ok := client.(*licensingclient.Client)
 	if !ok {
 		return fmt.Errorf("interactive activation requires *licensingclient.Client")

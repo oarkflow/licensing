@@ -1,4 +1,4 @@
-package main
+package licensing
 
 import (
 	"context"
@@ -642,7 +642,7 @@ func (ps *PersistentStorage) loadFromDisk() error {
 	return nil
 }
 
-func buildStorageFromEnv() (Storage, string, error) {
+func BuildStorageFromEnv() (Storage, string, error) {
 	mode := strings.ToLower(strings.TrimSpace(os.Getenv("LICENSE_SERVER_STORAGE")))
 	switch mode {
 	case "", "memory":
