@@ -73,6 +73,7 @@ The CLI layers configuration in the following order: command-line flags → envi
 | `--license-file` | `LICENSE_CLIENT_LICENSE_FILE` | File name (placed under `config-dir`) for the encrypted license blob. | `.license.dat` |
 | `--server-url` | `LICENSE_CLIENT_SERVER` | Licensing server base URL. | `http://localhost:8080` |
 | `--http-timeout` | `LICENSE_CLIENT_HTTP_TIMEOUT` | HTTP client timeout (Go duration, e.g. `20s`, `1m`). | `15s` |
+| `--exec` or args after `--` | `LICENSE_CLIENT_EXEC` | Command to run once the license is verified (quote the flag value or place the command after `--`). | — |
 
 Example:
 
@@ -82,6 +83,25 @@ LICENSE_CLIENT_LICENSE_FILE=myapp.lic \
 go run ./client --server-url https://licensing.example.com --http-timeout 20s
 ```
 
+### Wrapping Your Application
+
+The CLI is intentionally minimal so it can wrap any binary or script once licensing succeeds. Supply the command either with the `--exec` flag or by appending it after `--`:
+
+```bash
+go run ./client --activation-mode auto -- ./bin/my-app --serve --port 9000
+# or
+go run ./client --exec "./bin/my-app --serve --port 9000"
+```
+
+When a command is provided the client performs activation/verification and then launches it with stdin/stdout/stderr attached. The child process receives these environment variables so it can inspect license metadata without re-reading disk:
+
+- `LICENSED_USER`, `LICENSED_EMAIL`, `LICENSE_ID`
+- `LICENSE_CLIENT_ID`, `LICENSE_DEVICE_FINGERPRINT`
+- `LICENSE_EXPIRES_AT` (RFC3339 timestamp)
+- `LICENSE_DATA_JSON` (entire license payload)
+
+If you omit the wrapped command the client simply verifies the license and exits successfully. `verify` mode always skips the wrapped command even if one is provided, which is useful for boot checks or CI probes.
+
 ### Activation Strategies
 
 | Mode | Flow | When to use |
@@ -89,7 +109,7 @@ go run ./client --server-url https://licensing.example.com --http-timeout 20s
 | `auto` | Runs verification if a license already exists. Otherwise attempts environment activation, falling back to the interactive prompt. | Production defaults where you want non-interactive first, but still allow manual entry. |
 | `env` | Requires `LICENSE_CLIENT_EMAIL`, `LICENSE_CLIENT_USERNAME`, and `LICENSE_CLIENT_LICENSE_KEY`. Fails fast if any field is missing. | Headless containers/CI that receive license secrets via env/secret stores. |
 | `prompt` | Always prompt for email/username/license key in the terminal. | Local development, demos, or manual activation scripts. |
-| `verify` | Only verifies an already-activated license; never prompts or uses env credentials. | Hardened production startups where activations happen during image build time. |
+| `verify` | Only verifies an already-activated license; never prompts, uses env credentials, or runs the wrapped command. | Hardened production startups where activations happen during image build time. |
 
 ### Exercising Each Mode
 

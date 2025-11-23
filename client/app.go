@@ -2,9 +2,11 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"log"
+	"net/http"
 	"os"
 	"os/signal"
 	"strings"
@@ -39,7 +41,18 @@ func main() {
 	showBanner()
 
 	mode := strings.ToLower(strings.TrimSpace(*activationMode))
-	runner, err := configureRunner(mode)
+	clientCfg := resolveClientConfig()
+	factory := func() (runner.Client[*client.LicenseData], error) {
+		return client.NewClient(clientCfg)
+	}
+
+	activationStrategy := activation.Strategy(mode, activation.PromptIO{In: os.Stdin, Out: os.Stdout})
+
+	appRunner, err := runner.NewRunner(runner.Config[*client.LicenseData]{
+		ClientFactory: factory,
+		Activation:    activationStrategy,
+		Logger:        log.Default(),
+	})
 	if err != nil {
 		log.Fatalf("Failed to configure licensing runner: %v", err)
 	}
@@ -52,32 +65,9 @@ func main() {
 		}
 	}
 
-	if err := runner.Run(context.Background(), appFn); err != nil {
+	if err := appRunner.Run(context.Background(), appFn); err != nil {
 		log.Fatalf("\n❌ %v", err)
 	}
-}
-
-func configureRunner(mode string) (*runner.Runner[*client.LicenseData], error) {
-	clientCfg := resolveClientConfig()
-
-	factory := func() (runner.Client[*client.LicenseData], error) {
-		return client.NewClient(clientCfg)
-	}
-
-	activationStrategy := activation.Strategy(mode, activation.PromptIO{In: os.Stdin, Out: os.Stdout})
-
-	return runner.NewRunner(runner.Config[*client.LicenseData]{
-		ClientFactory: factory,
-		Activation:    activationStrategy,
-		Hooks: runner.Hooks[*client.LicenseData]{
-			AfterVerify: func(ctx context.Context, license *client.LicenseData) error {
-				fmt.Println("✓ License verified successfully")
-				showLicenseInfo(license)
-				return nil
-			},
-		},
-		Logger: log.Default(),
-	})
 }
 
 func resolveClientConfig() client.Config {
@@ -191,7 +181,22 @@ func runApplication(ctx context.Context, license *client.LicenseData) error {
 	fmt.Println("  ✓ Signature validated")
 	fmt.Println("  ✓ All systems operational")
 
-	fmt.Println("\n💡 Your actual application logic would run here...")
+	showLicenseInfo(license)
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprintf(w, "Hello, world! License holder: %s\n", license.Username)
+	})
+
+	server := &http.Server{Addr: ":8081", Handler: mux}
+	errCh := make(chan error, 1)
+	go func() {
+		if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			errCh <- err
+		}
+	}()
+
+	fmt.Println("\n🌐 HTTP server listening on http://localhost:8081")
 	fmt.Println("\nPress Ctrl+C to exit")
 
 	sigCh := make(chan os.Signal, 1)
@@ -199,12 +204,21 @@ func runApplication(ctx context.Context, license *client.LicenseData) error {
 	defer signal.Stop(sigCh)
 
 	select {
-	case <-sigCh:
-		fmt.Println("\n🛑 Shutdown signal received. Exiting...")
 	case <-ctx.Done():
-		fmt.Println("\n🛑 Context cancelled. Exiting...")
+		fmt.Println("\n🛑 Context cancelled. Shutting down server...")
+	case sig := <-sigCh:
+		fmt.Printf("\n🛑 Received %s. Shutting down server...\n", sig)
+	case err := <-errCh:
+		return fmt.Errorf("http server error: %w", err)
 	}
 
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := server.Shutdown(shutdownCtx); err != nil {
+		return fmt.Errorf("http server shutdown: %w", err)
+	}
+
+	fmt.Println("✅ Server stopped gracefully")
 	return nil
 }
 
