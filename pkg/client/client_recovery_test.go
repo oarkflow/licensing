@@ -11,11 +11,14 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"encoding/pem"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"testing"
 	"time"
+
+	"github.com/oarflow/licensing/pkg/utils"
 )
 
 type licenseResponseFactory struct {
@@ -32,7 +35,7 @@ func newLicenseResponseFactory(t *testing.T) *licenseResponseFactory {
 	return &licenseResponseFactory{priv: priv, pub: &priv.PublicKey}
 }
 
-func (f *licenseResponseFactory) buildArtifacts(t *testing.T, licenseData *LicenseData, fingerprint string) (*StoredLicense, *ActivationResponse) {
+func (f *licenseResponseFactory) buildArtifacts(t *testing.T, licenseData *LicenseData, fingerprint string) (*StoredLicense, *ActivationResponse, []byte) {
 	t.Helper()
 	licenseJSON, err := json.Marshal(licenseData)
 	if err != nil {
@@ -85,7 +88,7 @@ func (f *licenseResponseFactory) buildArtifacts(t *testing.T, licenseData *Licen
 		PublicKey:        string(pem.EncodeToMemory(&pem.Block{Type: "PUBLIC KEY", Bytes: pubDER})),
 		ExpiresAt:        licenseData.ExpiresAt,
 	}
-	return stored, resp
+	return stored, resp, aesKey
 }
 
 func TestVerifyRecoversMissingChecksumViaServer(t *testing.T) {
@@ -110,7 +113,7 @@ func TestVerifyRecoversMissingChecksumViaServer(t *testing.T) {
 		IssuedAt:   time.Now().Add(-time.Hour),
 		ExpiresAt:  time.Now().Add(12 * time.Hour),
 	}
-	stored, serverResp := factory.buildArtifacts(t, licenseData, fingerprint)
+	stored, serverResp, sessionKey := factory.buildArtifacts(t, licenseData, fingerprint)
 	licenseJSON, err := json.Marshal(stored)
 	if err != nil {
 		t.Fatalf("failed to marshal stored license: %v", err)
@@ -120,18 +123,46 @@ func TestVerifyRecoversMissingChecksumViaServer(t *testing.T) {
 	}
 	_ = os.Remove(client.checksumPath)
 
+	secureResponse := func() []byte {
+		payload, err := json.Marshal(serverResp)
+		if err != nil {
+			t.Fatalf("failed to marshal server resp: %v", err)
+		}
+		envelope, err := utils.EncryptEnvelope(sessionKey, payload)
+		if err != nil {
+			t.Fatalf("failed to encrypt server resp: %v", err)
+		}
+		buf, err := json.Marshal(envelope)
+		if err != nil {
+			t.Fatalf("failed to marshal envelope: %v", err)
+		}
+		return buf
+	}()
+
 	verifyCalled := make(chan struct{}, 1)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/api/verify" {
 			w.WriteHeader(http.StatusNotFound)
 			return
 		}
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Fatalf("failed to read request: %v", err)
+		}
+		var env utils.SecureEnvelope
+		if err := json.Unmarshal(body, &env); err != nil {
+			t.Fatalf("failed to parse secure request: %v", err)
+		}
+		if _, err := utils.DecryptEnvelope(sessionKey, &env); err != nil {
+			t.Fatalf("failed to decrypt request: %v", err)
+		}
 		select {
 		case verifyCalled <- struct{}{}:
 		default:
 		}
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(serverResp)
+		w.Header().Set(headerSecureFlag, "1")
+		_, _ = w.Write(secureResponse)
 	}))
 	defer server.Close()
 

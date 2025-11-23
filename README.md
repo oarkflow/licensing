@@ -8,6 +8,7 @@ A hardened license server and client that leverage TPM-backed signing, per-devic
 - **Per-device locking:** activations require a deterministic device fingerprint and are bounded by `max_activations` per license.
 - **Encrypted license transport:** licenses are encrypted with AES-GCM using a key derived from the device fingerprint and nonce before being stored client-side.
 - **Integrity-bound checksum:** the client seals a SHA-256 checksum of the on-disk license blob using the device fingerprint so tampering attempts are detected before parsing, and it re-validates with the server before recreating a lost checksum.
+- **Session-keyed channel:** once activated, each device receives a unique transport key embedded inside the license payload, and subsequent HTTP traffic is re-encrypted with that key so no pre-shared secrets are required beyond TLS.
 - **Audit + admin APIs:** rate-limited HTTP endpoints for managing clients, issuing licenses, banning/unbanning, and revoking/reinstating licenses.
 - **Pluggable storage:** choose in-memory or JSON-on-disk storage via environment variables; disk snapshots are written atomically with `0600` permissions.
 - **Secure client storage:** the CLI enforces `chmod 600` on `~/.myapp/.license.dat`, verifies TPM signatures, and refuses to run if the payload or fingerprint diverge.
@@ -130,10 +131,11 @@ Each command honors the layered config above, so you can mix flags and env vars 
 ## How Server & Client Communicate
 
 1. The client derives a stable device fingerprint (hostname, OS, CPU brand, and MAC hash) and posts it with the license key to `/api/activate`.
-2. The server validates the request (API rate limit, client ban status, license quotas) before encrypting `[random 32-byte key || license JSON]` with AES-GCM using a key derived from the device fingerprint + nonce.
+2. The server validates the request (API rate limit, client ban status, license quotas) before encrypting `[random 32-byte transport key || license JSON]` with AES-GCM using a key derived from the device fingerprint + nonce.
 3. The ciphertext is signed by the TPM key and returned together with the PEM-encoded public key and expiration metadata.
-4. The client verifies the signature, derives the same transport key, decrypts the payload, and stores it locally.
-5. Every launch replays those checks, enforces file permissions, and prints detailed device + activation telemetry.
+4. The client verifies the signature, derives the same transport key, decrypts the payload, persists it, and caches the transport key for future HTTPS payload encryption.
+5. Subsequent client requests and server responses are re-encrypted with that cached transport key (and identify themselves via headers) so plaintext never crosses process boundaries even if TLS terminates upstream.
+6. Every launch replays those checks, enforces file permissions, and prints detailed device + activation telemetry.
 
 ## Tamper-Resistance Guidelines
 

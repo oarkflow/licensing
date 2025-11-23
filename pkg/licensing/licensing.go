@@ -178,9 +178,10 @@ const (
 )
 
 type LicenseDevice struct {
-	Fingerprint string    `json:"fingerprint"`
-	ActivatedAt time.Time `json:"activated_at"`
-	LastSeenAt  time.Time `json:"last_seen_at"`
+	Fingerprint  string    `json:"fingerprint"`
+	ActivatedAt  time.Time `json:"activated_at"`
+	LastSeenAt   time.Time `json:"last_seen_at"`
+	TransportKey []byte    `json:"-"`
 }
 
 type ActivationRecord struct {
@@ -215,6 +216,9 @@ func cloneLicense(license *License) *License {
 				continue
 			}
 			copyDev := *dev
+			if len(dev.TransportKey) > 0 {
+				copyDev.TransportKey = append([]byte(nil), dev.TransportKey...)
+			}
 			clone.Devices[fp] = &copyDev
 		}
 	}
@@ -240,7 +244,6 @@ var (
 )
 
 const maxActivationPayloadBytes = 1 << 20
-const defaultStoragePath = "data/licensing-state.json"
 
 func normalizeLicenseKey(key string) string {
 	cleaned := strings.ToUpper(strings.TrimSpace(key))

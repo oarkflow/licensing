@@ -433,13 +433,26 @@ func (lm *LicenseManager) ActivateLicense(ctx context.Context, req *ActivationRe
 			lm.recordActivationAttempt(ctx, license, req, false, message)
 			return &ActivationResponse{Success: false, Message: message}, nil
 		}
-		license.Devices[req.DeviceFingerprint] = &LicenseDevice{
-			Fingerprint: req.DeviceFingerprint,
-			ActivatedAt: now,
-			LastSeenAt:  now,
+		transportKey, err := lm.tpm.GetRandom(32)
+		if err != nil {
+			return nil, fmt.Errorf("failed to generate transport key: %w", err)
 		}
+		device = &LicenseDevice{
+			Fingerprint:  req.DeviceFingerprint,
+			ActivatedAt:  now,
+			LastSeenAt:   now,
+			TransportKey: transportKey,
+		}
+		license.Devices[req.DeviceFingerprint] = device
 	} else {
 		device.LastSeenAt = now
+		if len(device.TransportKey) == 0 {
+			transportKey, err := lm.tpm.GetRandom(32)
+			if err != nil {
+				return nil, fmt.Errorf("failed to refresh transport key: %w", err)
+			}
+			device.TransportKey = transportKey
+		}
 	}
 
 	license.IsActivated = true
@@ -450,7 +463,7 @@ func (lm *LicenseManager) ActivateLicense(ctx context.Context, req *ActivationRe
 		return nil, fmt.Errorf("failed to persist license state: %w", err)
 	}
 
-	resp, err := lm.issueEncryptedLicenseResponse(license, req.DeviceFingerprint)
+	resp, err := lm.issueEncryptedLicenseResponse(license, req.DeviceFingerprint, device.TransportKey)
 	if err != nil {
 		return nil, err
 	}
@@ -460,9 +473,12 @@ func (lm *LicenseManager) ActivateLicense(ctx context.Context, req *ActivationRe
 	return resp, nil
 }
 
-func (lm *LicenseManager) issueEncryptedLicenseResponse(license *License, fingerprint string) (*ActivationResponse, error) {
+func (lm *LicenseManager) issueEncryptedLicenseResponse(license *License, fingerprint string, sessionKey []byte) (*ActivationResponse, error) {
 	if license == nil {
 		return nil, fmt.Errorf("license missing")
+	}
+	if len(sessionKey) != 32 {
+		return nil, fmt.Errorf("invalid session key length")
 	}
 	licenseData := lm.buildLicensePayload(license)
 	licenseJSON, err := json.Marshal(licenseData)
@@ -476,11 +492,8 @@ func (lm *LicenseManager) issueEncryptedLicenseResponse(license *License, finger
 	transportKeyMaterial := fingerprint + hex.EncodeToString(nonce)
 	transportHash := sha256.Sum256([]byte(transportKeyMaterial))
 	transportKey := transportHash[:]
-	aesKey, err := lm.tpm.GetRandom(32)
-	if err != nil {
-		return nil, fmt.Errorf("failed to generate AES key: %w", err)
-	}
-	dataToEncrypt := append(aesKey, licenseJSON...)
+	plaintext := append([]byte{}, sessionKey...)
+	plaintext = append(plaintext, licenseJSON...)
 	block, err := aes.NewCipher(transportKey)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create cipher: %w", err)
@@ -489,7 +502,7 @@ func (lm *LicenseManager) issueEncryptedLicenseResponse(license *License, finger
 	if err != nil {
 		return nil, fmt.Errorf("failed to create GCM: %w", err)
 	}
-	encryptedData := gcm.Seal(nil, nonce, dataToEncrypt, nil)
+	encryptedData := gcm.Seal(nil, nonce, plaintext, nil)
 	dataHash := sha256.Sum256(encryptedData)
 	signature, err := lm.tpm.Sign(lm.signingHandle, dataHash[:])
 	if err != nil {
@@ -552,19 +565,51 @@ func (lm *LicenseManager) VerifyLicense(ctx context.Context, req *ActivationRequ
 		lm.recordActivationAttempt(ctx, license, req, false, message)
 		return &ActivationResponse{Success: false, Message: message}, nil
 	}
+	if len(device.TransportKey) != 32 {
+		transportKey, err := lm.tpm.GetRandom(32)
+		if err != nil {
+			return nil, fmt.Errorf("failed to refresh transport key: %w", err)
+		}
+		device.TransportKey = transportKey
+	}
 	device.LastSeenAt = now
 	license.LastActivatedAt = now
 	license.CurrentActivations = len(license.Devices)
 	if err := lm.storage.UpdateLicense(ctx, license); err != nil {
 		return nil, fmt.Errorf("failed to persist license state: %w", err)
 	}
-	resp, err := lm.issueEncryptedLicenseResponse(license, req.DeviceFingerprint)
+	resp, err := lm.issueEncryptedLicenseResponse(license, req.DeviceFingerprint, device.TransportKey)
 	if err != nil {
 		return nil, err
 	}
 	resp.Message = "License verified successfully"
 	lm.recordActivationAttempt(ctx, license, req, true, resp.Message)
 	return resp, nil
+}
+
+func (lm *LicenseManager) getDeviceTransportKey(ctx context.Context, licenseKey, fingerprint string) ([]byte, error) {
+	licenseKey = normalizeLicenseKey(licenseKey)
+	if licenseKey == "" {
+		return nil, fmt.Errorf("license key required")
+	}
+	if strings.TrimSpace(fingerprint) == "" {
+		return nil, fmt.Errorf("device fingerprint required")
+	}
+	license, err := lm.storage.GetLicenseByKey(ctx, licenseKey)
+	if err != nil {
+		return nil, fmt.Errorf("license not found")
+	}
+	if license.Devices == nil {
+		return nil, fmt.Errorf("device not registered")
+	}
+	device, ok := license.Devices[fingerprint]
+	if !ok || device == nil {
+		return nil, fmt.Errorf("device not registered")
+	}
+	if len(device.TransportKey) != 32 {
+		return nil, fmt.Errorf("device transport key missing")
+	}
+	return append([]byte(nil), device.TransportKey...), nil
 }
 
 func (lm *LicenseManager) buildLicensePayload(license *License) map[string]interface{} {

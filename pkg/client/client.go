@@ -21,6 +21,8 @@ import (
 	"runtime"
 	"strings"
 	"time"
+
+	"github.com/oarflow/licensing/pkg/utils"
 )
 
 const (
@@ -28,6 +30,12 @@ const (
 	DefaultLicenseFile = ".license.dat"
 	DefaultConfigDir   = ".myapp"
 	DefaultServerURL   = "http://localhost:8080"
+)
+
+const (
+	headerSecureFlag  = "X-License-Secure"
+	headerFingerprint = "X-Device-Fingerprint"
+	headerLicenseKey  = "X-License-Key"
 )
 
 const (
@@ -50,12 +58,15 @@ type Config struct {
 
 // Client manages license activation and verification for Go applications.
 type Client struct {
-	config       Config
-	configDir    string
-	licensePath  string
-	checksumPath string
-	publicKey    *rsa.PublicKey
-	httpClient   *http.Client
+	config           Config
+	configDir        string
+	licensePath      string
+	checksumPath     string
+	publicKey        *rsa.PublicKey
+	httpClient       *http.Client
+	sessionKey       []byte
+	boundFingerprint string
+	boundLicenseKey  string
 }
 
 // ActivationRequest is sent to the licensing server.
@@ -178,6 +189,13 @@ func normalizeConfig(cfg Config) (Config, error) {
 	return cfg, nil
 }
 
+func normalizeLicenseKey(key string) string {
+	cleaned := strings.ToUpper(strings.TrimSpace(key))
+	cleaned = strings.ReplaceAll(cleaned, "-", "")
+	cleaned = strings.ReplaceAll(cleaned, " ", "")
+	return cleaned
+}
+
 func (lc *Client) baseURL() string {
 	if lc.config.ServerURL != "" {
 		return lc.config.ServerURL
@@ -233,27 +251,36 @@ func (lc *Client) Activate(email, username, licenseKey string) error {
 	if err != nil {
 		return fmt.Errorf("failed to marshal request: %w", err)
 	}
+	requestBody, encrypted, err := lc.encryptPayload(fingerprint, licenseKey, reqBody)
+	if err != nil {
+		return fmt.Errorf("failed to encrypt activation payload: %w", err)
+	}
 
 	fmt.Println("📡 Contacting license server...")
-	req, err := http.NewRequest(http.MethodPost, lc.apiURL("/api/activate"), bytes.NewBuffer(reqBody))
+	req, err := http.NewRequest(http.MethodPost, lc.apiURL("/api/activate"), bytes.NewBuffer(requestBody))
 	if err != nil {
 		return fmt.Errorf("failed to build request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("User-Agent", lc.userAgent())
+	req.Header.Set(headerFingerprint, fingerprint)
+	req.Header.Set(headerLicenseKey, normalizeLicenseKey(licenseKey))
+	if encrypted {
+		req.Header.Set(headerSecureFlag, "1")
+	}
 	resp, err := lc.httpClient.Do(req)
 	if err != nil {
 		return fmt.Errorf("failed to contact license server: %w", err)
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-		return fmt.Errorf("license server responded %s: %s", resp.Status, strings.TrimSpace(string(body)))
+	plaintext, err := lc.readSecureResponse(resp)
+	if err != nil {
+		return err
 	}
 
 	var activationResp ActivationResponse
-	if err := json.NewDecoder(resp.Body).Decode(&activationResp); err != nil {
+	if err := json.Unmarshal(plaintext, &activationResp); err != nil {
 		return fmt.Errorf("failed to decode response: %w", err)
 	}
 
@@ -276,6 +303,9 @@ func (lc *Client) Activate(email, username, licenseKey string) error {
 
 	fmt.Println("💾 Saving license file...")
 	if err := lc.writeLicenseFile(storedLicense); err != nil {
+		return err
+	}
+	if _, err := lc.decryptLicense(storedLicense); err != nil {
 		return err
 	}
 
@@ -305,6 +335,83 @@ func (lc *Client) writeLicenseFile(stored *StoredLicense) error {
 		return fmt.Errorf("failed to finalize license: %w", err)
 	}
 	return nil
+}
+
+func (lc *Client) encryptPayload(fingerprint, licenseKey string, plaintext []byte) ([]byte, bool, error) {
+	if lc.canUseSessionKey(fingerprint, licenseKey) {
+		envelope, err := utils.EncryptEnvelope(lc.sessionKey, plaintext)
+		if err != nil {
+			return nil, false, err
+		}
+		payload, err := json.Marshal(envelope)
+		if err != nil {
+			return nil, false, err
+		}
+		return payload, true, nil
+	}
+	return plaintext, false, nil
+}
+
+func (lc *Client) decryptPayload(ciphertext []byte) ([]byte, error) {
+	if len(lc.sessionKey) != 32 {
+		return nil, fmt.Errorf("secure payload received before session key available")
+	}
+	var envelope utils.SecureEnvelope
+	if err := json.Unmarshal(ciphertext, &envelope); err != nil {
+		return nil, fmt.Errorf("failed to parse secure envelope: %w", err)
+	}
+	return utils.DecryptEnvelope(lc.sessionKey, &envelope)
+}
+
+func (lc *Client) canUseSessionKey(fingerprint, licenseKey string) bool {
+	if len(lc.sessionKey) != 32 {
+		return false
+	}
+	if fingerprint == "" || lc.boundFingerprint != fingerprint {
+		return false
+	}
+	return lc.boundLicenseKey != "" && lc.boundLicenseKey == normalizeLicenseKey(licenseKey)
+}
+
+func (lc *Client) bindSessionKey(sessionKey []byte, fingerprint, licenseKey string) {
+	if len(sessionKey) != 32 {
+		return
+	}
+	lc.sessionKey = append([]byte(nil), sessionKey...)
+	lc.boundFingerprint = fingerprint
+	lc.boundLicenseKey = normalizeLicenseKey(licenseKey)
+}
+
+func (lc *Client) readSecureResponse(resp *http.Response) ([]byte, error) {
+	if resp == nil {
+		return nil, fmt.Errorf("response missing")
+	}
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 2<<20))
+	if err != nil {
+		return nil, fmt.Errorf("failed to read server response: %w", err)
+	}
+	secure := strings.EqualFold(resp.Header.Get(headerSecureFlag), "1")
+	plaintext := body
+	if secure {
+		var decryptErr error
+		plaintext, decryptErr = lc.decryptPayload(body)
+		if decryptErr != nil {
+			if resp.StatusCode >= http.StatusOK && resp.StatusCode < 300 {
+				return nil, fmt.Errorf("failed to decrypt server payload: %w", decryptErr)
+			}
+			return nil, fmt.Errorf("license server responded %s: %s", resp.Status, strings.TrimSpace(string(body)))
+		}
+	}
+	if resp.StatusCode < http.StatusOK || resp.StatusCode >= 300 {
+		var errPayload map[string]string
+		if err := json.Unmarshal(plaintext, &errPayload); err == nil {
+			if msg := strings.TrimSpace(errPayload["error"]); msg != "" {
+				return nil, fmt.Errorf("license server responded %s: %s", resp.Status, msg)
+			}
+		}
+		return nil, fmt.Errorf("license server responded %s: %s", resp.Status, strings.TrimSpace(string(plaintext)))
+	}
+	return plaintext, nil
 }
 
 func (lc *Client) buildStoredLicenseFromResponse(resp *ActivationResponse, fingerprint string) (*StoredLicense, error) {
@@ -403,23 +510,32 @@ func (lc *Client) recoverLicenseFromServer(stored *StoredLicense) (*StoredLicens
 	if err != nil {
 		return nil, fmt.Errorf("failed to marshal verification request: %w", err)
 	}
-	req, err := http.NewRequest(http.MethodPost, lc.apiURL("/api/verify"), bytes.NewBuffer(body))
+	secureBody, encrypted, err := lc.encryptPayload(stored.DeviceFingerprint, verificationReq.LicenseKey, body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to encrypt verification payload: %w", err)
+	}
+	req, err := http.NewRequest(http.MethodPost, lc.apiURL("/api/verify"), bytes.NewBuffer(secureBody))
 	if err != nil {
 		return nil, fmt.Errorf("failed to build verification request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("User-Agent", lc.userAgent())
+	req.Header.Set(headerFingerprint, stored.DeviceFingerprint)
+	req.Header.Set(headerLicenseKey, normalizeLicenseKey(verificationReq.LicenseKey))
+	if encrypted {
+		req.Header.Set(headerSecureFlag, "1")
+	}
 	resp, err := lc.httpClient.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("failed to contact license server: %w", err)
 	}
 	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		bodyBytes, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-		return nil, fmt.Errorf("license server responded %s: %s", resp.Status, strings.TrimSpace(string(bodyBytes)))
+	plaintext, err := lc.readSecureResponse(resp)
+	if err != nil {
+		return nil, err
 	}
 	var verificationResp ActivationResponse
-	if err := json.NewDecoder(resp.Body).Decode(&verificationResp); err != nil {
+	if err := json.Unmarshal(plaintext, &verificationResp); err != nil {
 		return nil, fmt.Errorf("failed to decode verification response: %w", err)
 	}
 	if !verificationResp.Success {
@@ -435,6 +551,9 @@ func (lc *Client) recoverLicenseFromServer(stored *StoredLicense) (*StoredLicens
 	}
 	fmt.Println("🔄 License refreshed from server")
 	if err := lc.writeLicenseFile(updated); err != nil {
+		return nil, err
+	}
+	if _, err := lc.decryptLicense(updated); err != nil {
 		return nil, err
 	}
 	return updated, nil
@@ -551,12 +670,14 @@ func (lc *Client) decryptLicense(stored *StoredLicense) (*LicenseData, error) {
 	if len(decryptedPackage) < 32 {
 		return nil, fmt.Errorf("decrypted payload too small")
 	}
+	sessionKey := append([]byte(nil), decryptedPackage[:32]...)
 	licenseJSON := decryptedPackage[32:]
 	var licenseData LicenseData
 	if err := json.Unmarshal(licenseJSON, &licenseData); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal license: %w", err)
 	}
 	licenseData.DeviceFingerprint = stored.DeviceFingerprint
+	lc.bindSessionKey(sessionKey, stored.DeviceFingerprint, licenseData.LicenseKey)
 	return &licenseData, nil
 }
 

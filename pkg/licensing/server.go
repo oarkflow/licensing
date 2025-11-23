@@ -122,6 +122,18 @@ func (s *Server) enforceRateLimit(w http.ResponseWriter, r *http.Request) bool {
 	return true
 }
 
+func (s *Server) enforceClientRateLimit(w http.ResponseWriter, r *http.Request) bool {
+	if s.rateLimiter == nil {
+		return true
+	}
+	ip := clientIP(r)
+	if !s.rateLimiter.Allow(ip) {
+		s.respondClientError(w, http.StatusTooManyRequests, "Too many requests", nil)
+		return false
+	}
+	return true
+}
+
 func (s *Server) authorizeAdmin(w http.ResponseWriter, r *http.Request) bool {
 	providedKey := strings.TrimSpace(r.Header.Get("X-API-Key"))
 	if providedKey == "" {
@@ -171,6 +183,83 @@ func (s *Server) respondError(w http.ResponseWriter, status int, message string)
 	s.respondJSON(w, status, map[string]string{"error": message})
 }
 
+func (s *Server) respondClientJSON(w http.ResponseWriter, status int, payload interface{}, transportKey []byte) {
+	w.Header().Set("Content-Type", "application/json")
+	if len(transportKey) == 32 {
+		data, err := json.Marshal(payload)
+		if err != nil {
+			log.Printf("failed to marshal secure payload: %v", err)
+			s.respondError(w, http.StatusInternalServerError, "internal server error")
+			return
+		}
+		envelope, err := utils.EncryptEnvelope(transportKey, data)
+		if err != nil {
+			log.Printf("failed to encrypt payload: %v", err)
+			s.respondError(w, http.StatusInternalServerError, "internal server error")
+			return
+		}
+		w.Header().Set("X-License-Secure", "1")
+		w.WriteHeader(status)
+		if err := json.NewEncoder(w).Encode(envelope); err != nil {
+			log.Printf("failed to write secure response: %v", err)
+		}
+		return
+	}
+	w.WriteHeader(status)
+	if err := json.NewEncoder(w).Encode(payload); err != nil {
+		log.Printf("failed to write JSON response: %v", err)
+	}
+}
+
+func (s *Server) respondClientError(w http.ResponseWriter, status int, message string, transportKey []byte) {
+	if len(transportKey) == 32 {
+		s.respondClientJSON(w, status, map[string]string{"error": message}, transportKey)
+		return
+	}
+	s.respondError(w, status, message)
+}
+
+func (s *Server) decodeClientJSONBody(w http.ResponseWriter, r *http.Request, dst interface{}, limit int64) ([]byte, bool) {
+	body := http.MaxBytesReader(w, r.Body, limit)
+	defer body.Close()
+	payload, err := io.ReadAll(body)
+	if err != nil {
+		s.respondClientError(w, http.StatusBadRequest, "Failed to read request body", nil)
+		return nil, false
+	}
+	fingerprint := strings.TrimSpace(r.Header.Get("X-Device-Fingerprint"))
+	licenseKey := strings.TrimSpace(r.Header.Get("X-License-Key"))
+	secure := strings.EqualFold(strings.TrimSpace(r.Header.Get("X-License-Secure")), "1")
+	var transportKey []byte
+	if secure {
+		if fingerprint == "" || licenseKey == "" {
+			s.respondClientError(w, http.StatusBadRequest, "Secure payload missing fingerprint or license key", nil)
+			return nil, false
+		}
+		key, err := s.lm.getDeviceTransportKey(r.Context(), licenseKey, fingerprint)
+		if err != nil {
+			s.respondClientError(w, http.StatusUnauthorized, "Device not authorized for secure transport", nil)
+			return nil, false
+		}
+		transportKey = key
+		var envelope utils.SecureEnvelope
+		if err := json.Unmarshal(payload, &envelope); err != nil {
+			s.respondClientError(w, http.StatusBadRequest, "Invalid secure envelope", nil)
+			return nil, false
+		}
+		payload, err = utils.DecryptEnvelope(transportKey, &envelope)
+		if err != nil {
+			s.respondClientError(w, http.StatusBadRequest, "Failed to decrypt payload", nil)
+			return nil, false
+		}
+	}
+	if err := json.Unmarshal(payload, dst); err != nil {
+		s.respondClientError(w, http.StatusBadRequest, "Invalid request body", transportKey)
+		return nil, false
+	}
+	return transportKey, true
+}
+
 func (s *Server) withSecurityHeaders(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		setSecurityHeaders(w)
@@ -213,19 +302,20 @@ func (s *Server) buildTLSConfig() (*tls.Config, error) {
 
 func (s *Server) handleActivate(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		s.respondError(w, http.StatusMethodNotAllowed, "Method not allowed")
+		s.respondClientError(w, http.StatusMethodNotAllowed, "Method not allowed", nil)
 		return
 	}
-	if !s.enforceRateLimit(w, r) {
+	if !s.enforceClientRateLimit(w, r) {
 		return
 	}
 
 	var req ActivationRequest
-	if !s.decodeJSONBody(w, r, &req, maxActivationPayloadBytes) {
+	transportKey, ok := s.decodeClientJSONBody(w, r, &req, maxActivationPayloadBytes)
+	if !ok {
 		return
 	}
 	if err := validateActivationRequest(&req); err != nil {
-		s.respondError(w, http.StatusBadRequest, err.Error())
+		s.respondClientError(w, http.StatusBadRequest, err.Error(), transportKey)
 		return
 	}
 	req.LicenseKey = normalizeLicenseKey(req.LicenseKey)
@@ -234,26 +324,27 @@ func (s *Server) handleActivate(w http.ResponseWriter, r *http.Request) {
 
 	resp, err := s.lm.ActivateLicense(r.Context(), &req)
 	if err != nil {
-		s.respondError(w, http.StatusInternalServerError, err.Error())
+		s.respondClientError(w, http.StatusInternalServerError, err.Error(), transportKey)
 		return
 	}
-	s.respondJSON(w, http.StatusOK, resp)
+	s.respondClientJSON(w, http.StatusOK, resp, transportKey)
 }
 
 func (s *Server) handleVerify(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		s.respondError(w, http.StatusMethodNotAllowed, "Method not allowed")
+		s.respondClientError(w, http.StatusMethodNotAllowed, "Method not allowed", nil)
 		return
 	}
-	if !s.enforceRateLimit(w, r) {
+	if !s.enforceClientRateLimit(w, r) {
 		return
 	}
 	var req ActivationRequest
-	if !s.decodeJSONBody(w, r, &req, maxActivationPayloadBytes) {
+	transportKey, ok := s.decodeClientJSONBody(w, r, &req, maxActivationPayloadBytes)
+	if !ok {
 		return
 	}
 	if err := validateActivationRequest(&req); err != nil {
-		s.respondError(w, http.StatusBadRequest, err.Error())
+		s.respondClientError(w, http.StatusBadRequest, err.Error(), transportKey)
 		return
 	}
 	req.LicenseKey = normalizeLicenseKey(req.LicenseKey)
@@ -261,10 +352,10 @@ func (s *Server) handleVerify(w http.ResponseWriter, r *http.Request) {
 	req.UserAgent = r.UserAgent()
 	resp, err := s.lm.VerifyLicense(r.Context(), &req)
 	if err != nil {
-		s.respondError(w, http.StatusInternalServerError, err.Error())
+		s.respondClientError(w, http.StatusInternalServerError, err.Error(), transportKey)
 		return
 	}
-	s.respondJSON(w, http.StatusOK, resp)
+	s.respondClientJSON(w, http.StatusOK, resp, transportKey)
 }
 
 func (s *Server) handleLicenses(w http.ResponseWriter, r *http.Request) {
