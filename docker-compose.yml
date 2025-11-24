@@ -29,6 +29,7 @@ services:
 
 volumes:
   licensing-data:
+    external: true
 
 networks:
   processgate:
