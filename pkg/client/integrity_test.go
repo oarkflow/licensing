@@ -12,7 +12,7 @@ func newTestClient(t *testing.T) *Client {
 		ConfigDir:   t.TempDir(),
 		LicenseFile: "license.dat",
 	}
-	client, err := NewClient(cfg)
+	client, err := New(cfg)
 	if err != nil {
 		t.Fatalf("failed to create client: %v", err)
 	}

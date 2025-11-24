@@ -529,7 +529,7 @@ func (s *Server) handleClients(w http.ResponseWriter, r *http.Request) {
 		if !s.decodeJSONBody(w, r, &req, maxAdminPayloadBytes) {
 			return
 		}
-		client, err := s.lm.CreateClient(r.Context(), req.Email, req.Username)
+		client, err := s.lm.CreateClient(r.Context(), req.Email)
 		if err != nil {
 			s.respondError(w, http.StatusBadRequest, err.Error())
 			return
@@ -692,34 +692,12 @@ func (s *Server) Start() error {
 	}
 
 	useTLS := s.hasTLSConfig()
-	scheme := "http"
-	if useTLS {
-		scheme = "https"
-	}
-
-	log.Printf("🚀 License Manager Server starting on port %s", s.port)
-	log.Printf("📝 Endpoints:")
-	log.Printf("   POST   %s://localhost%s/api/activate", scheme, s.port)
-	log.Printf("   POST   %s://localhost%s/api/verify", scheme, s.port)
-	log.Printf("   GET    %s://localhost%s/api/licenses", scheme, s.port)
-	log.Printf("   POST   %s://localhost%s/api/licenses", scheme, s.port)
-	log.Printf("   POST   %s://localhost%s/api/licenses/{id}/revoke", scheme, s.port)
-	log.Printf("   GET    %s://localhost%s/api/clients", scheme, s.port)
-	log.Printf("   POST   %s://localhost%s/api/clients", scheme, s.port)
-	log.Printf("   POST   %s://localhost%s/api/clients/{id}/ban", scheme, s.port)
-	log.Printf("   GET    %s://localhost%s/api/admin/users", scheme, s.port)
-	log.Printf("   POST   %s://localhost%s/api/admin/users", scheme, s.port)
-	log.Printf("   GET    %s://localhost%s/api/admin/api-keys?user_id={id}", scheme, s.port)
-	log.Printf("   POST   %s://localhost%s/api/admin/api-keys", scheme, s.port)
-	log.Printf("   GET    %s://localhost%s/health", scheme, s.port)
-
 	if useTLS {
 		tlsConfig, err := s.buildTLSConfig()
 		if err != nil {
 			return err
 		}
 		server.TLSConfig = tlsConfig
-		log.Printf("🔐 TLS enabled (mTLS=%t)", s.clientCAPath != "")
 		return server.ListenAndServeTLS(s.tlsCertPath, s.tlsKeyPath)
 	}
 

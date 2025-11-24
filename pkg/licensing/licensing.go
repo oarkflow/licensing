@@ -12,7 +12,6 @@ import (
 type Client struct {
 	ID        string       `json:"id"`
 	Email     string       `json:"email"`
-	Username  string       `json:"username"`
 	Status    ClientStatus `json:"status"`
 	CreatedAt time.Time    `json:"created_at"`
 	UpdatedAt time.Time    `json:"updated_at"`
@@ -21,26 +20,35 @@ type Client struct {
 }
 
 type License struct {
-	ID                 string                    `json:"id"`
-	ClientID           string                    `json:"client_id"`
-	Email              string                    `json:"email"`
-	Username           string                    `json:"username"`
-	LicenseKey         string                    `json:"license_key"`
-	IsRevoked          bool                      `json:"is_revoked"`
-	RevokedAt          time.Time                 `json:"revoked_at,omitempty"`
-	RevokeReason       string                    `json:"revoke_reason,omitempty"`
-	IsActivated        bool                      `json:"is_activated"`
-	IssuedAt           time.Time                 `json:"issued_at"`
-	LastActivatedAt    time.Time                 `json:"last_activated_at,omitempty"`
-	ExpiresAt          time.Time                 `json:"expires_at"`
-	MaxActivations     int                       `json:"max_activations"`
-	CurrentActivations int                       `json:"current_activations"`
-	Devices            map[string]*LicenseDevice `json:"devices"`
+	ID                 string                      `json:"id"`
+	ClientID           string                      `json:"client_id"`
+	Email              string                      `json:"email"`
+	LicenseKey         string                      `json:"license_key"`
+	IsRevoked          bool                        `json:"is_revoked"`
+	RevokedAt          time.Time                   `json:"revoked_at,omitempty"`
+	RevokeReason       string                      `json:"revoke_reason,omitempty"`
+	IsActivated        bool                        `json:"is_activated"`
+	IssuedAt           time.Time                   `json:"issued_at"`
+	LastActivatedAt    time.Time                   `json:"last_activated_at,omitempty"`
+	ExpiresAt          time.Time                   `json:"expires_at"`
+	MaxActivations     int                         `json:"max_activations"`
+	CurrentActivations int                         `json:"current_activations"`
+	MaxDevices         int                         `json:"max_devices"`
+	DeviceCount        int                         `json:"device_count"`
+	Devices            map[string]*LicenseDevice   `json:"devices"`
+	AuthorizedUsers    map[string]*LicenseIdentity `json:"authorized_users,omitempty"`
+}
+
+type LicenseIdentity struct {
+	Email            string    `json:"email"`
+	ClientID         string    `json:"client_id,omitempty"`
+	ProviderClientID string    `json:"provider_client_id,omitempty"`
+	GrantedAt        time.Time `json:"granted_at"`
 }
 
 type ActivationRequest struct {
 	Email             string `json:"email"`
-	Username          string `json:"username"`
+	ClientID          string `json:"client_id,omitempty"`
 	LicenseKey        string `json:"license_key"`
 	DeviceFingerprint string `json:"device_fingerprint"`
 	IPAddress         string `json:"-"`
@@ -109,7 +117,28 @@ func cloneLicense(license *License) *License {
 			clone.Devices[fp] = &copyDev
 		}
 	}
+	if license.AuthorizedUsers != nil {
+		clone.AuthorizedUsers = make(map[string]*LicenseIdentity, len(license.AuthorizedUsers))
+		for key, ident := range license.AuthorizedUsers {
+			if ident == nil {
+				continue
+			}
+			copyIdent := *ident
+			clone.AuthorizedUsers[key] = &copyIdent
+		}
+	}
+	refreshLicenseDeviceStats(&clone)
 	return &clone
+}
+
+func refreshLicenseDeviceStats(license *License) {
+	if license == nil {
+		return
+	}
+	deviceCount := len(license.Devices)
+	license.DeviceCount = deviceCount
+	license.CurrentActivations = deviceCount
+	license.MaxDevices = license.MaxActivations
 }
 
 func cloneActivationRecord(record *ActivationRecord) *ActivationRecord {
@@ -122,6 +151,10 @@ func cloneActivationRecord(record *ActivationRecord) *ActivationRecord {
 
 func normalizeEmail(email string) string {
 	return strings.ToLower(strings.TrimSpace(email))
+}
+
+func licenseIdentityKey(email string) string {
+	return normalizeEmail(email)
 }
 
 var (
@@ -140,18 +173,23 @@ func normalizeLicenseKey(key string) string {
 }
 
 func validateActivationRequest(req *ActivationRequest) error {
-	if !emailRegex.MatchString(req.Email) {
+	if req == nil {
+		return errors.New("request missing")
+	}
+	email := strings.TrimSpace(req.Email)
+	if !emailRegex.MatchString(email) {
 		return errors.New("invalid email address")
 	}
-	if req.Username == "" || len(req.Username) > 64 {
-		return errors.New("username is required and must be <= 64 characters")
+	clientID := strings.TrimSpace(req.ClientID)
+	if clientID == "" {
+		return errors.New("client_id is required")
 	}
 	keyCandidate := strings.ToUpper(strings.TrimSpace(req.LicenseKey))
 	keyCandidate = strings.ReplaceAll(keyCandidate, " ", "")
 	if !licenseKeyRegex.MatchString(keyCandidate) {
 		return errors.New("invalid license key format")
 	}
-	if !fingerprintRegex.MatchString(req.DeviceFingerprint) {
+	if !fingerprintRegex.MatchString(strings.TrimSpace(req.DeviceFingerprint)) {
 		return errors.New("invalid device fingerprint format")
 	}
 	return nil
@@ -162,8 +200,7 @@ func validateActivationRequest(req *ActivationRequest) error {
 const maxAdminPayloadBytes = 256 << 10
 
 type createClientRequest struct {
-	Email    string `json:"email"`
-	Username string `json:"username"`
+	Email string `json:"email"`
 }
 
 type banClientRequest struct {

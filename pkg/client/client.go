@@ -72,7 +72,7 @@ type Client struct {
 // ActivationRequest is sent to the licensing server.
 type ActivationRequest struct {
 	Email             string `json:"email"`
-	Username          string `json:"username"`
+	ClientID          string `json:"client_id,omitempty"`
 	LicenseKey        string `json:"license_key"`
 	DeviceFingerprint string `json:"device_fingerprint"`
 }
@@ -102,14 +102,18 @@ type StoredLicense struct {
 type LicenseData struct {
 	ID                 string          `json:"id"`
 	ClientID           string          `json:"client_id"`
+	SubjectClientID    string          `json:"subject_client_id"`
 	Email              string          `json:"email"`
-	Username           string          `json:"username"`
+	Relationship       string          `json:"relationship"`
+	GrantedBy          string          `json:"granted_by,omitempty"`
 	LicenseKey         string          `json:"license_key"`
 	IssuedAt           time.Time       `json:"issued_at"`
 	ExpiresAt          time.Time       `json:"expires_at"`
 	LastActivatedAt    time.Time       `json:"last_activated_at"`
 	MaxActivations     int             `json:"max_activations"`
 	CurrentActivations int             `json:"current_activations"`
+	MaxDevices         int             `json:"max_devices"`
+	DeviceCount        int             `json:"device_count"`
 	IsRevoked          bool            `json:"is_revoked"`
 	RevokedAt          time.Time       `json:"revoked_at"`
 	RevokeReason       string          `json:"revoke_reason"`
@@ -227,11 +231,14 @@ func (lc *Client) IsActivated() bool {
 }
 
 // Activate runs the device enrollment flow with the licensing server.
-func (lc *Client) Activate(email, username, licenseKey string) error {
+func (lc *Client) Activate(email, clientID, licenseKey string) error {
 	fmt.Println("\n🔐 Starting license activation...")
 	email = strings.TrimSpace(email)
-	username = strings.TrimSpace(username)
+	clientID = strings.TrimSpace(clientID)
 	licenseKey = strings.TrimSpace(licenseKey)
+	if clientID == "" {
+		return fmt.Errorf("client ID is required for activation")
+	}
 
 	fmt.Println("🔍 Generating device fingerprint...")
 	fingerprint, err := lc.generateDeviceFingerprint()
@@ -242,7 +249,7 @@ func (lc *Client) Activate(email, username, licenseKey string) error {
 
 	activationReq := ActivationRequest{
 		Email:             email,
-		Username:          username,
+		ClientID:          clientID,
 		LicenseKey:        licenseKey,
 		DeviceFingerprint: fingerprint,
 	}
@@ -502,10 +509,11 @@ func (lc *Client) recoverLicenseFromServer(stored *StoredLicense) (*StoredLicens
 	}
 	verificationReq := ActivationRequest{
 		Email:             licenseData.Email,
-		Username:          licenseData.Username,
 		LicenseKey:        licenseData.LicenseKey,
 		DeviceFingerprint: stored.DeviceFingerprint,
 	}
+	ownerID := strings.TrimSpace(licenseData.ClientID)
+	verificationReq.ClientID = ownerID
 	body, err := json.Marshal(verificationReq)
 	if err != nil {
 		return nil, fmt.Errorf("failed to marshal verification request: %w", err)

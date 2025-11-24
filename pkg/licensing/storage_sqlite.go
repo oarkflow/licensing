@@ -58,34 +58,32 @@ func configureSQLite(db *sql.DB) error {
 func ensureSQLiteSchema(db *sql.DB) error {
 	stmts := []string{
 		`CREATE TABLE IF NOT EXISTS clients (
-            id TEXT PRIMARY KEY,
-            email TEXT NOT NULL,
-            email_lower TEXT NOT NULL UNIQUE,
-            username TEXT NOT NULL,
-            status TEXT NOT NULL,
-            created_at TIMESTAMP NOT NULL,
-            updated_at TIMESTAMP NOT NULL,
-            banned_at TIMESTAMP,
-            ban_reason TEXT
-        );`,
+			id TEXT PRIMARY KEY,
+			email TEXT NOT NULL,
+			email_lower TEXT NOT NULL UNIQUE,
+			status TEXT NOT NULL,
+			created_at TIMESTAMP NOT NULL,
+			updated_at TIMESTAMP NOT NULL,
+			banned_at TIMESTAMP,
+			ban_reason TEXT
+		);`,
 		`CREATE TABLE IF NOT EXISTS licenses (
-            id TEXT PRIMARY KEY,
-            client_id TEXT NOT NULL,
-            email TEXT NOT NULL,
-            username TEXT NOT NULL,
-            license_key TEXT NOT NULL,
-            license_key_norm TEXT NOT NULL UNIQUE,
-            is_revoked INTEGER NOT NULL DEFAULT 0,
-            revoked_at TIMESTAMP,
-            revoke_reason TEXT,
-            is_activated INTEGER NOT NULL DEFAULT 0,
-            issued_at TIMESTAMP NOT NULL,
-            last_activated_at TIMESTAMP,
-            expires_at TIMESTAMP NOT NULL,
-            max_activations INTEGER NOT NULL,
-            current_activations INTEGER NOT NULL,
-            FOREIGN KEY(client_id) REFERENCES clients(id) ON DELETE CASCADE
-        );`,
+			id TEXT PRIMARY KEY,
+			client_id TEXT NOT NULL,
+			email TEXT NOT NULL,
+			license_key TEXT NOT NULL,
+			license_key_norm TEXT NOT NULL UNIQUE,
+			is_revoked INTEGER NOT NULL DEFAULT 0,
+			revoked_at TIMESTAMP,
+			revoke_reason TEXT,
+			is_activated INTEGER NOT NULL DEFAULT 0,
+			issued_at TIMESTAMP NOT NULL,
+			last_activated_at TIMESTAMP,
+			expires_at TIMESTAMP NOT NULL,
+			max_activations INTEGER NOT NULL,
+			current_activations INTEGER NOT NULL,
+			FOREIGN KEY(client_id) REFERENCES clients(id) ON DELETE CASCADE
+		);`,
 		`CREATE TABLE IF NOT EXISTS license_devices (
             license_id TEXT NOT NULL,
             fingerprint TEXT NOT NULL,
@@ -95,6 +93,16 @@ func ensureSQLiteSchema(db *sql.DB) error {
             PRIMARY KEY(license_id, fingerprint),
             FOREIGN KEY(license_id) REFERENCES licenses(id) ON DELETE CASCADE
         );`,
+		`CREATE TABLE IF NOT EXISTS license_authorized_users (
+			license_id TEXT NOT NULL,
+			email TEXT NOT NULL,
+			email_lower TEXT NOT NULL,
+			subject_client_id TEXT NOT NULL,
+			provider_client_id TEXT NOT NULL,
+			granted_at TIMESTAMP NOT NULL,
+			PRIMARY KEY(license_id, email_lower),
+			FOREIGN KEY(license_id) REFERENCES licenses(id) ON DELETE CASCADE
+		);`,
 		`CREATE TABLE IF NOT EXISTS activation_records (
             id TEXT PRIMARY KEY,
             license_id TEXT NOT NULL,
@@ -128,6 +136,7 @@ func ensureSQLiteSchema(db *sql.DB) error {
 		`CREATE INDEX IF NOT EXISTS idx_licenses_client_id ON licenses(client_id);`,
 		`CREATE INDEX IF NOT EXISTS idx_activation_records_license_id ON activation_records(license_id);`,
 		`CREATE INDEX IF NOT EXISTS idx_activation_records_client_id ON activation_records(client_id);`,
+		`CREATE INDEX IF NOT EXISTS idx_license_authorized_users_license_id ON license_authorized_users(license_id);`,
 	}
 	for _, stmt := range stmts {
 		if _, err := db.Exec(stmt); err != nil {
@@ -162,7 +171,6 @@ func scanClientRow(scanner rowScanner) (*Client, error) {
 	if err := scanner.Scan(
 		&c.ID,
 		&c.Email,
-		&c.Username,
 		&c.Status,
 		&c.CreatedAt,
 		&c.UpdatedAt,
@@ -190,7 +198,6 @@ func scanLicenseRow(scanner rowScanner) (*License, error) {
 		&lic.ID,
 		&lic.ClientID,
 		&lic.Email,
-		&lic.Username,
 		&lic.LicenseKey,
 		&isRevoked,
 		&revokedAt,
@@ -225,13 +232,12 @@ func (s *SQLiteStorage) SaveClient(ctx context.Context, client *Client) error {
 	if client == nil {
 		return fmt.Errorf("client is nil")
 	}
-	query := `INSERT INTO clients (id, email, email_lower, username, status, created_at, updated_at, banned_at, ban_reason)
-              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+	query := `INSERT INTO clients (id, email, email_lower, status, created_at, updated_at, banned_at, ban_reason)
+	          VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
 	_, err := s.db.ExecContext(ctx, query,
 		client.ID,
 		client.Email,
 		normalizeEmail(client.Email),
-		client.Username,
 		client.Status,
 		client.CreatedAt,
 		client.UpdatedAt,
@@ -252,12 +258,11 @@ func (s *SQLiteStorage) UpdateClient(ctx context.Context, client *Client) error 
 		return fmt.Errorf("client is nil")
 	}
 	query := `UPDATE clients
-              SET email = ?, email_lower = ?, username = ?, status = ?, created_at = ?, updated_at = ?, banned_at = ?, ban_reason = ?
-              WHERE id = ?`
+	          SET email = ?, email_lower = ?, status = ?, created_at = ?, updated_at = ?, banned_at = ?, ban_reason = ?
+	          WHERE id = ?`
 	res, err := s.db.ExecContext(ctx, query,
 		client.Email,
 		normalizeEmail(client.Email),
-		client.Username,
 		client.Status,
 		client.CreatedAt,
 		client.UpdatedAt,
@@ -279,8 +284,8 @@ func (s *SQLiteStorage) UpdateClient(ctx context.Context, client *Client) error 
 }
 
 func (s *SQLiteStorage) GetClient(ctx context.Context, clientID string) (*Client, error) {
-	query := `SELECT id, email, username, status, created_at, updated_at, banned_at, ban_reason
-              FROM clients WHERE id = ?`
+	query := `SELECT id, email, status, created_at, updated_at, banned_at, ban_reason
+	          FROM clients WHERE id = ?`
 	row := s.db.QueryRowContext(ctx, query, clientID)
 	client, err := scanClientRow(row)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -293,8 +298,8 @@ func (s *SQLiteStorage) GetClient(ctx context.Context, clientID string) (*Client
 }
 
 func (s *SQLiteStorage) GetClientByEmail(ctx context.Context, email string) (*Client, error) {
-	query := `SELECT id, email, username, status, created_at, updated_at, banned_at, ban_reason
-              FROM clients WHERE email_lower = ?`
+	query := `SELECT id, email, status, created_at, updated_at, banned_at, ban_reason
+	          FROM clients WHERE email_lower = ?`
 	row := s.db.QueryRowContext(ctx, query, normalizeEmail(email))
 	client, err := scanClientRow(row)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -307,8 +312,8 @@ func (s *SQLiteStorage) GetClientByEmail(ctx context.Context, email string) (*Cl
 }
 
 func (s *SQLiteStorage) ListClients(ctx context.Context) ([]*Client, error) {
-	query := `SELECT id, email, username, status, created_at, updated_at, banned_at, ban_reason
-              FROM clients ORDER BY created_at ASC`
+	query := `SELECT id, email, status, created_at, updated_at, banned_at, ban_reason
+	          FROM clients ORDER BY created_at ASC`
 	rows, err := s.db.QueryContext(ctx, query)
 	if err != nil {
 		return nil, err
@@ -331,14 +336,13 @@ func (s *SQLiteStorage) SaveLicense(ctx context.Context, license *License) error
 	}
 	return s.withTx(ctx, func(tx *sql.Tx) error {
 		query := `INSERT INTO licenses (
-            id, client_id, email, username, license_key, license_key_norm, is_revoked, revoked_at,
-            revoke_reason, is_activated, issued_at, last_activated_at, expires_at, max_activations, current_activations)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+			id, client_id, email, license_key, license_key_norm, is_revoked, revoked_at,
+			revoke_reason, is_activated, issued_at, last_activated_at, expires_at, max_activations, current_activations)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 		_, err := tx.ExecContext(ctx, query,
 			license.ID,
 			license.ClientID,
 			license.Email,
-			license.Username,
 			license.LicenseKey,
 			normalizeLicenseKey(license.LicenseKey),
 			boolToInt(license.IsRevoked),
@@ -357,7 +361,10 @@ func (s *SQLiteStorage) SaveLicense(ctx context.Context, license *License) error
 			}
 			return err
 		}
-		return s.replaceDevices(ctx, tx, license.ID, license.Devices)
+		if err := s.replaceDevices(ctx, tx, license.ID, license.Devices); err != nil {
+			return err
+		}
+		return s.replaceAuthorizedUsers(ctx, tx, license.ID, license.AuthorizedUsers)
 	})
 }
 
@@ -367,14 +374,13 @@ func (s *SQLiteStorage) UpdateLicense(ctx context.Context, license *License) err
 	}
 	return s.withTx(ctx, func(tx *sql.Tx) error {
 		query := `UPDATE licenses SET
-            client_id = ?, email = ?, username = ?, license_key = ?, license_key_norm = ?,
+			client_id = ?, email = ?, license_key = ?, license_key_norm = ?,
             is_revoked = ?, revoked_at = ?, revoke_reason = ?, is_activated = ?, issued_at = ?,
             last_activated_at = ?, expires_at = ?, max_activations = ?, current_activations = ?
             WHERE id = ?`
 		res, err := tx.ExecContext(ctx, query,
 			license.ClientID,
 			license.Email,
-			license.Username,
 			license.LicenseKey,
 			normalizeLicenseKey(license.LicenseKey),
 			boolToInt(license.IsRevoked),
@@ -398,12 +404,15 @@ func (s *SQLiteStorage) UpdateLicense(ctx context.Context, license *License) err
 		if rows == 0 {
 			return errLicenseMissing
 		}
-		return s.replaceDevices(ctx, tx, license.ID, license.Devices)
+		if err := s.replaceDevices(ctx, tx, license.ID, license.Devices); err != nil {
+			return err
+		}
+		return s.replaceAuthorizedUsers(ctx, tx, license.ID, license.AuthorizedUsers)
 	})
 }
 
 func (s *SQLiteStorage) GetLicense(ctx context.Context, licenseID string) (*License, error) {
-	query := `SELECT id, client_id, email, username, license_key, is_revoked, revoked_at,
+	query := `SELECT id, client_id, email, license_key, is_revoked, revoked_at,
                      revoke_reason, is_activated, issued_at, last_activated_at, expires_at,
                      max_activations, current_activations
               FROM licenses WHERE id = ?`
@@ -418,11 +427,14 @@ func (s *SQLiteStorage) GetLicense(ctx context.Context, licenseID string) (*Lice
 	if err := s.loadDevices(ctx, license); err != nil {
 		return nil, err
 	}
+	if err := s.loadAuthorizedUsers(ctx, license); err != nil {
+		return nil, err
+	}
 	return cloneLicense(license), nil
 }
 
 func (s *SQLiteStorage) GetLicenseByKey(ctx context.Context, licenseKey string) (*License, error) {
-	query := `SELECT id, client_id, email, username, license_key, is_revoked, revoked_at,
+	query := `SELECT id, client_id, email, license_key, is_revoked, revoked_at,
                      revoke_reason, is_activated, issued_at, last_activated_at, expires_at,
                      max_activations, current_activations
               FROM licenses WHERE license_key_norm = ?`
@@ -437,11 +449,14 @@ func (s *SQLiteStorage) GetLicenseByKey(ctx context.Context, licenseKey string) 
 	if err := s.loadDevices(ctx, license); err != nil {
 		return nil, err
 	}
+	if err := s.loadAuthorizedUsers(ctx, license); err != nil {
+		return nil, err
+	}
 	return cloneLicense(license), nil
 }
 
 func (s *SQLiteStorage) ListLicenses(ctx context.Context) ([]*License, error) {
-	query := `SELECT id, client_id, email, username, license_key, is_revoked, revoked_at,
+	query := `SELECT id, client_id, email, license_key, is_revoked, revoked_at,
                      revoke_reason, is_activated, issued_at, last_activated_at, expires_at,
                      max_activations, current_activations
               FROM licenses ORDER BY issued_at DESC`
@@ -457,6 +472,9 @@ func (s *SQLiteStorage) ListLicenses(ctx context.Context) ([]*License, error) {
 			return nil, err
 		}
 		if err := s.loadDevices(ctx, license); err != nil {
+			return nil, err
+		}
+		if err := s.loadAuthorizedUsers(ctx, license); err != nil {
 			return nil, err
 		}
 		licenses = append(licenses, cloneLicense(license))
@@ -506,7 +524,76 @@ func (s *SQLiteStorage) loadDevices(ctx context.Context, license *License) error
 		device.TransportKey = append([]byte(nil), transport...)
 		license.Devices[device.Fingerprint] = &device
 	}
-	return rows.Err()
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	refreshLicenseDeviceStats(license)
+	return nil
+}
+
+func (s *SQLiteStorage) replaceAuthorizedUsers(ctx context.Context, tx *sql.Tx, licenseID string, users map[string]*LicenseIdentity) error {
+	if _, err := tx.ExecContext(ctx, `DELETE FROM license_authorized_users WHERE license_id = ?`, licenseID); err != nil {
+		return err
+	}
+	if len(users) == 0 {
+		return nil
+	}
+	stmt, err := tx.PrepareContext(ctx, `INSERT INTO license_authorized_users (license_id, email, email_lower, subject_client_id, provider_client_id, granted_at)
+	        VALUES (?, ?, ?, ?, ?, ?)`)
+	if err != nil {
+		return err
+	}
+	defer stmt.Close()
+	for _, user := range users {
+		if user == nil {
+			continue
+		}
+		subjectID := strings.TrimSpace(user.ClientID)
+		if subjectID == "" {
+			return fmt.Errorf("authorized user missing client_id")
+		}
+		providerID := strings.TrimSpace(user.ProviderClientID)
+		if providerID == "" {
+			return fmt.Errorf("authorized user missing provider_client_id")
+		}
+		if _, err := stmt.ExecContext(ctx,
+			licenseID,
+			user.Email,
+			normalizeEmail(user.Email),
+			subjectID,
+			providerID,
+			user.GrantedAt,
+		); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (s *SQLiteStorage) loadAuthorizedUsers(ctx context.Context, license *License) error {
+	rows, err := s.db.QueryContext(ctx, `SELECT email, subject_client_id, provider_client_id, granted_at
+        FROM license_authorized_users WHERE license_id = ?`, license.ID)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	var users map[string]*LicenseIdentity
+	for rows.Next() {
+		var ident LicenseIdentity
+		if err := rows.Scan(&ident.Email, &ident.ClientID, &ident.ProviderClientID, &ident.GrantedAt); err != nil {
+			return err
+		}
+		if users == nil {
+			users = make(map[string]*LicenseIdentity)
+		}
+		copyIdent := ident
+		users[licenseIdentityKey(ident.Email)] = &copyIdent
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	license.AuthorizedUsers = users
+	return nil
 }
 
 func (s *SQLiteStorage) RecordActivation(ctx context.Context, record *ActivationRecord) error {

@@ -3,6 +3,7 @@ package activation
 import (
 	"bufio"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -15,9 +16,37 @@ import (
 
 const (
 	EnvActivationEmail      = "LICENSE_CLIENT_EMAIL"
-	EnvActivationUsername   = "LICENSE_CLIENT_USERNAME"
+	EnvActivationClientID   = "LICENSE_CLIENT_ID"
 	EnvActivationLicenseKey = "LICENSE_CLIENT_LICENSE_KEY"
 )
+
+var licenseFilePath string
+
+type licenseFileData struct {
+	Email      string `json:"email"`
+	ClientID   string `json:"client_id"`
+	LicenseKey string `json:"license_key"`
+}
+
+// SetLicenseFilePath configures the optional JSON file used to pre-fill activation prompts.
+func SetLicenseFilePath(path string) {
+	licenseFilePath = strings.TrimSpace(path)
+}
+
+func loadLicenseFileData() (*licenseFileData, error) {
+	if licenseFilePath == "" {
+		return nil, nil
+	}
+	contents, err := os.ReadFile(licenseFilePath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read license file %q: %w", licenseFilePath, err)
+	}
+	var data licenseFileData
+	if err := json.Unmarshal(contents, &data); err != nil {
+		return nil, fmt.Errorf("failed to parse license file %q: %w", licenseFilePath, err)
+	}
+	return &data, nil
+}
 
 // PromptIO controls where interactive prompts read from and write to.
 type PromptIO struct {
@@ -77,13 +106,16 @@ func (envActivationStrategy) EnsureActivated(ctx context.Context, client runner.
 	}
 
 	email := strings.TrimSpace(os.Getenv(EnvActivationEmail))
-	username := strings.TrimSpace(os.Getenv(EnvActivationUsername))
 	licenseKey := strings.TrimSpace(os.Getenv(EnvActivationLicenseKey))
-	if email == "" || username == "" || licenseKey == "" {
-		return fmt.Errorf("environment activation not configured (set %s, %s, %s)", EnvActivationEmail, EnvActivationUsername, EnvActivationLicenseKey)
+	clientID := strings.TrimSpace(os.Getenv(EnvActivationClientID))
+	if email == "" || licenseKey == "" {
+		return fmt.Errorf("environment activation not configured (set %s and %s)", EnvActivationEmail, EnvActivationLicenseKey)
+	}
+	if clientID == "" {
+		return fmt.Errorf("environment activation requires %s", EnvActivationClientID)
 	}
 
-	if err := typed.Activate(email, username, licenseKey); err != nil {
+	if err := typed.Activate(email, clientID, licenseKey); err != nil {
 		return err
 	}
 
@@ -111,20 +143,44 @@ func (s promptActivationStrategy) EnsureActivated(ctx context.Context, client ru
 	fmt.Fprintln(writer, "⚠️  License activation required")
 	fmt.Fprintln(writer)
 
-	email, err := s.prompt(reader, writer, "Enter email: ")
+	preset, err := loadLicenseFileData()
 	if err != nil {
 		return err
 	}
-	username, err := s.prompt(reader, writer, "Enter username: ")
-	if err != nil {
-		return err
+	email := ""
+	clientID := ""
+	licenseKey := ""
+	if preset != nil {
+		email = strings.TrimSpace(preset.Email)
+		clientID = strings.TrimSpace(preset.ClientID)
+		licenseKey = strings.TrimSpace(preset.LicenseKey)
 	}
-	licenseKey, err := s.prompt(reader, writer, "Enter license key: ")
-	if err != nil {
-		return err
+	if email == "" {
+		email, err = s.prompt(reader, writer, "Enter email: ")
+		if err != nil {
+			return err
+		}
+	} else {
+		fmt.Fprintf(writer, "Using email from license file: %s\n", email)
+	}
+	if licenseKey == "" {
+		licenseKey, err = s.prompt(reader, writer, "Enter license key: ")
+		if err != nil {
+			return err
+		}
+	} else {
+		fmt.Fprintln(writer, "Using license key from license file")
+	}
+	if clientID == "" {
+		clientID, err = s.prompt(reader, writer, "Enter client ID: ")
+		if err != nil {
+			return err
+		}
+	} else {
+		fmt.Fprintf(writer, "Using client ID from license file: %s\n", clientID)
 	}
 
-	if err := typed.Activate(email, username, licenseKey); err != nil {
+	if err := typed.Activate(email, clientID, licenseKey); err != nil {
 		return err
 	}
 
@@ -160,6 +216,18 @@ func (s promptActivationStrategy) prompt(reader *bufio.Reader, writer io.Writer,
 		return "", fmt.Errorf("%s is required", strings.TrimSuffix(label, ": "))
 	}
 	return value, nil
+}
+
+func (s promptActivationStrategy) promptOptional(reader *bufio.Reader, writer io.Writer, label string) (string, error) {
+	fmt.Fprint(writer, label)
+	text, err := reader.ReadString('\n')
+	if err != nil && !errors.Is(err, io.EOF) {
+		return "", err
+	}
+	if errors.Is(err, io.EOF) && !strings.HasSuffix(text, "\n") {
+		fmt.Fprintln(writer)
+	}
+	return strings.TrimSpace(text), nil
 }
 
 func defaultWriter(w io.Writer) io.Writer {

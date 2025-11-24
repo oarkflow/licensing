@@ -82,13 +82,6 @@ func main() {
 	tlsCert := os.Getenv("LICENSE_SERVER_TLS_CERT")
 	tlsKey := os.Getenv("LICENSE_SERVER_TLS_KEY")
 	clientCA := os.Getenv("LICENSE_SERVER_CLIENT_CA")
-	if tlsCert == "" || tlsKey == "" {
-		log.Printf("⚠️ TLS disabled - set LICENSE_SERVER_TLS_CERT and LICENSE_SERVER_TLS_KEY to enable HTTPS")
-	} else if clientCA != "" {
-		log.Printf("🔒 mTLS enabled - client CA set to %s", clientCA)
-	} else {
-		log.Printf("🔒 TLS certificate configured (server-only mode)")
-	}
 	server, err := licensing.NewServer(lm, *httpServer, apiKeys, rateLimiter, tlsCert, tlsKey, clientCA)
 	if err != nil {
 		log.Fatalf("Failed to initialize server: %v", err)
@@ -117,17 +110,16 @@ func createDemoData(ctx context.Context, lm *licensing.LicenseManager) error {
 	log.Printf("📋 Creating demo clients and licenses...")
 	type seed struct {
 		email    string
-		user     string
 		duration time.Duration
 		max      int
 	}
 	seeds := []seed{
-		{"john@example.com", "john_doe", 365 * 24 * time.Hour, 3},
-		{"jane@example.com", "jane_smith", 30 * 24 * time.Hour, 5},
-		{"bob@example.com", "bob_jones", 90 * 24 * time.Hour, 2},
+		{"john@example.com", 365 * 24 * time.Hour, 3},
+		{"jane@example.com", 30 * 24 * time.Hour, 5},
+		{"bob@example.com", 90 * 24 * time.Hour, 2},
 	}
 	for _, s := range seeds {
-		client, err := lm.CreateClient(ctx, s.email, s.user)
+		client, err := lm.CreateClient(ctx, s.email)
 		if err != nil {
 			return err
 		}
@@ -135,7 +127,7 @@ func createDemoData(ctx context.Context, lm *licensing.LicenseManager) error {
 		if err != nil {
 			return err
 		}
-		log.Printf("   ✓ Client: %s | License: %s", client.Email, license.LicenseKey)
+		log.Printf("   ✓ Client: %s (ID: %s) | License: %s", client.Email, client.ID, license.LicenseKey)
 	}
 	return nil
 }

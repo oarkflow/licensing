@@ -21,6 +21,7 @@ import (
 
 func main() {
 	flag.Parse()
+	activation.SetLicenseFilePath(strings.TrimSpace(*licenseInfoFileFlag))
 
 	mode := strings.ToLower(strings.TrimSpace(*activationMode))
 	clientCfg := resolveClientConfig()

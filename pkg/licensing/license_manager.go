@@ -221,21 +221,16 @@ func (lm *LicenseManager) ValidateAPIKey(ctx context.Context, token string) (*Ad
 	return user, nil
 }
 
-func (lm *LicenseManager) CreateClient(ctx context.Context, email, username string) (*Client, error) {
+func (lm *LicenseManager) CreateClient(ctx context.Context, email string) (*Client, error) {
 	email = strings.TrimSpace(email)
-	username = strings.TrimSpace(username)
 	if !emailRegex.MatchString(email) {
 		return nil, fmt.Errorf("invalid email address")
-	}
-	if username == "" || len(username) > 64 {
-		return nil, fmt.Errorf("username is required and must be <= 64 characters")
 	}
 
 	now := time.Now()
 	client := &Client{
 		ID:        uuid.New().String(),
 		Email:     email,
-		Username:  username,
 		Status:    ClientStatusActive,
 		CreatedAt: now,
 		UpdatedAt: now,
@@ -248,7 +243,6 @@ func (lm *LicenseManager) CreateClient(ctx context.Context, email, username stri
 		return nil, fmt.Errorf("failed to save client: %w", err)
 	}
 
-	log.Printf("Created client: %s (%s)", username, email)
 	return client, nil
 }
 
@@ -301,13 +295,12 @@ func (lm *LicenseManager) GenerateLicense(ctx context.Context, clientID string, 
 		return nil, fmt.Errorf("client is banned")
 	}
 
-	licenseKey := lm.generateLicenseKey(client.Email, client.Username)
+	licenseKey := lm.generateLicenseKey(client.Email, client.ID)
 	now := time.Now()
 	license := &License{
 		ID:                 uuid.New().String(),
 		ClientID:           clientID,
 		Email:              client.Email,
-		Username:           client.Username,
 		LicenseKey:         licenseKey,
 		IsRevoked:          false,
 		IsActivated:        false,
@@ -317,6 +310,7 @@ func (lm *LicenseManager) GenerateLicense(ctx context.Context, clientID string, 
 		Devices:            make(map[string]*LicenseDevice),
 		CurrentActivations: 0,
 	}
+	refreshLicenseDeviceStats(license)
 
 	if err := lm.storage.SaveLicense(ctx, license); err != nil {
 		if errors.Is(err, errLicenseExists) {
@@ -324,8 +318,6 @@ func (lm *LicenseManager) GenerateLicense(ctx context.Context, clientID string, 
 		}
 		return nil, fmt.Errorf("failed to save license: %w", err)
 	}
-
-	log.Printf("Generated license for client %s: %s", client.Username, licenseKey)
 	return license, nil
 }
 
@@ -357,7 +349,7 @@ func (lm *LicenseManager) ReinstateLicense(ctx context.Context, licenseID string
 	return license, nil
 }
 
-func (lm *LicenseManager) generateLicenseKey(email, username string) string {
+func (lm *LicenseManager) generateLicenseKey(email, clientID string) string {
 	// Generate cryptographically secure license key
 	randomBytes, err := lm.randomBytes(16)
 	if err != nil {
@@ -367,7 +359,7 @@ func (lm *LicenseManager) generateLicenseKey(email, username string) string {
 		}
 	}
 
-	data := email + username + hex.EncodeToString(randomBytes) + time.Now().String()
+	data := email + clientID + hex.EncodeToString(randomBytes) + time.Now().String()
 	hash := sha256.Sum256([]byte(data))
 
 	key := hex.EncodeToString(hash[:16])
@@ -420,10 +412,6 @@ func (lm *LicenseManager) ActivateLicense(ctx context.Context, req *ActivationRe
 		return &ActivationResponse{Success: false, Message: "Invalid license key"}, nil
 	}
 
-	if license.Email != req.Email || license.Username != req.Username {
-		return &ActivationResponse{Success: false, Message: "Email or username does not match license"}, nil
-	}
-
 	client, err := lm.storage.GetClient(ctx, license.ClientID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load client: %w", err)
@@ -452,10 +440,17 @@ func (lm *LicenseManager) ActivateLicense(ctx context.Context, req *ActivationRe
 		license.Devices = make(map[string]*LicenseDevice)
 	}
 
+	identity, needsAttach, err := lm.resolveLicenseIdentity(license, req, true)
+	if err != nil {
+		message := err.Error()
+		lm.recordActivationAttempt(ctx, license, req, false, message)
+		return &ActivationResponse{Success: false, Message: message}, nil
+	}
+
 	device, exists := license.Devices[req.DeviceFingerprint]
 	if !exists {
 		if license.MaxActivations > 0 && len(license.Devices) >= license.MaxActivations {
-			message := fmt.Sprintf("Maximum activations (%d) reached", license.MaxActivations)
+			message := fmt.Sprintf("Maximum devices (%d) reached", license.MaxActivations)
 			lm.recordActivationAttempt(ctx, license, req, false, message)
 			return &ActivationResponse{Success: false, Message: message}, nil
 		}
@@ -483,30 +478,33 @@ func (lm *LicenseManager) ActivateLicense(ctx context.Context, req *ActivationRe
 
 	license.IsActivated = true
 	license.LastActivatedAt = now
-	license.CurrentActivations = len(license.Devices)
+	if needsAttach {
+		attachAuthorizedIdentity(license, identity)
+	}
+	refreshLicenseDeviceStats(license)
 
 	if err := lm.storage.UpdateLicense(ctx, license); err != nil {
 		return nil, fmt.Errorf("failed to persist license state: %w", err)
 	}
 
-	resp, err := lm.issueEncryptedLicenseResponse(license, req.DeviceFingerprint, device.TransportKey)
+	resp, err := lm.issueEncryptedLicenseResponse(license, identity, req.DeviceFingerprint, device.TransportKey)
 	if err != nil {
 		return nil, err
 	}
 	resp.Message = "License activated successfully"
-	log.Printf("Activated license for %s on device %s", license.Email, truncateFingerprint(req.DeviceFingerprint))
+	log.Printf("Activated license for %s on device %s", identity.Email, truncateFingerprint(req.DeviceFingerprint))
 	lm.recordActivationAttempt(ctx, license, req, true, resp.Message)
 	return resp, nil
 }
 
-func (lm *LicenseManager) issueEncryptedLicenseResponse(license *License, fingerprint string, sessionKey []byte) (*ActivationResponse, error) {
+func (lm *LicenseManager) issueEncryptedLicenseResponse(license *License, identity *LicenseIdentity, fingerprint string, sessionKey []byte) (*ActivationResponse, error) {
 	if license == nil {
 		return nil, fmt.Errorf("license missing")
 	}
 	if len(sessionKey) != 32 {
 		return nil, fmt.Errorf("invalid session key length")
 	}
-	licenseData := lm.buildLicensePayload(license)
+	licenseData := lm.buildLicensePayload(license, identity)
 	licenseJSON, err := json.Marshal(licenseData)
 	if err != nil {
 		return nil, fmt.Errorf("failed to marshal license: %w", err)
@@ -559,8 +557,9 @@ func (lm *LicenseManager) VerifyLicense(ctx context.Context, req *ActivationRequ
 	if err != nil {
 		return &ActivationResponse{Success: false, Message: "Invalid license key"}, nil
 	}
-	if license.Email != req.Email || license.Username != req.Username {
-		message := "Email or username does not match license"
+	identity, _, err := lm.resolveLicenseIdentity(license, req, false)
+	if err != nil {
+		message := err.Error()
 		lm.recordActivationAttempt(ctx, license, req, false, message)
 		return &ActivationResponse{Success: false, Message: message}, nil
 	}
@@ -604,11 +603,11 @@ func (lm *LicenseManager) VerifyLicense(ctx context.Context, req *ActivationRequ
 	}
 	device.LastSeenAt = now
 	license.LastActivatedAt = now
-	license.CurrentActivations = len(license.Devices)
+	refreshLicenseDeviceStats(license)
 	if err := lm.storage.UpdateLicense(ctx, license); err != nil {
 		return nil, fmt.Errorf("failed to persist license state: %w", err)
 	}
-	resp, err := lm.issueEncryptedLicenseResponse(license, req.DeviceFingerprint, device.TransportKey)
+	resp, err := lm.issueEncryptedLicenseResponse(license, identity, req.DeviceFingerprint, device.TransportKey)
 	if err != nil {
 		return nil, err
 	}
@@ -642,7 +641,7 @@ func (lm *LicenseManager) getDeviceTransportKey(ctx context.Context, licenseKey,
 	return append([]byte(nil), device.TransportKey...), nil
 }
 
-func (lm *LicenseManager) buildLicensePayload(license *License) map[string]interface{} {
+func (lm *LicenseManager) buildLicensePayload(license *License, identity *LicenseIdentity) map[string]interface{} {
 	devices := make([]*LicenseDevice, 0, len(license.Devices))
 	for _, device := range license.Devices {
 		if device == nil {
@@ -651,22 +650,108 @@ func (lm *LicenseManager) buildLicensePayload(license *License) map[string]inter
 		copyDev := *device
 		devices = append(devices, &copyDev)
 	}
-	return map[string]interface{}{
+	email := license.Email
+	relationship := "direct"
+	grantedBy := ""
+	subjectClientID := ""
+	if identity != nil {
+		if strings.TrimSpace(identity.Email) != "" {
+			email = identity.Email
+		}
+		if strings.TrimSpace(identity.ClientID) != "" {
+			subjectClientID = identity.ClientID
+		}
+		if provider := strings.TrimSpace(identity.ProviderClientID); provider != "" {
+			grantedBy = provider
+			relationship = "provider"
+		}
+	} else {
+		subjectClientID = license.ClientID
+	}
+	payload := map[string]interface{}{
 		"id":                  license.ID,
 		"client_id":           license.ClientID,
-		"email":               license.Email,
-		"username":            license.Username,
+		"subject_client_id":   subjectClientID,
+		"email":               email,
+		"relationship":        relationship,
 		"license_key":         license.LicenseKey,
 		"issued_at":           license.IssuedAt,
 		"expires_at":          license.ExpiresAt,
 		"last_activated_at":   license.LastActivatedAt,
 		"max_activations":     license.MaxActivations,
 		"current_activations": license.CurrentActivations,
+		"max_devices":         license.MaxDevices,
+		"device_count":        license.DeviceCount,
 		"devices":             devices,
 		"is_revoked":          license.IsRevoked,
 		"revoked_at":          license.RevokedAt,
 		"revoke_reason":       license.RevokeReason,
 	}
+	if grantedBy != "" {
+		payload["granted_by"] = grantedBy
+	}
+	return payload
+}
+
+func (lm *LicenseManager) resolveLicenseIdentity(license *License, req *ActivationRequest, allowCreate bool) (*LicenseIdentity, bool, error) {
+	if license == nil || req == nil {
+		return nil, false, fmt.Errorf("license and request are required")
+	}
+	email := strings.TrimSpace(req.Email)
+	clientID := strings.TrimSpace(req.ClientID)
+	if clientID == "" {
+		return nil, false, fmt.Errorf("client_id is required")
+	}
+	ownerID := strings.TrimSpace(license.ClientID)
+	if clientID != ownerID {
+		return nil, false, fmt.Errorf("client_id does not match license owner")
+	}
+	if normalizeEmail(email) == normalizeEmail(license.Email) {
+		return &LicenseIdentity{Email: license.Email, ClientID: ownerID}, false, nil
+	}
+	identity := existingLicenseIdentity(license, email)
+	if identity != nil {
+		return identity, false, nil
+	}
+	if !allowCreate {
+		return nil, false, fmt.Errorf("email is not authorized for this license")
+	}
+	delegated := &LicenseIdentity{
+		Email:            email,
+		ClientID:         uuid.New().String(),
+		ProviderClientID: ownerID,
+		GrantedAt:        time.Now(),
+	}
+	return delegated, true, nil
+}
+
+func existingLicenseIdentity(license *License, email string) *LicenseIdentity {
+	if license == nil {
+		return nil
+	}
+	if normalizeEmail(license.Email) == normalizeEmail(email) {
+		return &LicenseIdentity{Email: license.Email, ClientID: license.ClientID}
+	}
+	if license.AuthorizedUsers == nil {
+		return nil
+	}
+	if ident, ok := license.AuthorizedUsers[licenseIdentityKey(email)]; ok && ident != nil {
+		copyIdent := *ident
+		return &copyIdent
+	}
+	return nil
+}
+
+func attachAuthorizedIdentity(license *License, identity *LicenseIdentity) {
+	if license == nil || identity == nil {
+		return
+	}
+	if license.AuthorizedUsers == nil {
+		license.AuthorizedUsers = make(map[string]*LicenseIdentity)
+	}
+	key := licenseIdentityKey(identity.Email)
+	copyIdent := *identity
+	license.AuthorizedUsers[key] = &copyIdent
 }
 
 func truncateFingerprint(fingerprint string) string {

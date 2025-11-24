@@ -22,11 +22,12 @@ const (
 )
 
 var (
-	activationMode  = flag.String("activation-mode", defaultActivationMode, "Activation strategy: auto, env, prompt, verify")
-	configDirFlag   = flag.String("config-dir", "", fmt.Sprintf("Directory for license data (default $HOME/%s or $%s)", client.DefaultConfigDir, EnvConfigDir))
-	licenseFileFlag = flag.String("license-file", "", fmt.Sprintf("License file name (default %s or $%s)", client.DefaultLicenseFile, EnvLicenseFile))
-	serverURLFlag   = flag.String("server-url", "", fmt.Sprintf("Licensing server URL (default $%s or %s)", client.EnvServerURL, client.DefaultServerURL))
-	httpTimeoutFlag = flag.Duration("http-timeout", 0, fmt.Sprintf("HTTP timeout (e.g. 15s). Defaults to internal value or $%s", EnvHTTPTimeout))
+	activationMode      = flag.String("activation-mode", defaultActivationMode, "Activation strategy: auto, env, prompt, verify")
+	configDirFlag       = flag.String("config-dir", "", fmt.Sprintf("Directory for license data (default $HOME/%s or $%s)", client.DefaultConfigDir, EnvConfigDir))
+	licenseStoreFlag    = flag.String("license-store", "", fmt.Sprintf("License store file name (default %s or $%s)", client.DefaultLicenseFile, EnvLicenseFile))
+	licenseInfoFileFlag = flag.String("license-file", "", "Path to JSON file with activation details (email, client ID, license key)")
+	serverURLFlag       = flag.String("server-url", "http://localhost:8801", fmt.Sprintf("Licensing server URL (default $%s or %s)", client.EnvServerURL, client.DefaultServerURL))
+	httpTimeoutFlag     = flag.Duration("http-timeout", 0, fmt.Sprintf("HTTP timeout (e.g. 15s). Defaults to internal value or $%s", EnvHTTPTimeout))
 )
 
 func resolveClientConfig() client.Config {
@@ -41,7 +42,7 @@ func resolveClientConfig() client.Config {
 		cfg.ConfigDir = env
 	}
 
-	if value := strings.TrimSpace(*licenseFileFlag); value != "" {
+	if value := strings.TrimSpace(*licenseStoreFlag); value != "" {
 		cfg.LicenseFile = value
 	} else if env := envOrEmpty(EnvLicenseFile); env != "" {
 		cfg.LicenseFile = env

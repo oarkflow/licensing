@@ -96,7 +96,7 @@ func TestVerifyRecoversMissingChecksumViaServer(t *testing.T) {
 
 	factory := newLicenseResponseFactory(t)
 	cfg := Config{ConfigDir: t.TempDir(), LicenseFile: "license.dat"}
-	client, err := NewClient(cfg)
+	client, err := New(cfg)
 	if err != nil {
 		t.Fatalf("failed to create client: %v", err)
 	}
@@ -105,13 +105,14 @@ func TestVerifyRecoversMissingChecksumViaServer(t *testing.T) {
 		t.Fatalf("failed to compute fingerprint: %v", err)
 	}
 	licenseData := &LicenseData{
-		ID:         "lic-123",
-		ClientID:   "client-123",
-		Email:      "user@example.com",
-		Username:   "user",
-		LicenseKey: "ABCD-EFGH-IJKL-MNOP-QRST-UVWX-YZ12-3456",
-		IssuedAt:   time.Now().Add(-time.Hour),
-		ExpiresAt:  time.Now().Add(12 * time.Hour),
+		ID:              "lic-123",
+		ClientID:        "client-123",
+		SubjectClientID: "client-123",
+		Email:           "user@example.com",
+		Relationship:    "direct",
+		LicenseKey:      "ABCD-EFGH-IJKL-MNOP-QRST-UVWX-YZ12-3456",
+		IssuedAt:        time.Now().Add(-time.Hour),
+		ExpiresAt:       time.Now().Add(12 * time.Hour),
 	}
 	stored, serverResp, sessionKey := factory.buildArtifacts(t, licenseData, fingerprint)
 	licenseJSON, err := json.Marshal(stored)

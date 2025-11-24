@@ -193,7 +193,7 @@ func parseRSAPrivateKey(der []byte) (*rsa.PrivateKey, error) {
 	}
 	parsed, err := x509.ParsePKCS8PrivateKey(der)
 	if err != nil {
-		return nil, fmt.Errorf("failed to parse RSA private key: %w")
+		return nil, fmt.Errorf("failed to parse RSA private key: %w", err)
 	}
 	rsaKey, ok := parsed.(*rsa.PrivateKey)
 	if !ok {
