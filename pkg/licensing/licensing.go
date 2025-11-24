@@ -159,7 +159,7 @@ func licenseIdentityKey(email string) string {
 
 var (
 	emailRegex       = regexp.MustCompile(`^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$`)
-	licenseKeyRegex  = regexp.MustCompile(`^[A-F0-9]{4}(?:-?[A-F0-9]{4}){7}$`)
+	licenseKeyRegex  = regexp.MustCompile(`^[A-Z2-7]{5}(?:-?[A-Z2-7]{5}){7}$`)
 	fingerprintRegex = regexp.MustCompile(`^[A-Za-z0-9_-]{16,128}$`)
 )
 

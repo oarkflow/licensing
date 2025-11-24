@@ -4,9 +4,11 @@ import (
 	"context"
 	"crypto/aes"
 	"crypto/cipher"
+	"crypto/hmac"
 	"crypto/rand"
 	"crypto/sha256"
 	"crypto/x509"
+	"encoding/base32"
 	"encoding/hex"
 	"encoding/json"
 	"encoding/pem"
@@ -22,6 +24,14 @@ import (
 	"github.com/google/uuid"
 	"golang.org/x/crypto/bcrypt"
 )
+
+const (
+	licenseKeyEntropyBytes  = 21
+	licenseKeyChecksumBytes = 4
+	licenseKeyGroupSize     = 5
+)
+
+var licenseKeyEncoding = base32.StdEncoding.WithPadding(base32.NoPadding)
 
 type LicenseManager struct {
 	storage       Storage
@@ -350,31 +360,46 @@ func (lm *LicenseManager) ReinstateLicense(ctx context.Context, licenseID string
 }
 
 func (lm *LicenseManager) generateLicenseKey(email, clientID string) string {
-	// Generate cryptographically secure license key
-	randomBytes, err := lm.randomBytes(16)
+	entropy, err := lm.randomBytes(licenseKeyEntropyBytes)
 	if err != nil {
-		randomBytes = make([]byte, 16)
-		if _, fallbackErr := rand.Read(randomBytes); fallbackErr != nil {
+		entropy = make([]byte, licenseKeyEntropyBytes)
+		if _, fallbackErr := rand.Read(entropy); fallbackErr != nil {
 			panic(fmt.Sprintf("failed to obtain random bytes: %v", fallbackErr))
 		}
 	}
 
-	data := email + clientID + hex.EncodeToString(randomBytes) + time.Now().String()
-	hash := sha256.Sum256([]byte(data))
+	checksum := lm.licenseKeyChecksum(entropy, email, clientID)
+	raw := append(entropy, checksum...)
+	encoded := strings.ToUpper(licenseKeyEncoding.EncodeToString(raw))
+	return chunkLicenseKey(encoded, licenseKeyGroupSize)
+}
 
-	key := hex.EncodeToString(hash[:16])
-
-	// Format as XXXX-XXXX-XXXX-XXXX-XXXX-XXXX-XXXX-XXXX
-	formatted := strings.ToUpper(key)
-	parts := []string{}
-	for i := 0; i < len(formatted); i += 4 {
-		end := i + 4
-		if end > len(formatted) {
-			end = len(formatted)
-		}
-		parts = append(parts, formatted[i:end])
+func (lm *LicenseManager) licenseKeyChecksum(entropy []byte, email, clientID string) []byte {
+	keyMaterial := strings.TrimSpace(clientID)
+	if keyMaterial == "" {
+		keyMaterial = "default-license-key"
 	}
+	mac := hmac.New(sha256.New, []byte(keyMaterial))
+	mac.Write(entropy)
+	mac.Write([]byte(strings.ToLower(strings.TrimSpace(email))))
+	sum := mac.Sum(nil)
+	checksum := make([]byte, licenseKeyChecksumBytes)
+	copy(checksum, sum[:licenseKeyChecksumBytes])
+	return checksum
+}
 
+func chunkLicenseKey(value string, groupSize int) string {
+	if groupSize <= 0 {
+		return value
+	}
+	var parts []string
+	for i := 0; i < len(value); i += groupSize {
+		end := i + groupSize
+		if end > len(value) {
+			end = len(value)
+		}
+		parts = append(parts, value[i:end])
+	}
 	return strings.Join(parts, "-")
 }
 
