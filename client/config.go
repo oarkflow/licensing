@@ -28,7 +28,7 @@ var (
 	configDirFlag       = flag.String("config-dir", "", fmt.Sprintf("Directory for license data (default $HOME/%s or $%s)", client.DefaultConfigDir, EnvConfigDir))
 	licenseStoreFlag    = flag.String("license-store", "", fmt.Sprintf("License store file name (default %s or $%s)", client.DefaultLicenseFile, EnvLicenseFile))
 	licenseInfoFileFlag = flag.String("license-file", "", "Path to JSON file with activation details (email, client ID, license key)")
-	serverURLFlag       = flag.String("server-url", "", fmt.Sprintf("Licensing server URL (default $%s or %s; falls back to http://localhost:8801 when --allow-insecure-http is set)", client.EnvServerURL, client.DefaultServerURL))
+	serverURLFlag       = flag.String("server-url", "http://localhost:8801", fmt.Sprintf("Licensing server URL (default $%s or %s; falls back to http://localhost:8801 when --allow-insecure-http is set)", client.EnvServerURL, client.DefaultServerURL))
 	httpTimeoutFlag     = flag.Duration("http-timeout", 0, fmt.Sprintf("HTTP timeout (e.g. 15s). Defaults to internal value or $%s", EnvHTTPTimeout))
 	caCertFlag          = flag.String("ca-cert", "", fmt.Sprintf("Path to PEM CA bundle for server validation (default $%s)", EnvCACertPath))
 	allowInsecureFlag   = flag.Bool("allow-insecure-http", false, fmt.Sprintf("Allow HTTP URLs or skip TLS verification for development (default $%s)", EnvAllowInsecureHTTP))
