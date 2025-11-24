@@ -138,13 +138,10 @@ func (r *Runner[T]) Run(ctx context.Context, fn LicensedAppFunc[T]) error {
 		}
 	}
 
-	logger.Printf("🔒 Verifying license...")
 	license, err := client.Verify()
 	if err != nil {
 		return fmt.Errorf("license verification failed: %w", err)
 	}
-	logger.Printf("✓ License verified")
-
 	if hook := r.cfg.Hooks.AfterVerify; hook != nil {
 		if err := hook(ctx, license); err != nil {
 			return fmt.Errorf("after verify hook failed: %w", err)
