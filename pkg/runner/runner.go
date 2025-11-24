@@ -124,8 +124,6 @@ func (r *Runner[T]) Run(ctx context.Context, fn LicensedAppFunc[T]) error {
 		logger = log.Default()
 	}
 
-	logger.Printf("🔗 License server: %s", client.ServerURL())
-
 	activation := r.cfg.Activation
 	if activation == nil {
 		activation = EnsureExistingActivation[T]{}
