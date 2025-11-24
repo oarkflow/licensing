@@ -16,7 +16,7 @@ import (
 	"time"
 )
 
-const checksumKeySalt = "github.com/oarflow/licensing/client-checksum/v1"
+const checksumKeySalt = "github.com/oarkflow/licensing/client-checksum/v1"
 
 var (
 	errChecksumMissing  = errors.New("license checksum missing")

@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/oarflow/licensing/pkg/client"
+	"github.com/oarkflow/licensing/pkg/client"
 )
 
 const (

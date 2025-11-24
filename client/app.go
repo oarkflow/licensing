@@ -14,9 +14,9 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/oarflow/licensing/pkg/activation"
-	"github.com/oarflow/licensing/pkg/client"
-	"github.com/oarflow/licensing/pkg/runner"
+	"github.com/oarkflow/licensing/pkg/activation"
+	"github.com/oarkflow/licensing/pkg/client"
+	"github.com/oarkflow/licensing/pkg/runner"
 )
 
 func main() {

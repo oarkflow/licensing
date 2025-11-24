@@ -24,7 +24,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/oarflow/licensing/pkg/utils"
+	"github.com/oarkflow/licensing/pkg/utils"
 )
 
 const (

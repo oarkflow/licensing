@@ -1,4 +1,4 @@
-module github.com/oarflow/licensing
+module github.com/oarkflow/licensing
 
 go 1.25.0
 

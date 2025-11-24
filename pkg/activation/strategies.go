@@ -10,8 +10,8 @@ import (
 	"os"
 	"strings"
 
-	licensingclient "github.com/oarflow/licensing/pkg/client"
-	"github.com/oarflow/licensing/pkg/runner"
+	licensingclient "github.com/oarkflow/licensing/pkg/client"
+	"github.com/oarkflow/licensing/pkg/runner"
 )
 
 const (

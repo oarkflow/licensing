@@ -18,7 +18,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/oarflow/licensing/pkg/utils"
+	"github.com/oarkflow/licensing/pkg/utils"
 )
 
 type licenseResponseFactory struct {
