@@ -11,7 +11,7 @@ A hardened license server and client that leverage pluggable signing providers (
 - **Session-keyed channel:** once activated, each device receives a unique transport key embedded inside the license payload, and subsequent HTTP traffic is re-encrypted with that key so no pre-shared secrets are required beyond TLS.
 - **Audit + admin APIs:** rate-limited HTTP endpoints for managing clients, issuing licenses, banning/unbanning, and revoking/reinstating licenses.
 - **Pluggable storage:** choose in-memory, SQLite, or JSON-on-disk storage via environment variables; disk snapshots are written atomically with `0600` permissions.
-- **Secure client storage:** the CLI enforces `chmod 600` on `~/.myapp/.license.dat`, verifies server signatures, and refuses to run if the payload or fingerprint diverge.
+- **Secure client storage:** the CLI enforces `chmod 600` on `~/.licensing/.license.dat`, verifies server signatures, and refuses to run if the payload or fingerprint diverge.
 
 ## Requirements
 
@@ -30,8 +30,8 @@ A hardened license server and client that leverage pluggable signing providers (
    # Optional comma-separated list alternative:
    # export LICENSE_SERVER_API_KEYS="key-one,key-two"
 
-   # Storage backend: "memory" (default), "file", or "sqlite"
-   export LICENSE_SERVER_STORAGE="sqlite"
+   # Storage backend: defaults to SQLite; override with "memory" or "file" if needed
+   # export LICENSE_SERVER_STORAGE="memory"
 
    # JSON file storage path (default: ./data/licensing-state.json)
    export LICENSE_SERVER_STORAGE_FILE="/var/lib/licensing/state.json"
@@ -39,11 +39,12 @@ A hardened license server and client that leverage pluggable signing providers (
    # SQLite database path (default: ./data/licensing.db)
    export LICENSE_SERVER_STORAGE_SQLITE_PATH="/var/lib/licensing/licensing.db"
 
-   # TLS (optional but recommended)
+   # TLS (required for all non-development deployments)
    export LICENSE_SERVER_TLS_CERT="/path/to/server.crt"
    export LICENSE_SERVER_TLS_KEY="/path/to/server.key"
    # Enable mutual TLS by providing a client CA bundle
    export LICENSE_SERVER_CLIENT_CA="/path/to/clients.pem"
+   # For local testing only, set LICENSE_SERVER_ALLOW_INSECURE_HTTP=1 or pass --allow-insecure-http
 
    # Signing provider (software, file, or tpm)
    export LICENSE_SERVER_KEY_PROVIDER="software"
@@ -68,7 +69,7 @@ A hardened license server and client that leverage pluggable signing providers (
    ```bash
    export LICENSE_CLIENT_SERVER="https://licensing.example.com"
    ```
-   Defaults to `http://localhost:8080`.
+   Defaults to `https://localhost:8801`.
 2. **Seed activation data (optional):** Place the credentials you want to reuse into a JSON file and pass it with `--license-file`. The file must include `email`, `client_id`, and `license_key`.
    ```json
    {
@@ -85,7 +86,7 @@ A hardened license server and client that leverage pluggable signing providers (
    ```bash
    go run ./client --license-store production.lic
    ```
-   The CLI will display the server it will contact, prompt for the license credentials, and persist the encrypted payload to `~/.myapp/.license.dat` with `0600` permissions.
+   The CLI will display the server it will contact, prompt for the license credentials, and persist the encrypted payload to `~/.licensing/.license.dat` with `0600` permissions.
 4. **Verification:** subsequent runs skip activation, verify the server signature, confirm the encrypted payload matches the current device fingerprint, and refuse to continue if the license is revoked or expired.
 
 ### Client Configuration Options
@@ -95,10 +96,12 @@ The CLI layers configuration in the following order: command-line flags → envi
 | Flag | Env Var | Description | Default |
 | --- | --- | --- | --- |
 | `--activation-mode` | — | Chooses the activation strategy (`auto`, `env`, `prompt`, `verify`). | `auto` |
-| `--config-dir` | `LICENSE_CLIENT_CONFIG_DIR` | Directory that stores the encrypted license payload. | `$HOME/.myapp` |
+| `--config-dir` | `LICENSE_CLIENT_CONFIG_DIR` | Directory that stores the encrypted license payload. | `$HOME/.licensing` |
 | `--license-store` | `LICENSE_CLIENT_LICENSE_FILE` | File name (placed under `config-dir`) for the encrypted license blob. | `.license.dat` |
 | `--license-file` | — | Path to a JSON file containing `email`, `client_id`, and `license_key` used to pre-fill activation prompts. | — |
-| `--server-url` | `LICENSE_CLIENT_SERVER` | Licensing server base URL. | `http://localhost:8080` |
+| `--server-url` | `LICENSE_CLIENT_SERVER` | Licensing server base URL. | `https://localhost:8801` |
+| `--ca-cert` | `LICENSE_CLIENT_CA_CERT` | Path to a PEM bundle that should be trusted in addition to system roots. | — |
+| `--allow-insecure-http` | `LICENSE_CLIENT_ALLOW_INSECURE_HTTP` | Permit HTTP URLs and skip TLS verification (development only). | `false` |
 | `--http-timeout` | `LICENSE_CLIENT_HTTP_TIMEOUT` | HTTP client timeout (Go duration, e.g. `20s`, `1m`). | `15s` |
 
 Environment activation also consumes `LICENSE_CLIENT_EMAIL`, `LICENSE_CLIENT_LICENSE_KEY`, and **always** `LICENSE_CLIENT_ID`.
@@ -224,7 +227,7 @@ If you prefer file-based automation, include `email`, `client_id`, and `license_
 ## Tamper-Resistance Guidelines
 
 - **Public key hygiene:** the server writes `server_public_key.pem` only inside `~/.licensing/` with permissions `0700/0600`. Delete the file if you rotate signing keys; it will be re-created on next start.
-- **Client license file:** if the CLI detects that `~/.myapp/.license.dat` is world-readable it aborts with instructions to `chmod 600`.
+- **Client license file:** if the CLI detects that `~/.licensing/.license.dat` is world-readable it aborts with instructions to `chmod 600`.
 - **Detached checksum vault:** every activation records an encrypted checksum next to the license file; if it goes missing the client recontacts the server to reissue the license before recreating the checksum, and it still aborts if the checksum diverges.
 - **Signatures first:** both activation time and runtime verification fail fast if the signature or ciphertext hash mismatches.
 - **Device binding:** moving the license file to a different machine fails because the fingerprint becomes invalid and the transport key cannot be recreated.
@@ -241,16 +244,16 @@ If you prefer file-based automation, include `email`, `client_id`, and `license_
   go run ./client
   ```
 - Hit the health probe:
-  ```bash
-  curl -k https://localhost:8080/health
-  ```
+   ```bash
+   curl -k https://localhost:8801/health
+   ```
 
 ## Troubleshooting
 
 | Symptom | Fix |
 | --- | --- |
-| `license not found - please activate first` | Run the client and complete activation; ensure `~/.myapp/` exists. |
-| `license file ... has insecure permissions` | Run `chmod 600 ~/.myapp/.license.dat` (Unix hosts). |
+| `license not found - please activate first` | Run the client and complete activation; ensure `~/.licensing/` exists. |
+| `license file ... has insecure permissions` | Run `chmod 600 ~/.licensing/.license.dat` (Unix hosts). |
 | `license server responded 401` | Set `LICENSE_SERVER_API_KEY` on the server or provide the correct admin key in your request. |
 | `license revoked` / `client banned` | Use the admin API to reinstate the license or client once the issue is resolved. |
 | TLS errors when running locally | Either disable TLS env vars during local testing or trust the self-signed certificate from the server. |

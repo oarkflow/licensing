@@ -16,7 +16,10 @@ import (
 // ==================== Main ====================
 
 func main() {
+	os.Setenv("LICENSE_SERVER_ALLOW_INSECURE_HTTP", "true")
 	httpServer := flag.String("http-addr", ":8801", "HTTP server address")
+	defaultAllowInsecure := envBool("LICENSE_SERVER_ALLOW_INSECURE_HTTP")
+	allowInsecureHTTP := flag.Bool("allow-insecure-http", defaultAllowInsecure, "Allow HTTP without TLS (development only)")
 	flag.Parse()
 	if *httpServer == "" {
 		*httpServer = ":8801"
@@ -82,7 +85,7 @@ func main() {
 	tlsCert := os.Getenv("LICENSE_SERVER_TLS_CERT")
 	tlsKey := os.Getenv("LICENSE_SERVER_TLS_KEY")
 	clientCA := os.Getenv("LICENSE_SERVER_CLIENT_CA")
-	server, err := licensing.NewServer(lm, *httpServer, apiKeys, rateLimiter, tlsCert, tlsKey, clientCA)
+	server, err := licensing.NewServer(lm, *httpServer, apiKeys, rateLimiter, tlsCert, tlsKey, clientCA, *allowInsecureHTTP)
 	if err != nil {
 		log.Fatalf("Failed to initialize server: %v", err)
 	}
@@ -99,6 +102,16 @@ func shouldBootstrapDemoData() bool {
 		return false
 	}
 	switch strings.ToLower(flag) {
+	case "1", "true", "yes", "on":
+		return true
+	default:
+		return false
+	}
+}
+
+func envBool(key string) bool {
+	val := strings.ToLower(strings.TrimSpace(os.Getenv(key)))
+	switch val {
 	case "1", "true", "yes", "on":
 		return true
 	default:

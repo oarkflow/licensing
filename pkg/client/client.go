@@ -7,6 +7,7 @@ import (
 	"crypto/cipher"
 	"crypto/rsa"
 	"crypto/sha256"
+	"crypto/tls"
 	"crypto/x509"
 	"encoding/hex"
 	"encoding/json"
@@ -15,6 +16,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -28,8 +30,8 @@ import (
 const (
 	EnvServerURL       = "LICENSE_CLIENT_SERVER"
 	DefaultLicenseFile = ".license.dat"
-	DefaultConfigDir   = ".myapp"
-	DefaultServerURL   = "http://localhost:8080"
+	DefaultConfigDir   = ".licensing"
+	DefaultServerURL   = "https://localhost:8801"
 )
 
 const (
@@ -48,12 +50,14 @@ const checksumFileSuffix = ".chk"
 
 // Config controls how the licensing client persists data and contacts the server.
 type Config struct {
-	ConfigDir   string
-	LicenseFile string
-	ServerURL   string
-	AppName     string
-	AppVersion  string
-	HTTPTimeout time.Duration
+	ConfigDir         string
+	LicenseFile       string
+	ServerURL         string
+	AppName           string
+	AppVersion        string
+	HTTPTimeout       time.Duration
+	CACertPath        string
+	AllowInsecureHTTP bool
 }
 
 // Client manages license activation and verification for Go applications.
@@ -135,7 +139,10 @@ func New(cfg Config) (*Client, error) {
 		return nil, err
 	}
 
-	httpClient := &http.Client{Timeout: normalized.HTTPTimeout}
+	httpClient, err := buildHTTPClient(normalized)
+	if err != nil {
+		return nil, err
+	}
 
 	client := &Client{
 		config:       normalized,
@@ -177,7 +184,24 @@ func normalizeConfig(cfg Config) (Config, error) {
 	if serverURL == "" {
 		serverURL = DefaultServerURL
 	}
-	cfg.ServerURL = strings.TrimRight(serverURL, "/")
+	parsedURL, err := url.Parse(serverURL)
+	if err != nil {
+		return Config{}, fmt.Errorf("invalid server URL: %w", err)
+	}
+	if parsedURL.Scheme == "" {
+		parsedURL.Scheme = "https"
+	}
+	if parsedURL.Host == "" {
+		return Config{}, fmt.Errorf("server URL must include host")
+	}
+	scheme := strings.ToLower(parsedURL.Scheme)
+	if scheme != "https" && scheme != "http" {
+		return Config{}, fmt.Errorf("unsupported server URL scheme: %s", scheme)
+	}
+	if scheme == "http" && !cfg.AllowInsecureHTTP {
+		return Config{}, fmt.Errorf("http endpoints are disabled; rerun with --allow-insecure-http for development")
+	}
+	cfg.ServerURL = strings.TrimRight(parsedURL.String(), "/")
 
 	if cfg.HTTPTimeout <= 0 {
 		cfg.HTTPTimeout = defaultHTTPTimeout
@@ -189,8 +213,43 @@ func normalizeConfig(cfg Config) (Config, error) {
 	if strings.TrimSpace(cfg.AppVersion) == "" {
 		cfg.AppVersion = defaultAppVersion
 	}
+	if strings.TrimSpace(cfg.CACertPath) != "" {
+		if _, err := os.Stat(cfg.CACertPath); err != nil {
+			return Config{}, fmt.Errorf("failed to access CA certificate: %w", err)
+		}
+	}
 
 	return cfg, nil
+}
+
+func buildHTTPClient(cfg Config) (*http.Client, error) {
+	baseTransport, ok := http.DefaultTransport.(*http.Transport)
+	var transport *http.Transport
+	if ok {
+		transport = baseTransport.Clone()
+	} else {
+		transport = &http.Transport{}
+	}
+	tlsConfig := &tls.Config{MinVersion: tls.VersionTLS12}
+	if strings.TrimSpace(cfg.CACertPath) != "" {
+		caBytes, err := os.ReadFile(cfg.CACertPath)
+		if err != nil {
+			return nil, fmt.Errorf("failed to read CA certificate: %w", err)
+		}
+		pool := x509.NewCertPool()
+		if !pool.AppendCertsFromPEM(caBytes) {
+			return nil, fmt.Errorf("failed to parse CA certificate")
+		}
+		tlsConfig.RootCAs = pool
+	}
+	if cfg.AllowInsecureHTTP {
+		tlsConfig.InsecureSkipVerify = true
+	}
+	transport.TLSClientConfig = tlsConfig
+	return &http.Client{
+		Timeout:   cfg.HTTPTimeout,
+		Transport: transport,
+	}, nil
 }
 
 func normalizeLicenseKey(key string) string {

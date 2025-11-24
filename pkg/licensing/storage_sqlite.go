@@ -10,11 +10,13 @@ import (
 	"strings"
 	"time"
 
-	_ "modernc.org/sqlite"
+	"github.com/oarkflow/date"
+	"github.com/oarkflow/squealx"
+	"github.com/oarkflow/squealx/drivers/sqlite"
 )
 
 type SQLiteStorage struct {
-	db *sql.DB
+	db *squealx.DB
 }
 
 func NewSQLiteStorage(path string) (*SQLiteStorage, error) {
@@ -25,7 +27,7 @@ func NewSQLiteStorage(path string) (*SQLiteStorage, error) {
 	if err := os.MkdirAll(filepath.Dir(cleaned), 0o700); err != nil {
 		return nil, fmt.Errorf("failed to create sqlite directory: %w", err)
 	}
-	db, err := sql.Open("sqlite", cleaned)
+	db, err := sqlite.Open(cleaned, "sqlite")
 	if err != nil {
 		return nil, fmt.Errorf("failed to open sqlite database: %w", err)
 	}
@@ -40,7 +42,7 @@ func NewSQLiteStorage(path string) (*SQLiteStorage, error) {
 	return &SQLiteStorage{db: db}, nil
 }
 
-func configureSQLite(db *sql.DB) error {
+func configureSQLite(db *squealx.DB) error {
 	pragmas := []string{
 		"PRAGMA foreign_keys = ON;",
 		"PRAGMA journal_mode = WAL;",
@@ -55,7 +57,7 @@ func configureSQLite(db *sql.DB) error {
 	return db.Ping()
 }
 
-func ensureSQLiteSchema(db *sql.DB) error {
+func ensureSQLiteSchema(db *squealx.DB) error {
 	stmts := []string{
 		`CREATE TABLE IF NOT EXISTS clients (
 			id TEXT PRIMARY KEY,
@@ -150,6 +152,68 @@ type rowScanner interface {
 	Scan(dest ...any) error
 }
 
+type sqliteTimeValue struct {
+	time.Time
+}
+
+func (stv *sqliteTimeValue) Scan(value any) error {
+	if value == nil {
+		stv.Time = time.Time{}
+		return nil
+	}
+	t, err := parseSQLiteTime(value)
+	if err != nil {
+		return err
+	}
+	stv.Time = t.UTC()
+	return nil
+}
+
+type sqliteNullTime struct {
+	Time  time.Time
+	Valid bool
+}
+
+func (snt *sqliteNullTime) Scan(value any) error {
+	if value == nil {
+		snt.Valid = false
+		snt.Time = time.Time{}
+		return nil
+	}
+	t, err := parseSQLiteTime(value)
+	if err != nil {
+		return err
+	}
+	snt.Time = t.UTC()
+	snt.Valid = true
+	return nil
+}
+
+func parseSQLiteTime(value any) (time.Time, error) {
+	switch v := value.(type) {
+	case time.Time:
+		return v, nil
+	case string:
+		return parseSQLiteTimeString(v)
+	case []byte:
+		return parseSQLiteTimeString(string(v))
+	default:
+		return time.Time{}, fmt.Errorf("unsupported time value type %T", value)
+	}
+}
+
+func parseSQLiteTimeString(input string) (time.Time, error) {
+	s := strings.TrimSpace(input)
+	if s == "" {
+		return time.Time{}, nil
+	}
+	t, err := date.Parse(s)
+	if err == nil {
+		return t, nil
+	}
+	return time.Time{}, fmt.Errorf("unable to parse time %q", s)
+}
+
 func boolToInt(b bool) int {
 	if b {
 		return 1
@@ -166,19 +230,22 @@ func nullTime(t time.Time) any {
 
 func scanClientRow(scanner rowScanner) (*Client, error) {
 	var c Client
-	var banned sql.NullTime
+	var createdAt, updatedAt sqliteTimeValue
+	var banned sqliteNullTime
 	var banReason sql.NullString
 	if err := scanner.Scan(
 		&c.ID,
 		&c.Email,
 		&c.Status,
-		&c.CreatedAt,
-		&c.UpdatedAt,
+		&createdAt,
+		&updatedAt,
 		&banned,
 		&banReason,
 	); err != nil {
 		return nil, err
 	}
+	c.CreatedAt = createdAt.Time
+	c.UpdatedAt = updatedAt.Time
 	if banned.Valid {
 		c.BannedAt = banned.Time
 	}
@@ -190,9 +257,9 @@ func scanClientRow(scanner rowScanner) (*Client, error) {
 
 func scanLicenseRow(scanner rowScanner) (*License, error) {
 	var lic License
-	var revokedAt, lastActivated sql.NullTime
+	var revokedAt, lastActivated sqliteNullTime
 	var revokeReason sql.NullString
-	var issuedAt, expiresAt time.Time
+	var issuedAt, expiresAt sqliteTimeValue
 	var isRevoked, isActivated int
 	if err := scanner.Scan(
 		&lic.ID,
@@ -213,8 +280,8 @@ func scanLicenseRow(scanner rowScanner) (*License, error) {
 	}
 	lic.IsRevoked = isRevoked == 1
 	lic.IsActivated = isActivated == 1
-	lic.IssuedAt = issuedAt
-	lic.ExpiresAt = expiresAt
+	lic.IssuedAt = issuedAt.Time
+	lic.ExpiresAt = expiresAt.Time
 	if revokedAt.Valid {
 		lic.RevokedAt = revokedAt.Time
 	}
@@ -334,7 +401,7 @@ func (s *SQLiteStorage) SaveLicense(ctx context.Context, license *License) error
 	if license == nil {
 		return fmt.Errorf("license is nil")
 	}
-	return s.withTx(ctx, func(tx *sql.Tx) error {
+	return s.withTx(ctx, func(tx squealx.SQLTx) error {
 		query := `INSERT INTO licenses (
 			id, client_id, email, license_key, license_key_norm, is_revoked, revoked_at,
 			revoke_reason, is_activated, issued_at, last_activated_at, expires_at, max_activations, current_activations)
@@ -372,7 +439,7 @@ func (s *SQLiteStorage) UpdateLicense(ctx context.Context, license *License) err
 	if license == nil {
 		return fmt.Errorf("license is nil")
 	}
-	return s.withTx(ctx, func(tx *sql.Tx) error {
+	return s.withTx(ctx, func(tx squealx.SQLTx) error {
 		query := `UPDATE licenses SET
 			client_id = ?, email = ?, license_key = ?, license_key_norm = ?,
             is_revoked = ?, revoked_at = ?, revoke_reason = ?, is_activated = ?, issued_at = ?,
@@ -482,7 +549,7 @@ func (s *SQLiteStorage) ListLicenses(ctx context.Context) ([]*License, error) {
 	return licenses, rows.Err()
 }
 
-func (s *SQLiteStorage) replaceDevices(ctx context.Context, tx *sql.Tx, licenseID string, devices map[string]*LicenseDevice) error {
+func (s *SQLiteStorage) replaceDevices(ctx context.Context, tx squealx.SQLTx, licenseID string, devices map[string]*LicenseDevice) error {
 	if _, err := tx.ExecContext(ctx, `DELETE FROM license_devices WHERE license_id = ?`, licenseID); err != nil {
 		return err
 	}
@@ -518,9 +585,12 @@ func (s *SQLiteStorage) loadDevices(ctx context.Context, license *License) error
 	for rows.Next() {
 		var device LicenseDevice
 		var transport []byte
-		if err := rows.Scan(&device.Fingerprint, &device.ActivatedAt, &device.LastSeenAt, &transport); err != nil {
+		var activatedAt, lastSeen sqliteTimeValue
+		if err := rows.Scan(&device.Fingerprint, &activatedAt, &lastSeen, &transport); err != nil {
 			return err
 		}
+		device.ActivatedAt = activatedAt.Time
+		device.LastSeenAt = lastSeen.Time
 		device.TransportKey = append([]byte(nil), transport...)
 		license.Devices[device.Fingerprint] = &device
 	}
@@ -531,7 +601,7 @@ func (s *SQLiteStorage) loadDevices(ctx context.Context, license *License) error
 	return nil
 }
 
-func (s *SQLiteStorage) replaceAuthorizedUsers(ctx context.Context, tx *sql.Tx, licenseID string, users map[string]*LicenseIdentity) error {
+func (s *SQLiteStorage) replaceAuthorizedUsers(ctx context.Context, tx squealx.SQLTx, licenseID string, users map[string]*LicenseIdentity) error {
 	if _, err := tx.ExecContext(ctx, `DELETE FROM license_authorized_users WHERE license_id = ?`, licenseID); err != nil {
 		return err
 	}
@@ -580,9 +650,11 @@ func (s *SQLiteStorage) loadAuthorizedUsers(ctx context.Context, license *Licens
 	var users map[string]*LicenseIdentity
 	for rows.Next() {
 		var ident LicenseIdentity
-		if err := rows.Scan(&ident.Email, &ident.ClientID, &ident.ProviderClientID, &ident.GrantedAt); err != nil {
+		var grantedAt sqliteTimeValue
+		if err := rows.Scan(&ident.Email, &ident.ClientID, &ident.ProviderClientID, &grantedAt); err != nil {
 			return err
 		}
+		ident.GrantedAt = grantedAt.Time
 		if users == nil {
 			users = make(map[string]*LicenseIdentity)
 		}
@@ -628,6 +700,7 @@ func (s *SQLiteStorage) ListActivations(ctx context.Context, licenseID string) (
 	for rows.Next() {
 		var rec ActivationRecord
 		var success int
+		var timestamp sqliteTimeValue
 		if err := rows.Scan(
 			&rec.ID,
 			&rec.LicenseID,
@@ -637,10 +710,11 @@ func (s *SQLiteStorage) ListActivations(ctx context.Context, licenseID string) (
 			&rec.UserAgent,
 			&success,
 			&rec.Message,
-			&rec.Timestamp,
+			&timestamp,
 		); err != nil {
 			return nil, err
 		}
+		rec.Timestamp = timestamp.Time
 		rec.Success = success == 1
 		records = append(records, cloneActivationRecord(&rec))
 	}
@@ -674,12 +748,15 @@ func (s *SQLiteStorage) GetAdminUser(ctx context.Context, userID string) (*Admin
 	query := `SELECT id, username, password_hash, created_at, updated_at FROM admin_users WHERE id = ?`
 	row := s.db.QueryRowContext(ctx, query, userID)
 	var user AdminUser
-	if err := row.Scan(&user.ID, &user.Username, &user.PasswordHash, &user.CreatedAt, &user.UpdatedAt); err != nil {
+	var createdAt, updatedAt sqliteTimeValue
+	if err := row.Scan(&user.ID, &user.Username, &user.PasswordHash, &createdAt, &updatedAt); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, errUserMissing
 		}
 		return nil, err
 	}
+	user.CreatedAt = createdAt.Time
+	user.UpdatedAt = updatedAt.Time
 	return cloneAdminUser(&user), nil
 }
 
@@ -687,12 +764,15 @@ func (s *SQLiteStorage) GetAdminUserByUsername(ctx context.Context, username str
 	query := `SELECT id, username, password_hash, created_at, updated_at FROM admin_users WHERE username_lower = ?`
 	row := s.db.QueryRowContext(ctx, query, strings.ToLower(strings.TrimSpace(username)))
 	var user AdminUser
-	if err := row.Scan(&user.ID, &user.Username, &user.PasswordHash, &user.CreatedAt, &user.UpdatedAt); err != nil {
+	var createdAt, updatedAt sqliteTimeValue
+	if err := row.Scan(&user.ID, &user.Username, &user.PasswordHash, &createdAt, &updatedAt); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, errUserMissing
 		}
 		return nil, err
 	}
+	user.CreatedAt = createdAt.Time
+	user.UpdatedAt = updatedAt.Time
 	return cloneAdminUser(&user), nil
 }
 
@@ -706,9 +786,12 @@ func (s *SQLiteStorage) ListAdminUsers(ctx context.Context) ([]*AdminUser, error
 	var users []*AdminUser
 	for rows.Next() {
 		var user AdminUser
-		if err := rows.Scan(&user.ID, &user.Username, &user.PasswordHash, &user.CreatedAt, &user.UpdatedAt); err != nil {
+		var createdAt, updatedAt sqliteTimeValue
+		if err := rows.Scan(&user.ID, &user.Username, &user.PasswordHash, &createdAt, &updatedAt); err != nil {
 			return nil, err
 		}
+		user.CreatedAt = createdAt.Time
+		user.UpdatedAt = updatedAt.Time
 		users = append(users, cloneAdminUser(&user))
 	}
 	return users, rows.Err()
@@ -764,13 +847,15 @@ func (s *SQLiteStorage) GetAPIKeyByHash(ctx context.Context, hash string) (*APIK
 	query := `SELECT id, user_id, hash, prefix, created_at, last_used_at FROM api_keys WHERE hash = ?`
 	row := s.db.QueryRowContext(ctx, query, hash)
 	var key APIKeyRecord
-	var lastUsed sql.NullTime
-	if err := row.Scan(&key.ID, &key.UserID, &key.Hash, &key.Prefix, &key.CreatedAt, &lastUsed); err != nil {
+	var createdAt sqliteTimeValue
+	var lastUsed sqliteNullTime
+	if err := row.Scan(&key.ID, &key.UserID, &key.Hash, &key.Prefix, &createdAt, &lastUsed); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, errAPIKeyMissing
 		}
 		return nil, err
 	}
+	key.CreatedAt = createdAt.Time
 	if lastUsed.Valid {
 		key.LastUsed = lastUsed.Time
 	}
@@ -787,10 +872,12 @@ func (s *SQLiteStorage) ListAPIKeysByUser(ctx context.Context, userID string) ([
 	var keys []*APIKeyRecord
 	for rows.Next() {
 		var key APIKeyRecord
-		var lastUsed sql.NullTime
-		if err := rows.Scan(&key.ID, &key.UserID, &key.Hash, &key.Prefix, &key.CreatedAt, &lastUsed); err != nil {
+		var createdAt sqliteTimeValue
+		var lastUsed sqliteNullTime
+		if err := rows.Scan(&key.ID, &key.UserID, &key.Hash, &key.Prefix, &createdAt, &lastUsed); err != nil {
 			return nil, err
 		}
+		key.CreatedAt = createdAt.Time
 		if lastUsed.Valid {
 			key.LastUsed = lastUsed.Time
 		}
@@ -799,7 +886,7 @@ func (s *SQLiteStorage) ListAPIKeysByUser(ctx context.Context, userID string) ([
 	return keys, rows.Err()
 }
 
-func (s *SQLiteStorage) withTx(ctx context.Context, fn func(*sql.Tx) error) error {
+func (s *SQLiteStorage) withTx(ctx context.Context, fn func(squealx.SQLTx) error) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err

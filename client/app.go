@@ -20,6 +20,7 @@ import (
 )
 
 func main() {
+	os.Setenv(EnvAllowInsecureHTTP, "true")
 	flag.Parse()
 	activation.SetLicenseFilePath(strings.TrimSpace(*licenseInfoFileFlag))
 

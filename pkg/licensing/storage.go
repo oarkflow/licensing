@@ -645,7 +645,19 @@ func (ps *PersistentStorage) loadFromDisk() error {
 func BuildStorageFromEnv() (Storage, string, error) {
 	mode := strings.ToLower(strings.TrimSpace(os.Getenv("LICENSE_SERVER_STORAGE")))
 	switch mode {
-	case "", "memory":
+	case "", "sqlite", "sql", "sqlite3":
+		path := strings.TrimSpace(os.Getenv("LICENSE_SERVER_STORAGE_SQLITE_PATH"))
+		if path == "" {
+			path = filepath.Join("data", "licensing.db")
+		} else {
+			path = filepath.Clean(path)
+		}
+		storage, err := NewSQLiteStorage(path)
+		if err != nil {
+			return nil, "", err
+		}
+		return storage, fmt.Sprintf("sqlite:%s", path), nil
+	case "memory":
 		return NewInMemoryStorage(), "memory", nil
 	case "file", "disk", "persistent":
 		path := strings.TrimSpace(os.Getenv("LICENSE_SERVER_STORAGE_FILE"))
@@ -659,18 +671,6 @@ func BuildStorageFromEnv() (Storage, string, error) {
 			return nil, "", err
 		}
 		return storage, fmt.Sprintf("file:%s", path), nil
-	case "sqlite", "sql", "sqlite3":
-		path := strings.TrimSpace(os.Getenv("LICENSE_SERVER_STORAGE_SQLITE_PATH"))
-		if path == "" {
-			path = filepath.Join("data", "licensing.db")
-		} else {
-			path = filepath.Clean(path)
-		}
-		storage, err := NewSQLiteStorage(path)
-		if err != nil {
-			return nil, "", err
-		}
-		return storage, fmt.Sprintf("sqlite:%s", path), nil
 	default:
 		return nil, "", fmt.Errorf("unsupported storage mode %q", mode)
 	}

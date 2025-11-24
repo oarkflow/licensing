@@ -28,6 +28,7 @@ type Server struct {
 	tlsCertPath        string
 	tlsKeyPath         string
 	clientCAPath       string
+	allowInsecureHTTP  bool
 }
 
 type adminUserResponse struct {
@@ -75,7 +76,7 @@ func newAPIKeyMetadata(record *APIKeyRecord) apiKeyMetadata {
 	}
 }
 
-func NewServer(lm *LicenseManager, port string, apiKeys []string, limiter *RateLimiter, tlsCertPath, tlsKeyPath, clientCAPath string) (*Server, error) {
+func NewServer(lm *LicenseManager, port string, apiKeys []string, limiter *RateLimiter, tlsCertPath, tlsKeyPath, clientCAPath string, allowInsecure bool) (*Server, error) {
 	var hashes [][]byte
 	var err error
 	if len(apiKeys) > 0 {
@@ -87,6 +88,9 @@ func NewServer(lm *LicenseManager, port string, apiKeys []string, limiter *RateL
 	if limiter == nil {
 		limiter = NewRateLimiter(60, time.Minute)
 	}
+	if !allowInsecure && (strings.TrimSpace(tlsCertPath) == "" || strings.TrimSpace(tlsKeyPath) == "") {
+		return nil, fmt.Errorf("tls cert/key required unless allowInsecure HTTP is enabled")
+	}
 	return &Server{
 		lm:                 lm,
 		port:               port,
@@ -95,6 +99,7 @@ func NewServer(lm *LicenseManager, port string, apiKeys []string, limiter *RateL
 		tlsCertPath:        tlsCertPath,
 		tlsKeyPath:         tlsKeyPath,
 		clientCAPath:       clientCAPath,
+		allowInsecureHTTP:  allowInsecure,
 	}, nil
 }
 
@@ -700,6 +705,9 @@ func (s *Server) Start() error {
 		server.TLSConfig = tlsConfig
 		return server.ListenAndServeTLS(s.tlsCertPath, s.tlsKeyPath)
 	}
-
+	if !s.allowInsecureHTTP {
+		return fmt.Errorf("tls required: set LICENSE_SERVER_TLS_CERT/KEY or start with --allow-insecure-http for development")
+	}
+	log.Printf("WARNING: starting licensing server without TLS; traffic will be unencrypted")
 	return server.ListenAndServe()
 }

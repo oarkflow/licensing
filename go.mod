@@ -5,8 +5,17 @@ go 1.25.0
 require github.com/google/uuid v1.6.0
 
 require (
+	github.com/oarkflow/squealx v0.0.62
 	golang.org/x/crypto v0.45.0
-	modernc.org/sqlite v1.40.1
+)
+
+require (
+	github.com/goccy/go-reflect v1.2.0 // indirect
+	github.com/oarkflow/date v0.0.4 // indirect
+	github.com/oarkflow/expr v0.0.11 // indirect
+	github.com/oarkflow/jet v0.0.4 // indirect
+	github.com/oarkflow/json v0.0.28 // indirect
+	modernc.org/sqlite v1.40.1 // indirect
 )
 
 require (
