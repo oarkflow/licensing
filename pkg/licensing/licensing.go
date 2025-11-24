@@ -31,7 +31,6 @@ type License struct {
 	IssuedAt           time.Time                   `json:"issued_at"`
 	LastActivatedAt    time.Time                   `json:"last_activated_at,omitempty"`
 	ExpiresAt          time.Time                   `json:"expires_at"`
-	MaxActivations     int                         `json:"max_activations"`
 	CurrentActivations int                         `json:"current_activations"`
 	MaxDevices         int                         `json:"max_devices"`
 	DeviceCount        int                         `json:"device_count"`
@@ -138,7 +137,9 @@ func refreshLicenseDeviceStats(license *License) {
 	deviceCount := len(license.Devices)
 	license.DeviceCount = deviceCount
 	license.CurrentActivations = deviceCount
-	license.MaxDevices = license.MaxActivations
+	if license.MaxDevices <= 0 {
+		license.MaxDevices = 1
+	}
 }
 
 func cloneActivationRecord(record *ActivationRecord) *ActivationRecord {
@@ -208,9 +209,9 @@ type banClientRequest struct {
 }
 
 type createLicenseRequest struct {
-	ClientID       string `json:"client_id"`
-	DurationDays   int    `json:"duration_days"`
-	MaxActivations int    `json:"max_activations"`
+	ClientID     string `json:"client_id"`
+	DurationDays int    `json:"duration_days"`
+	MaxDevices   int    `json:"max_devices"`
 }
 
 type licenseMutationRequest struct {

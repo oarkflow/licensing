@@ -387,12 +387,12 @@ func (s *Server) handleLicenses(w http.ResponseWriter, r *http.Request) {
 		if !s.decodeJSONBody(w, r, &req, maxAdminPayloadBytes) {
 			return
 		}
-		if req.ClientID == "" || req.DurationDays <= 0 || req.MaxActivations <= 0 {
-			s.respondError(w, http.StatusBadRequest, "client_id, duration_days, and max_activations must be provided")
+		if req.ClientID == "" || req.DurationDays <= 0 || req.MaxDevices <= 0 {
+			s.respondError(w, http.StatusBadRequest, "client_id, duration_days, max_devices must be provided")
 			return
 		}
 		duration := time.Duration(req.DurationDays) * 24 * time.Hour
-		license, err := s.lm.GenerateLicense(r.Context(), req.ClientID, duration, req.MaxActivations)
+		license, err := s.lm.GenerateLicense(r.Context(), req.ClientID, duration, req.MaxDevices)
 		if err != nil {
 			s.respondError(w, http.StatusBadRequest, err.Error())
 			return

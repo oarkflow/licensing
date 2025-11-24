@@ -114,7 +114,6 @@ type LicenseData struct {
 	IssuedAt           time.Time       `json:"issued_at"`
 	ExpiresAt          time.Time       `json:"expires_at"`
 	LastActivatedAt    time.Time       `json:"last_activated_at"`
-	MaxActivations     int             `json:"max_activations"`
 	CurrentActivations int             `json:"current_activations"`
 	MaxDevices         int             `json:"max_devices"`
 	DeviceCount        int             `json:"device_count"`

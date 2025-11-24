@@ -65,8 +65,8 @@ CREATE TABLE licenses (
     issued_at TIMESTAMP NOT NULL,
     last_activated_at TIMESTAMP,
     expires_at TIMESTAMP NOT NULL,
-    max_activations INTEGER NOT NULL,
     current_activations INTEGER NOT NULL,
+    max_devices INTEGER NOT NULL DEFAULT 0,
     FOREIGN KEY(client_id) REFERENCES clients(id) ON DELETE CASCADE
 );
 INSERT INTO licenses (
@@ -82,8 +82,8 @@ INSERT INTO licenses (
     issued_at,
     last_activated_at,
     expires_at,
-    max_activations,
-    current_activations
+    current_activations,
+    max_devices
 )
 SELECT
     id,
@@ -98,8 +98,8 @@ SELECT
     issued_at,
     last_activated_at,
     expires_at,
-    max_activations,
-    current_activations
+    current_activations,
+    max_activations AS max_devices
 FROM licenses_old;
 DROP TABLE licenses_old;
 
@@ -118,6 +118,8 @@ CREATE TABLE license_authorized_users (
 
 COMMIT;
 ```
+
+> The insert statement copies the legacy `max_activations` values into the new `max_devices` column so existing license quotas remain unchanged.
 
 > **Important:** Because the legacy schema stored delegated activations by username, you cannot automatically infer the new `subject_client_id` / `provider_client_id` pair. The script above clears `license_authorized_users`. After migration, recreate delegated identities by reactivating those devices or calling the admin API to attach them explicitly.
 

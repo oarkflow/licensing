@@ -5,7 +5,7 @@ A hardened license server and client that leverage pluggable signing providers (
 ## Features
 
 - **Hardware-backed signing:** every activation payload is signed by a configurable provider (software RSA for development, file-based keys, or a TPM 2.0 device). The server exports the public half to `~/.licensing/server_public_key.pem` with `0600` permissions.
-- **Per-device locking:** activations require a deterministic device fingerprint and are bounded by `max_activations` per license.
+- **Per-device locking:** activations require a deterministic device fingerprint and are bounded by `max_devices` per license.
 - **Encrypted license transport:** licenses are encrypted with AES-GCM using a key derived from the device fingerprint and nonce before being stored client-side.
 - **Integrity-bound checksum:** the client seals a SHA-256 checksum of the on-disk license blob using the device fingerprint so tampering attempts are detected before parsing, and it re-validates with the server before recreating a lost checksum.
 - **Session-keyed channel:** once activated, each device receives a unique transport key embedded inside the license payload, and subsequent HTTP traffic is re-encrypted with that key so no pre-shared secrets are required beyond TLS.

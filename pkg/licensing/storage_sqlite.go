@@ -82,8 +82,8 @@ func ensureSQLiteSchema(db *squealx.DB) error {
 			issued_at TIMESTAMP NOT NULL,
 			last_activated_at TIMESTAMP,
 			expires_at TIMESTAMP NOT NULL,
-			max_activations INTEGER NOT NULL,
-			current_activations INTEGER NOT NULL,
+			current_activations INTEGER NOT NULL DEFAULT 0,
+			max_devices INTEGER NOT NULL DEFAULT 0,
 			FOREIGN KEY(client_id) REFERENCES clients(id) ON DELETE CASCADE
 		);`,
 		`CREATE TABLE IF NOT EXISTS license_devices (
@@ -145,7 +145,63 @@ func ensureSQLiteSchema(db *squealx.DB) error {
 			return fmt.Errorf("sqlite schema migration failed: %w", err)
 		}
 	}
+	if err := ensureSQLiteColumn(db, "licenses", "max_devices", "INTEGER NOT NULL DEFAULT 0"); err != nil {
+		return err
+	}
+	hasMaxActivations, err := sqliteColumnExists(db, "licenses", "max_activations")
+	if err != nil {
+		return err
+	}
+	if hasMaxActivations {
+		if _, err := db.Exec(`UPDATE licenses SET max_devices = CASE WHEN max_devices = 0 THEN max_activations ELSE max_devices END`); err != nil {
+			return fmt.Errorf("sqlite migration update failed: %w", err)
+		}
+	}
 	return nil
+}
+
+func ensureSQLiteColumn(db *squealx.DB, table, column, definition string) error {
+	exists, err := sqliteColumnExists(db, table, column)
+	if err != nil {
+		return err
+	}
+	if exists {
+		return nil
+	}
+	stmt := fmt.Sprintf("ALTER TABLE %s ADD COLUMN %s %s", table, column, definition)
+	if _, err := db.Exec(stmt); err != nil {
+		return fmt.Errorf("failed to add column %s: %w", column, err)
+	}
+	return nil
+}
+
+func sqliteColumnExists(db *squealx.DB, table, column string) (bool, error) {
+	query := fmt.Sprintf("PRAGMA table_info(%s);", table)
+	rows, err := db.Query(query)
+	if err != nil {
+		return false, fmt.Errorf("failed to inspect table %s: %w", table, err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var (
+			cid    int
+			name   string
+			dummy1 interface{}
+			dummy2 interface{}
+			dummy3 interface{}
+			dummy4 interface{}
+		)
+		if err := rows.Scan(&cid, &name, &dummy1, &dummy2, &dummy3, &dummy4); err != nil {
+			return false, fmt.Errorf("failed to scan table info: %w", err)
+		}
+		if strings.EqualFold(name, column) {
+			return true, nil
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return false, fmt.Errorf("failed to iterate table info: %w", err)
+	}
+	return false, nil
 }
 
 type rowScanner interface {
@@ -273,8 +329,8 @@ func scanLicenseRow(scanner rowScanner) (*License, error) {
 		&issuedAt,
 		&lastActivated,
 		&expiresAt,
-		&lic.MaxActivations,
 		&lic.CurrentActivations,
+		&lic.MaxDevices,
 	); err != nil {
 		return nil, err
 	}
@@ -404,7 +460,7 @@ func (s *SQLiteStorage) SaveLicense(ctx context.Context, license *License) error
 	return s.withTx(ctx, func(tx squealx.SQLTx) error {
 		query := `INSERT INTO licenses (
 			id, client_id, email, license_key, license_key_norm, is_revoked, revoked_at,
-			revoke_reason, is_activated, issued_at, last_activated_at, expires_at, max_activations, current_activations)
+			revoke_reason, is_activated, issued_at, last_activated_at, expires_at, current_activations, max_devices)
 			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 		_, err := tx.ExecContext(ctx, query,
 			license.ID,
@@ -419,8 +475,8 @@ func (s *SQLiteStorage) SaveLicense(ctx context.Context, license *License) error
 			license.IssuedAt,
 			nullTime(license.LastActivatedAt),
 			license.ExpiresAt,
-			license.MaxActivations,
 			license.CurrentActivations,
+			license.MaxDevices,
 		)
 		if err != nil {
 			if isSQLiteUniqueErr(err) {
@@ -443,7 +499,7 @@ func (s *SQLiteStorage) UpdateLicense(ctx context.Context, license *License) err
 		query := `UPDATE licenses SET
 			client_id = ?, email = ?, license_key = ?, license_key_norm = ?,
             is_revoked = ?, revoked_at = ?, revoke_reason = ?, is_activated = ?, issued_at = ?,
-            last_activated_at = ?, expires_at = ?, max_activations = ?, current_activations = ?
+            last_activated_at = ?, expires_at = ?, current_activations = ?, max_devices = ?
             WHERE id = ?`
 		res, err := tx.ExecContext(ctx, query,
 			license.ClientID,
@@ -457,8 +513,8 @@ func (s *SQLiteStorage) UpdateLicense(ctx context.Context, license *License) err
 			license.IssuedAt,
 			nullTime(license.LastActivatedAt),
 			license.ExpiresAt,
-			license.MaxActivations,
 			license.CurrentActivations,
+			license.MaxDevices,
 			license.ID,
 		)
 		if err != nil {
@@ -480,9 +536,9 @@ func (s *SQLiteStorage) UpdateLicense(ctx context.Context, license *License) err
 
 func (s *SQLiteStorage) GetLicense(ctx context.Context, licenseID string) (*License, error) {
 	query := `SELECT id, client_id, email, license_key, is_revoked, revoked_at,
-                     revoke_reason, is_activated, issued_at, last_activated_at, expires_at,
-                     max_activations, current_activations
-              FROM licenses WHERE id = ?`
+			revoke_reason, is_activated, issued_at, last_activated_at, expires_at,
+			current_activations, max_devices
+		FROM licenses WHERE id = ?`
 	row := s.db.QueryRowContext(ctx, query, licenseID)
 	license, err := scanLicenseRow(row)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -502,9 +558,9 @@ func (s *SQLiteStorage) GetLicense(ctx context.Context, licenseID string) (*Lice
 
 func (s *SQLiteStorage) GetLicenseByKey(ctx context.Context, licenseKey string) (*License, error) {
 	query := `SELECT id, client_id, email, license_key, is_revoked, revoked_at,
-                     revoke_reason, is_activated, issued_at, last_activated_at, expires_at,
-                     max_activations, current_activations
-              FROM licenses WHERE license_key_norm = ?`
+			revoke_reason, is_activated, issued_at, last_activated_at, expires_at,
+			current_activations, max_devices
+		FROM licenses WHERE license_key_norm = ?`
 	row := s.db.QueryRowContext(ctx, query, normalizeLicenseKey(licenseKey))
 	license, err := scanLicenseRow(row)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -524,9 +580,9 @@ func (s *SQLiteStorage) GetLicenseByKey(ctx context.Context, licenseKey string) 
 
 func (s *SQLiteStorage) ListLicenses(ctx context.Context) ([]*License, error) {
 	query := `SELECT id, client_id, email, license_key, is_revoked, revoked_at,
-                     revoke_reason, is_activated, issued_at, last_activated_at, expires_at,
-                     max_activations, current_activations
-              FROM licenses ORDER BY issued_at DESC`
+			revoke_reason, is_activated, issued_at, last_activated_at, expires_at,
+			current_activations, max_devices
+		FROM licenses ORDER BY issued_at DESC`
 	rows, err := s.db.QueryContext(ctx, query)
 	if err != nil {
 		return nil, err

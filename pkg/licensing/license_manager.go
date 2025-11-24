@@ -293,9 +293,9 @@ func (lm *LicenseManager) UnbanClient(ctx context.Context, clientID string) (*Cl
 	return client, nil
 }
 
-func (lm *LicenseManager) GenerateLicense(ctx context.Context, clientID string, duration time.Duration, maxActivations int) (*License, error) {
-	if maxActivations <= 0 {
-		maxActivations = 1
+func (lm *LicenseManager) GenerateLicense(ctx context.Context, clientID string, duration time.Duration, maxDevices int) (*License, error) {
+	if maxDevices <= 0 {
+		maxDevices = 1
 	}
 	client, err := lm.storage.GetClient(ctx, clientID)
 	if err != nil {
@@ -316,7 +316,7 @@ func (lm *LicenseManager) GenerateLicense(ctx context.Context, clientID string, 
 		IsActivated:        false,
 		IssuedAt:           now,
 		ExpiresAt:          now.Add(duration),
-		MaxActivations:     maxActivations,
+		MaxDevices:         maxDevices,
 		Devices:            make(map[string]*LicenseDevice),
 		CurrentActivations: 0,
 	}
@@ -474,8 +474,8 @@ func (lm *LicenseManager) ActivateLicense(ctx context.Context, req *ActivationRe
 
 	device, exists := license.Devices[req.DeviceFingerprint]
 	if !exists {
-		if license.MaxActivations > 0 && len(license.Devices) >= license.MaxActivations {
-			message := fmt.Sprintf("Maximum devices (%d) reached", license.MaxActivations)
+		if license.MaxDevices > 0 && len(license.Devices) >= license.MaxDevices {
+			message := fmt.Sprintf("Maximum devices (%d) reached", license.MaxDevices)
 			lm.recordActivationAttempt(ctx, license, req, false, message)
 			return &ActivationResponse{Success: false, Message: message}, nil
 		}
@@ -703,7 +703,6 @@ func (lm *LicenseManager) buildLicensePayload(license *License, identity *Licens
 		"issued_at":           license.IssuedAt,
 		"expires_at":          license.ExpiresAt,
 		"last_activated_at":   license.LastActivatedAt,
-		"max_activations":     license.MaxActivations,
 		"current_activations": license.CurrentActivations,
 		"max_devices":         license.MaxDevices,
 		"device_count":        license.DeviceCount,
