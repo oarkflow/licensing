@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"flag"
 	"fmt"
 	"log"
 	"os"
@@ -15,12 +16,17 @@ import (
 // ==================== Main ====================
 
 func main() {
+	httpServer := flag.String("http-addr", ":8801", "HTTP server address")
+	flag.Parse()
+	if *httpServer == "" {
+		*httpServer = ":8801"
+	}
 	fmt.Println("╔═══════════════════════════════════════════╗")
 	fmt.Println("║    License Manager Server                 ║")
 	fmt.Println("║    Hardware-Secured Licensing System      ║")
 	fmt.Println("╚═══════════════════════════════════════════╝")
 	fmt.Println()
-
+	os.Setenv("LICENSE_SERVER_BOOTSTRAP_DEMO", "true")
 	// Initialize storage + License Manager
 	ctx := context.Background()
 	storage, storageMode, err := licensing.BuildStorageFromEnv()
@@ -83,7 +89,7 @@ func main() {
 	} else {
 		log.Printf("🔒 TLS certificate configured (server-only mode)")
 	}
-	server, err := licensing.NewServer(lm, ":8080", apiKeys, rateLimiter, tlsCert, tlsKey, clientCA)
+	server, err := licensing.NewServer(lm, *httpServer, apiKeys, rateLimiter, tlsCert, tlsKey, clientCA)
 	if err != nil {
 		log.Fatalf("Failed to initialize server: %v", err)
 	}
