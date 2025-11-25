@@ -33,12 +33,126 @@ const (
 
 var licenseKeyEncoding = base32.StdEncoding.WithPadding(base32.NoPadding)
 
+const (
+	defaultCustomCheckInterval = 24 * time.Hour
+	minCustomCheckInterval     = 5 * time.Minute
+)
+
+func normalizeCheckMode(mode LicenseCheckMode) LicenseCheckMode {
+	if mode == "" {
+		return LicenseCheckModeEachRun
+	}
+	switch mode {
+	case LicenseCheckModeNone,
+		LicenseCheckModeEachRun,
+		LicenseCheckModeMonthly,
+		LicenseCheckModeYearly,
+		LicenseCheckModeCustom:
+		return mode
+	default:
+		return LicenseCheckModeEachRun
+	}
+}
+
+func normalizeCheckInterval(mode LicenseCheckMode, interval time.Duration) time.Duration {
+	if mode != LicenseCheckModeCustom {
+		return 0
+	}
+	if interval < minCustomCheckInterval {
+		return defaultCustomCheckInterval
+	}
+	return interval
+}
+
+func ensureLicenseCheckDefaults(license *License) {
+	if license == nil {
+		return
+	}
+	license.CheckMode = normalizeCheckMode(license.CheckMode)
+	if license.CheckMode == LicenseCheckModeCustom {
+		if license.CheckIntervalSecs <= 0 {
+			license.CheckIntervalSecs = int64(defaultCustomCheckInterval.Seconds())
+		}
+	} else {
+		license.CheckIntervalSecs = 0
+	}
+}
+
+func computeNextCheck(license *License, from time.Time) time.Time {
+	if license == nil {
+		return time.Time{}
+	}
+	mode := normalizeCheckMode(license.CheckMode)
+	if mode == LicenseCheckModeNone {
+		return time.Time{}
+	}
+	location := from.Location()
+	switch mode {
+	case LicenseCheckModeEachRun:
+		return from
+	case LicenseCheckModeMonthly:
+		year, month, _ := from.Date()
+		return time.Date(year, month+1, 1, 0, 0, 0, 0, location)
+	case LicenseCheckModeYearly:
+		return from.AddDate(1, 0, 0)
+	case LicenseCheckModeCustom:
+		interval := time.Duration(license.CheckIntervalSecs) * time.Second
+		if interval <= 0 {
+			interval = defaultCustomCheckInterval
+		}
+		return from.Add(interval)
+	default:
+		return from
+	}
+}
+
+func (lm *LicenseManager) applyLicenseCheckDefaults(license *License) {
+	if license == nil {
+		return
+	}
+	ensureLicenseCheckDefaults(license)
+	if license.CheckMode == LicenseCheckModeCustom && license.CheckIntervalSecs <= 0 {
+		_, interval := lm.DefaultCheckPolicy()
+		license.CheckIntervalSecs = int64(interval.Seconds())
+	}
+	if license.CheckMode == LicenseCheckModeCustom {
+		_, interval := lm.DefaultCheckPolicy()
+		desired := int64(interval.Seconds())
+		if desired <= 0 {
+			desired = int64(defaultCustomCheckInterval.Seconds())
+		}
+		legacyDefault := int64(defaultCustomCheckInterval.Seconds())
+		if license.CheckIntervalSecs == legacyDefault && desired != legacyDefault {
+			license.CheckIntervalSecs = desired
+		}
+	}
+	if license.CheckMode == LicenseCheckModeNone {
+		license.CheckIntervalSecs = 0
+	}
+}
+
+func (lm *LicenseManager) markServerCheck(license *License, now time.Time) {
+	if license == nil {
+		return
+	}
+	lm.applyLicenseCheckDefaults(license)
+	if license.CheckMode == LicenseCheckModeNone {
+		license.LastCheckAt = time.Time{}
+		license.NextCheckAt = time.Time{}
+		return
+	}
+	license.LastCheckAt = now
+	license.NextCheckAt = computeNextCheck(license, now)
+}
+
 type LicenseManager struct {
-	storage       Storage
-	signer        SigningProvider
-	signerID      string
-	publicKeyPath string
-	mu            sync.RWMutex
+	storage              Storage
+	signer               SigningProvider
+	signerID             string
+	publicKeyPath        string
+	mu                   sync.RWMutex
+	defaultCheckMode     LicenseCheckMode
+	defaultCheckInterval time.Duration
 }
 
 func NewLicenseManager(storage Storage) (*LicenseManager, error) {
@@ -52,9 +166,11 @@ func NewLicenseManager(storage Storage) (*LicenseManager, error) {
 	}
 
 	lm := &LicenseManager{
-		storage:  storage,
-		signer:   signer,
-		signerID: signer.ID(),
+		storage:              storage,
+		signer:               signer,
+		signerID:             signer.ID(),
+		defaultCheckMode:     LicenseCheckModeEachRun,
+		defaultCheckInterval: defaultCustomCheckInterval,
 	}
 
 	path, err := lm.savePublicKey()
@@ -114,6 +230,31 @@ func (lm *LicenseManager) SigningProviderID() string {
 	lm.mu.RLock()
 	defer lm.mu.RUnlock()
 	return lm.signerID
+}
+
+func (lm *LicenseManager) SetDefaultCheckPolicy(mode LicenseCheckMode, interval time.Duration) {
+	lm.mu.Lock()
+	defer lm.mu.Unlock()
+	mode = normalizeCheckMode(mode)
+	lm.defaultCheckMode = mode
+	if mode != LicenseCheckModeCustom {
+		interval = 0
+	}
+	if interval <= 0 && mode == LicenseCheckModeCustom {
+		interval = defaultCustomCheckInterval
+	}
+	lm.defaultCheckInterval = interval
+}
+
+func (lm *LicenseManager) DefaultCheckPolicy() (LicenseCheckMode, time.Duration) {
+	lm.mu.RLock()
+	defer lm.mu.RUnlock()
+	mode := normalizeCheckMode(lm.defaultCheckMode)
+	interval := lm.defaultCheckInterval
+	if mode == LicenseCheckModeCustom && interval <= 0 {
+		interval = defaultCustomCheckInterval
+	}
+	return mode, interval
 }
 
 func (lm *LicenseManager) Close() error {
@@ -256,6 +397,18 @@ func (lm *LicenseManager) CreateClient(ctx context.Context, email string) (*Clie
 	return client, nil
 }
 
+func (lm *LicenseManager) GetClientByEmail(ctx context.Context, email string) (*Client, error) {
+	email = strings.TrimSpace(email)
+	if email == "" {
+		return nil, fmt.Errorf("email is required")
+	}
+	client, err := lm.storage.GetClientByEmail(ctx, email)
+	if err != nil {
+		return nil, err
+	}
+	return client, nil
+}
+
 func (lm *LicenseManager) ListClients(ctx context.Context) ([]*Client, error) {
 	return lm.storage.ListClients(ctx)
 }
@@ -293,9 +446,19 @@ func (lm *LicenseManager) UnbanClient(ctx context.Context, clientID string) (*Cl
 	return client, nil
 }
 
-func (lm *LicenseManager) GenerateLicense(ctx context.Context, clientID string, duration time.Duration, maxDevices int) (*License, error) {
+func (lm *LicenseManager) GenerateLicense(ctx context.Context, clientID string, duration time.Duration, maxDevices int, planSlug string, mode LicenseCheckMode, interval time.Duration) (*License, error) {
 	if maxDevices <= 0 {
 		maxDevices = 1
+	}
+	planSlug = strings.TrimSpace(planSlug)
+	if planSlug == "" {
+		return nil, fmt.Errorf("plan slug is required")
+	}
+	mode = normalizeCheckMode(mode)
+	interval = normalizeCheckInterval(mode, interval)
+	if mode == LicenseCheckModeCustom && interval <= 0 {
+		_, defaultInterval := lm.DefaultCheckPolicy()
+		interval = normalizeCheckInterval(mode, defaultInterval)
 	}
 	client, err := lm.storage.GetClient(ctx, clientID)
 	if err != nil {
@@ -311,6 +474,7 @@ func (lm *LicenseManager) GenerateLicense(ctx context.Context, clientID string, 
 		ID:                 uuid.New().String(),
 		ClientID:           clientID,
 		Email:              client.Email,
+		PlanSlug:           planSlug,
 		LicenseKey:         licenseKey,
 		IsRevoked:          false,
 		IsActivated:        false,
@@ -319,7 +483,10 @@ func (lm *LicenseManager) GenerateLicense(ctx context.Context, clientID string, 
 		MaxDevices:         maxDevices,
 		Devices:            make(map[string]*LicenseDevice),
 		CurrentActivations: 0,
+		CheckMode:          mode,
+		CheckIntervalSecs:  int64(interval.Seconds()),
 	}
+	lm.applyLicenseCheckDefaults(license)
 	refreshLicenseDeviceStats(license)
 
 	if err := lm.storage.SaveLicense(ctx, license); err != nil {
@@ -357,6 +524,48 @@ func (lm *LicenseManager) ReinstateLicense(ctx context.Context, licenseID string
 		return nil, fmt.Errorf("failed to reinstate license: %w", err)
 	}
 	return license, nil
+}
+
+func (lm *LicenseManager) BackfillLicenseCheckPolicy(ctx context.Context) error {
+	if lm.storage == nil {
+		return fmt.Errorf("storage not configured")
+	}
+	licenses, err := lm.storage.ListLicenses(ctx)
+	if err != nil {
+		return err
+	}
+	modeDefault, intervalDefault := lm.DefaultCheckPolicy()
+	now := time.Now()
+	for _, license := range licenses {
+		if license == nil {
+			continue
+		}
+		originalMode := license.CheckMode
+		originalInterval := license.CheckIntervalSecs
+		originalNext := license.NextCheckAt
+		currentMode := normalizeCheckMode(license.CheckMode)
+		if (strings.TrimSpace(string(license.CheckMode)) == "" || (currentMode == LicenseCheckModeEachRun && modeDefault != LicenseCheckModeEachRun)) && license.NextCheckAt.IsZero() {
+			license.CheckMode = modeDefault
+			currentMode = modeDefault
+		}
+		if currentMode == LicenseCheckModeCustom && license.CheckIntervalSecs <= 0 {
+			license.CheckIntervalSecs = int64(intervalDefault.Seconds())
+		}
+		if currentMode == LicenseCheckModeNone {
+			if !license.NextCheckAt.IsZero() || !license.LastCheckAt.IsZero() {
+				license.NextCheckAt = time.Time{}
+				license.LastCheckAt = time.Time{}
+			}
+		} else if license.NextCheckAt.IsZero() {
+			license.NextCheckAt = computeNextCheck(license, now)
+		}
+		if license.CheckMode != originalMode || license.CheckIntervalSecs != originalInterval || !license.NextCheckAt.Equal(originalNext) {
+			if err := lm.storage.UpdateLicense(ctx, license); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }
 
 func (lm *LicenseManager) generateLicenseKey(email, clientID string) string {
@@ -507,6 +716,7 @@ func (lm *LicenseManager) ActivateLicense(ctx context.Context, req *ActivationRe
 		attachAuthorizedIdentity(license, identity)
 	}
 	refreshLicenseDeviceStats(license)
+	lm.markServerCheck(license, now)
 
 	if err := lm.storage.UpdateLicense(ctx, license); err != nil {
 		return nil, fmt.Errorf("failed to persist license state: %w", err)
@@ -629,6 +839,7 @@ func (lm *LicenseManager) VerifyLicense(ctx context.Context, req *ActivationRequ
 	device.LastSeenAt = now
 	license.LastActivatedAt = now
 	refreshLicenseDeviceStats(license)
+	lm.markServerCheck(license, now)
 	if err := lm.storage.UpdateLicense(ctx, license); err != nil {
 		return nil, fmt.Errorf("failed to persist license state: %w", err)
 	}
@@ -696,6 +907,7 @@ func (lm *LicenseManager) buildLicensePayload(license *License, identity *Licens
 	payload := map[string]interface{}{
 		"id":                  license.ID,
 		"client_id":           license.ClientID,
+		"plan_slug":           license.PlanSlug,
 		"subject_client_id":   subjectClientID,
 		"email":               email,
 		"relationship":        relationship,
@@ -713,6 +925,16 @@ func (lm *LicenseManager) buildLicensePayload(license *License, identity *Licens
 	}
 	if grantedBy != "" {
 		payload["granted_by"] = grantedBy
+	}
+	payload["check_mode"] = license.CheckMode.String()
+	if license.CheckIntervalSecs > 0 {
+		payload["check_interval_seconds"] = license.CheckIntervalSecs
+	}
+	if !license.NextCheckAt.IsZero() {
+		payload["next_check_at"] = license.NextCheckAt
+	}
+	if !license.LastCheckAt.IsZero() {
+		payload["last_check_at"] = license.LastCheckAt
 	}
 	return payload
 }

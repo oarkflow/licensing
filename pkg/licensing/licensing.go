@@ -23,6 +23,7 @@ type License struct {
 	ID                 string                      `json:"id"`
 	ClientID           string                      `json:"client_id"`
 	Email              string                      `json:"email"`
+	PlanSlug           string                      `json:"plan_slug"`
 	LicenseKey         string                      `json:"license_key"`
 	IsRevoked          bool                        `json:"is_revoked"`
 	RevokedAt          time.Time                   `json:"revoked_at,omitempty"`
@@ -36,6 +37,51 @@ type License struct {
 	DeviceCount        int                         `json:"device_count"`
 	Devices            map[string]*LicenseDevice   `json:"devices"`
 	AuthorizedUsers    map[string]*LicenseIdentity `json:"authorized_users,omitempty"`
+	CheckMode          LicenseCheckMode            `json:"check_mode,omitempty"`
+	CheckIntervalSecs  int64                       `json:"check_interval_seconds,omitempty"`
+	NextCheckAt        time.Time                   `json:"next_check_at,omitempty"`
+	LastCheckAt        time.Time                   `json:"last_check_at,omitempty"`
+}
+
+type LicenseCheckMode string
+
+const (
+	LicenseCheckModeNone    LicenseCheckMode = "none"
+	LicenseCheckModeEachRun LicenseCheckMode = "each_execution"
+	LicenseCheckModeMonthly LicenseCheckMode = "monthly"
+	LicenseCheckModeYearly  LicenseCheckMode = "yearly"
+	LicenseCheckModeCustom  LicenseCheckMode = "custom"
+)
+
+func ParseLicenseCheckMode(input string) LicenseCheckMode {
+	switch strings.ToLower(strings.TrimSpace(input)) {
+	case string(LicenseCheckModeNone):
+		return LicenseCheckModeNone
+	case string(LicenseCheckModeMonthly):
+		return LicenseCheckModeMonthly
+	case string(LicenseCheckModeYearly):
+		return LicenseCheckModeYearly
+	case string(LicenseCheckModeCustom):
+		return LicenseCheckModeCustom
+	default:
+		return LicenseCheckModeEachRun
+	}
+}
+
+func (m LicenseCheckMode) String() string {
+	if m == "" {
+		return string(LicenseCheckModeEachRun)
+	}
+	return string(m)
+}
+
+func (m LicenseCheckMode) RequiresSchedule() bool {
+	switch m {
+	case LicenseCheckModeNone:
+		return false
+	default:
+		return true
+	}
 }
 
 type LicenseIdentity struct {
@@ -209,9 +255,12 @@ type banClientRequest struct {
 }
 
 type createLicenseRequest struct {
-	ClientID     string `json:"client_id"`
-	DurationDays int    `json:"duration_days"`
-	MaxDevices   int    `json:"max_devices"`
+	ClientID             string `json:"client_id"`
+	DurationDays         int    `json:"duration_days"`
+	MaxDevices           int    `json:"max_devices"`
+	CheckMode            string `json:"check_mode,omitempty"`
+	CheckIntervalSeconds int64  `json:"check_interval_seconds,omitempty"`
+	PlanSlug             string `json:"plan_slug"`
 }
 
 type licenseMutationRequest struct {

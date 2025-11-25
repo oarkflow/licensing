@@ -387,12 +387,25 @@ func (s *Server) handleLicenses(w http.ResponseWriter, r *http.Request) {
 		if !s.decodeJSONBody(w, r, &req, maxAdminPayloadBytes) {
 			return
 		}
-		if req.ClientID == "" || req.DurationDays <= 0 || req.MaxDevices <= 0 {
-			s.respondError(w, http.StatusBadRequest, "client_id, duration_days, max_devices must be provided")
+		plan := strings.TrimSpace(req.PlanSlug)
+		if req.ClientID == "" || req.DurationDays <= 0 || req.MaxDevices <= 0 || plan == "" {
+			s.respondError(w, http.StatusBadRequest, "client_id, duration_days, max_devices, plan_slug must be provided")
 			return
 		}
 		duration := time.Duration(req.DurationDays) * 24 * time.Hour
-		license, err := s.lm.GenerateLicense(r.Context(), req.ClientID, duration, req.MaxDevices)
+		interval := time.Duration(req.CheckIntervalSeconds) * time.Second
+		if interval < 0 {
+			interval = 0
+		}
+		modeInput := strings.TrimSpace(req.CheckMode)
+		mode := ParseLicenseCheckMode(modeInput)
+		if modeInput == "" {
+			mode, interval = s.lm.DefaultCheckPolicy()
+		} else if mode == LicenseCheckModeCustom && interval <= 0 {
+			_, defaultInterval := s.lm.DefaultCheckPolicy()
+			interval = defaultInterval
+		}
+		license, err := s.lm.GenerateLicense(r.Context(), req.ClientID, duration, req.MaxDevices, plan, mode, interval)
 		if err != nil {
 			s.respondError(w, http.StatusBadRequest, err.Error())
 			return
@@ -696,7 +709,22 @@ func (s *Server) Start() error {
 		IdleTimeout:       60 * time.Second,
 	}
 
+	addr := server.Addr
+	if addr == "" {
+		addr = ":http"
+	}
+	displayAddr := addr
+	if strings.HasPrefix(addr, ":") {
+		displayAddr = "0.0.0.0" + addr
+	}
 	useTLS := s.hasTLSConfig()
+	scheme := "http"
+	if useTLS {
+		scheme = "https"
+	} else if !s.allowInsecureHTTP {
+		return fmt.Errorf("tls required: set LICENSE_SERVER_TLS_CERT/KEY or start with --allow-insecure-http for development")
+	}
+	log.Printf("🌐 Listening on %s://%s", scheme, displayAddr)
 	if useTLS {
 		tlsConfig, err := s.buildTLSConfig()
 		if err != nil {
@@ -704,9 +732,6 @@ func (s *Server) Start() error {
 		}
 		server.TLSConfig = tlsConfig
 		return server.ListenAndServeTLS(s.tlsCertPath, s.tlsKeyPath)
-	}
-	if !s.allowInsecureHTTP {
-		return fmt.Errorf("tls required: set LICENSE_SERVER_TLS_CERT/KEY or start with --allow-insecure-http for development")
 	}
 	log.Printf("WARNING: starting licensing server without TLS; traffic will be unencrypted")
 	return server.ListenAndServe()

@@ -40,6 +40,11 @@ func main() {
 	if err != nil {
 		log.Fatalf("Failed to initialize License Manager: %v", err)
 	}
+	mode, interval, err := resolveDefaultCheckPolicyFromEnv()
+	if err != nil {
+		log.Fatalf("Invalid default check policy: %v", err)
+	}
+	lm.SetDefaultCheckPolicy(mode, interval)
 	defer func() {
 		if err := lm.Close(); err != nil {
 			log.Printf("Error closing license manager: %v", err)
@@ -68,6 +73,11 @@ func main() {
 	} else {
 		log.Printf("📋 Demo bootstrap skipped (set LICENSE_SERVER_BOOTSTRAP_DEMO=true to enable)")
 	}
+	log.Printf("🔄 Applying default check policy to existing licenses...")
+	if err := lm.BackfillLicenseCheckPolicy(ctx); err != nil {
+		log.Fatalf("Failed to apply default check policy: %v", err)
+	}
+	log.Printf("✅ Default check policy applied")
 
 	rawAPIKeys := os.Getenv("LICENSE_SERVER_API_KEYS")
 	apiKeys := utils.ParseAPIKeys(rawAPIKeys)
@@ -119,26 +129,55 @@ func envBool(key string) bool {
 	}
 }
 
+func resolveDefaultCheckPolicyFromEnv() (licensing.LicenseCheckMode, time.Duration, error) {
+	modeRaw := strings.TrimSpace(os.Getenv("LICENSE_SERVER_DEFAULT_CHECK_MODE"))
+	intervalRaw := strings.TrimSpace(os.Getenv("LICENSE_SERVER_DEFAULT_CHECK_INTERVAL"))
+	mode := licensing.LicenseCheckModeEachRun
+	if modeRaw != "" {
+		mode = licensing.ParseLicenseCheckMode(modeRaw)
+	}
+	var interval time.Duration
+	if mode == licensing.LicenseCheckModeCustom {
+		if intervalRaw != "" {
+			parsed, err := time.ParseDuration(intervalRaw)
+			if err != nil {
+				return licensing.LicenseCheckModeEachRun, 0, fmt.Errorf("invalid LICENSE_SERVER_DEFAULT_CHECK_INTERVAL: %w", err)
+			}
+			interval = parsed
+		}
+	}
+	return mode, interval, nil
+}
+
 func createDemoData(ctx context.Context, lm *licensing.LicenseManager) error {
 	log.Printf("📋 Creating demo clients and licenses...")
 	type seed struct {
 		email    string
 		duration time.Duration
 		max      int
+		planSlug string
 	}
 	seeds := []seed{
-		{"john@example.com", 365 * 24 * time.Hour, 3},
-		{"jane@example.com", 30 * 24 * time.Hour, 5},
-		{"bob@example.com", 90 * 24 * time.Hour, 2},
+		{"john@example.com", 365 * 24 * time.Hour, 3, "enterprise"},
+		{"jane@example.com", 30 * 24 * time.Hour, 5, "standard"},
+		{"bob@example.com", 90 * 24 * time.Hour, 2, "starter"},
 	}
+	mode, interval := lm.DefaultCheckPolicy()
 	for _, s := range seeds {
 		client, err := lm.CreateClient(ctx, s.email)
 		if err != nil {
-			return err
+			existing, lookupErr := lm.GetClientByEmail(ctx, s.email)
+			if lookupErr != nil {
+				log.Printf("⚠️ Skipping demo client %s: %v", s.email, err)
+				continue
+			}
+			client = existing
+			log.Printf("↺ Demo client already exists: %s (ID: %s)", client.Email, client.ID)
 		}
-		license, err := lm.GenerateLicense(ctx, client.ID, s.duration, s.max)
+		license, err := lm.GenerateLicense(ctx, client.ID, s.duration, s.max, s.planSlug, mode, interval)
 		if err != nil {
-			return err
+			log.Printf("⚠️ Failed to create demo license for %s: %v", client.Email, err)
+			continue
 		}
 		log.Printf("   ✓ Client: %s (ID: %s) | License: %s", client.Email, client.ID, license.LicenseKey)
 	}

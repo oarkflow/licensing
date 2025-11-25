@@ -12,6 +12,7 @@ A hardened license server and client that leverage pluggable signing providers (
 - **Audit + admin APIs:** rate-limited HTTP endpoints for managing clients, issuing licenses, banning/unbanning, and revoking/reinstating licenses.
 - **Pluggable storage:** choose in-memory, SQLite, or JSON-on-disk storage via environment variables; disk snapshots are written atomically with `0600` permissions.
 - **Secure client storage:** the CLI enforces `chmod 600` on `~/.licensing/.license.dat`, verifies server signatures, and refuses to run if the payload or fingerprint diverge.
+- **Plan-aware entitlements:** every license carries a `plan_slug` so your application can unlock features based on the purchased plan without additional lookups.
 
 ## Requirements
 
@@ -46,6 +47,11 @@ A hardened license server and client that leverage pluggable signing providers (
    export LICENSE_SERVER_CLIENT_CA="/path/to/clients.pem"
    # For local testing only, set LICENSE_SERVER_ALLOW_INSECURE_HTTP=1 or pass --allow-insecure-http
 
+   # Default license check cadence (applied when new licenses omit check_mode)
+   export LICENSE_SERVER_DEFAULT_CHECK_MODE="monthly"
+   # Only used when DEFAULT_CHECK_MODE=CUSTOM; Go duration string (e.g. 6h, 24h)
+   export LICENSE_SERVER_DEFAULT_CHECK_INTERVAL="24h"
+
    # Signing provider (software, file, or tpm)
    export LICENSE_SERVER_KEY_PROVIDER="software"
    # When using "file" specify the PEM private key and optional passphrase
@@ -62,6 +68,18 @@ A hardened license server and client that leverage pluggable signing providers (
    ```
    On startup the server logs the active storage backend, TLS mode, and the location of the exported public key (`~/.licensing/server_public_key.pem`).
 4. **Use the admin APIs:** include `X-API-Key: <key>` when calling `/api/clients`, `/api/licenses`, `/api/licenses/{id}/revoke`, etc.
+
+    Creating a license requires a plan slug so downstream services know which feature set to unlock:
+
+    ```json
+    {
+       "client_id": "client-123",
+       "duration_days": 365,
+       "max_devices": 5,
+       "plan_slug": "enterprise",
+       "check_mode": "monthly"
+    }
+    ```
 
 ## Client Setup
 
@@ -180,6 +198,35 @@ Use the new flags to test every path without touching code:
    Ensures the runner aborts if the license file is missing or tampered with, mimicking production boot checks.
 
 Each command honors the layered config above, so you can mix flags and env vars to mimic the environments where your application will ship.
+
+### License Check Modes
+
+Licenses now embed a **check mode** and the next scheduled verification timestamp (`next_check_at`). The server enforces the schedule and includes it in every encrypted payload, while the client honors it automatically.
+
+| Mode | Description |
+| --- | --- |
+| `none` | The server validates the license during activation and when tampering is detected, but no recurring checks are scheduled. |
+| `each_execution` | The client contacts the licensing server every time your application starts. If the server is unreachable the cached license is allowed, but any explicit rejection stops startup. |
+| `monthly` | The next verification is scheduled for the first day of the following month (midnight). |
+| `yearly` | Scheduled annually, relative to the most recent successful check. |
+| `custom` | Uses a fixed interval (`check_interval_seconds`). The client also spawns a background goroutine so long-running processes keep re-validating without restarts. Network outages defer verification but do not shut down the app; explicit revocations still terminate it. |
+
+Specify the check parameters when issuing a license:
+
+```jsonc
+POST /api/licenses
+{
+   "client_id": "client-123",
+   "duration_days": 365,
+   "max_devices": 3,
+   "check_mode": "custom",
+   "check_interval_seconds": 21600 // 6 hours
+}
+```
+
+Every activation/verification updates `next_check_at` and the timestamp is returned to the client, so you can inspect upcoming revalidation dates via either the admin API or the decrypted license payload. Background verification logs are surfaced through the sample client app (`client/app.go`) to make integration straightforward.
+
+Set `LICENSE_SERVER_DEFAULT_CHECK_MODE` (plus `LICENSE_SERVER_DEFAULT_CHECK_INTERVAL` when using `custom`) to enforce a global cadence. On startup the server applies this default to any existing licenses that still relied on the legacy "each run" behavior, so you can roll out new policies without reissuing keys.
 
 ### Delegated Activations & `subject_client_id`
 

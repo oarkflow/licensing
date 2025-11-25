@@ -2,6 +2,7 @@ package client
 
 import (
 	"bytes"
+	"context"
 	"crypto"
 	"crypto/aes"
 	"crypto/cipher"
@@ -47,6 +48,21 @@ const (
 )
 
 const checksumFileSuffix = ".chk"
+
+const (
+	checkModeNone    = "none"
+	checkModeEachRun = "each_execution"
+	checkModeMonthly = "monthly"
+	checkModeYearly  = "yearly"
+	checkModeCustom  = "custom"
+)
+
+const (
+	backgroundRetryDelay = 5 * time.Minute
+	defaultCustomWait    = 24 * time.Hour
+)
+
+var ErrServerUnavailable = errors.New("license server unavailable")
 
 // Config controls how the licensing client persists data and contacts the server.
 type Config struct {
@@ -108,6 +124,7 @@ type LicenseData struct {
 	ClientID           string          `json:"client_id"`
 	SubjectClientID    string          `json:"subject_client_id"`
 	Email              string          `json:"email"`
+	PlanSlug           string          `json:"plan_slug"`
 	Relationship       string          `json:"relationship"`
 	GrantedBy          string          `json:"granted_by,omitempty"`
 	LicenseKey         string          `json:"license_key"`
@@ -122,6 +139,10 @@ type LicenseData struct {
 	RevokeReason       string          `json:"revoke_reason"`
 	Devices            []LicenseDevice `json:"devices"`
 	DeviceFingerprint  string          `json:"-"`
+	CheckMode          string          `json:"check_mode"`
+	CheckIntervalSecs  int64           `json:"check_interval_seconds"`
+	NextCheckAt        time.Time       `json:"next_check_at"`
+	LastCheckAt        time.Time       `json:"last_check_at"`
 }
 
 // LicenseDevice represents device metadata tied to a license.
@@ -557,32 +578,42 @@ func (lc *Client) validateStoredLicenseSignature(stored *StoredLicense) error {
 	return nil
 }
 
-func (lc *Client) recoverLicenseFromServer(stored *StoredLicense) (*StoredLicense, error) {
+func (lc *Client) refreshLicenseFromServer(ctx context.Context, stored *StoredLicense, cached *LicenseData) (*StoredLicense, *LicenseData, error) {
 	if stored == nil {
-		return nil, fmt.Errorf("stored license missing")
+		return nil, nil, fmt.Errorf("stored license missing")
 	}
-	licenseData, err := lc.decryptLicense(stored)
-	if err != nil {
-		return nil, fmt.Errorf("failed to decrypt license for server verification: %w", err)
+	var (
+		licenseData *LicenseData
+		err         error
+	)
+	if cached != nil {
+		licenseData = cached
+	} else {
+		licenseData, err = lc.decryptLicense(stored)
+		if err != nil {
+			return nil, nil, fmt.Errorf("failed to decrypt license for server verification: %w", err)
+		}
 	}
 	verificationReq := ActivationRequest{
 		Email:             licenseData.Email,
 		LicenseKey:        licenseData.LicenseKey,
 		DeviceFingerprint: stored.DeviceFingerprint,
+		ClientID:          strings.TrimSpace(licenseData.ClientID),
 	}
-	ownerID := strings.TrimSpace(licenseData.ClientID)
-	verificationReq.ClientID = ownerID
 	body, err := json.Marshal(verificationReq)
 	if err != nil {
-		return nil, fmt.Errorf("failed to marshal verification request: %w", err)
+		return nil, nil, fmt.Errorf("failed to marshal verification request: %w", err)
 	}
 	secureBody, encrypted, err := lc.encryptPayload(stored.DeviceFingerprint, verificationReq.LicenseKey, body)
 	if err != nil {
-		return nil, fmt.Errorf("failed to encrypt verification payload: %w", err)
+		return nil, nil, fmt.Errorf("failed to encrypt verification payload: %w", err)
 	}
-	req, err := http.NewRequest(http.MethodPost, lc.apiURL("/api/verify"), bytes.NewBuffer(secureBody))
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, lc.apiURL("/api/verify"), bytes.NewBuffer(secureBody))
 	if err != nil {
-		return nil, fmt.Errorf("failed to build verification request: %w", err)
+		return nil, nil, fmt.Errorf("failed to build verification request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("User-Agent", lc.userAgent())
@@ -593,36 +624,86 @@ func (lc *Client) recoverLicenseFromServer(stored *StoredLicense) (*StoredLicens
 	}
 	resp, err := lc.httpClient.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("failed to contact license server: %w", err)
+		return nil, nil, fmt.Errorf("%w: %v", ErrServerUnavailable, err)
 	}
 	defer resp.Body.Close()
 	plaintext, err := lc.readSecureResponse(resp)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	var verificationResp ActivationResponse
 	if err := json.Unmarshal(plaintext, &verificationResp); err != nil {
-		return nil, fmt.Errorf("failed to decode verification response: %w", err)
+		return nil, nil, fmt.Errorf("failed to decode verification response: %w", err)
 	}
 	if !verificationResp.Success {
 		message := verificationResp.Message
 		if message == "" {
 			message = "license verification failed"
 		}
-		return nil, fmt.Errorf("server rejected license verification: %s", message)
+		return nil, nil, fmt.Errorf("server rejected license verification: %s", message)
 	}
 	updated, err := lc.buildStoredLicenseFromResponse(&verificationResp, stored.DeviceFingerprint)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	fmt.Println("🔄 License refreshed from server")
 	if err := lc.writeLicenseFile(updated); err != nil {
+		return nil, nil, err
+	}
+	freshData, err := lc.decryptLicense(updated)
+	if err != nil {
+		return nil, nil, err
+	}
+	return updated, freshData, nil
+}
+
+func normalizeClientCheckMode(value string) string {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case checkModeNone:
+		return checkModeNone
+	case checkModeMonthly:
+		return checkModeMonthly
+	case checkModeYearly:
+		return checkModeYearly
+	case checkModeCustom:
+		return checkModeCustom
+	default:
+		return checkModeEachRun
+	}
+}
+
+func (lc *Client) enforceRemoteSchedule(ctx context.Context, stored *StoredLicense, license *LicenseData) (*LicenseData, error) {
+	if license == nil {
+		return nil, fmt.Errorf("license payload missing")
+	}
+	mode := normalizeClientCheckMode(license.CheckMode)
+	if mode == checkModeNone {
+		return license, nil
+	}
+	now := time.Now()
+	due := false
+	switch mode {
+	case checkModeEachRun:
+		due = true
+	default:
+		if license.NextCheckAt.IsZero() {
+			due = false
+		} else if !now.Before(license.NextCheckAt) {
+			due = true
+		}
+	}
+	if !due {
+		return license, nil
+	}
+	_, refreshed, err := lc.refreshLicenseFromServer(ctx, stored, license)
+	if err != nil {
+		if errors.Is(err, ErrServerUnavailable) {
+			fmt.Println("⚠️  License server unavailable — continuing with cached license")
+			return license, nil
+		}
 		return nil, err
 	}
-	if _, err := lc.decryptLicense(updated); err != nil {
-		return nil, err
-	}
-	return updated, nil
+	return refreshed, nil
 }
 
 func (lc *Client) ensureLicenseFileSecure(info os.FileInfo) error {
@@ -670,7 +751,7 @@ func (lc *Client) Verify() (*LicenseData, error) {
 	if err := lc.verifyStoredChecksum(currentFingerprint, licenseJSON); err != nil {
 		if errors.Is(err, errChecksumMissing) {
 			fmt.Println("⚠️  License checksum missing — revalidating with server...")
-			recovered, recErr := lc.recoverLicenseFromServer(storedLicense)
+			recovered, _, recErr := lc.refreshLicenseFromServer(context.Background(), storedLicense, nil)
 			if recErr != nil {
 				return nil, recErr
 			}
@@ -697,6 +778,10 @@ func (lc *Client) Verify() (*LicenseData, error) {
 	licenseData, err := lc.decryptLicense(storedLicense)
 	if err != nil {
 		return nil, fmt.Errorf("failed to decrypt license: %w", err)
+	}
+	licenseData, err = lc.enforceRemoteSchedule(context.Background(), storedLicense, licenseData)
+	if err != nil {
+		return nil, err
 	}
 
 	if time.Now().After(storedLicense.ExpiresAt) {
@@ -870,4 +955,72 @@ func truncateFingerprint(fp string) string {
 		return fp
 	}
 	return fp[:16]
+}
+
+func nextCustomWait(license *LicenseData) time.Duration {
+	if license != nil && !license.NextCheckAt.IsZero() {
+		if wait := time.Until(license.NextCheckAt); wait > 0 {
+			return wait
+		}
+	}
+	if license != nil {
+		if secs := time.Duration(license.CheckIntervalSecs) * time.Second; secs > 0 {
+			return secs
+		}
+	}
+	return defaultCustomWait
+}
+
+func (lc *Client) RunBackgroundVerification(ctx context.Context, initial *LicenseData, logf func(string, ...interface{}), onUpdate func(*LicenseData)) error {
+	if lc == nil {
+		return fmt.Errorf("client not initialized")
+	}
+	if initial == nil {
+		return fmt.Errorf("initial license data required")
+	}
+	if normalizeClientCheckMode(initial.CheckMode) != checkModeCustom {
+		return nil
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	current := initial
+	var waitOverride time.Duration
+	for {
+		wait := waitOverride
+		if wait <= 0 {
+			wait = nextCustomWait(current)
+		}
+		timer := time.NewTimer(wait)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return ctx.Err()
+		case <-timer.C:
+		}
+		licenseBytes, err := os.ReadFile(lc.licensePath)
+		if err != nil {
+			return fmt.Errorf("background verification failed to read license: %w", err)
+		}
+		stored, err := lc.loadStoredLicense(licenseBytes)
+		if err != nil {
+			return fmt.Errorf("background verification failed to parse license: %w", err)
+		}
+		_, refreshed, err := lc.refreshLicenseFromServer(ctx, stored, current)
+		if err != nil {
+			if errors.Is(err, ErrServerUnavailable) {
+				if logf != nil {
+					logf("license server unavailable; retrying background check in %s", backgroundRetryDelay)
+				}
+				waitOverride = backgroundRetryDelay
+				continue
+			}
+			return err
+		}
+		waitOverride = 0
+		current = refreshed
+		if onUpdate != nil {
+			onUpdate(refreshed)
+		}
+	}
 }

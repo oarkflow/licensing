@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/signal"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -18,6 +19,8 @@ import (
 	"github.com/oarkflow/licensing/pkg/client"
 	"github.com/oarkflow/licensing/pkg/runner"
 )
+
+var sharedClient *client.Client
 
 func main() {
 	os.Setenv(EnvAllowInsecureHTTP, "true")
@@ -27,7 +30,15 @@ func main() {
 	mode := strings.ToLower(strings.TrimSpace(*activationMode))
 	clientCfg := resolveClientConfig()
 	factory := func() (runner.Client[*client.LicenseData], error) {
-		return client.New(clientCfg)
+		if sharedClient != nil {
+			return sharedClient, nil
+		}
+		cli, err := client.New(clientCfg)
+		if err != nil {
+			return nil, err
+		}
+		sharedClient = cli
+		return sharedClient, nil
 	}
 
 	activationStrategy := activation.Strategy(mode, activation.PromptIO{In: os.Stdin, Out: os.Stdout})
@@ -57,24 +68,45 @@ func main() {
 func runApplication(ctx context.Context, license *client.LicenseData) error {
 	fmt.Println()
 	fmt.Println("🚀 Starting application...")
+	var licenseState atomic.Value
+	licenseState.Store(license)
+
+	bgCtx, bgCancel := context.WithCancel(ctx)
+	defer bgCancel()
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		// Add license information to request context
-		ctx := context.WithValue(r.Context(), "license", license)
+		current := license
+		if stored := licenseState.Load(); stored != nil {
+			if latest, ok := stored.(*client.LicenseData); ok && latest != nil {
+				current = latest
+			}
+		}
+		ctx := context.WithValue(r.Context(), "license", current)
 		r = r.WithContext(ctx)
-		data, _ := json.Marshal(license)
+		data, _ := json.Marshal(current)
 		w.Header().Set("Content-Type", "application/json")
 		w.Write(data)
 	})
 
 	server := &http.Server{Addr: ":8081", Handler: mux}
-	errCh := make(chan error, 1)
+	errCh := make(chan error, 2)
 	go func() {
 		if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			errCh <- err
 		}
 	}()
+
+	if sharedClient != nil && strings.EqualFold(strings.TrimSpace(license.CheckMode), "custom") {
+		go func() {
+			err := sharedClient.RunBackgroundVerification(bgCtx, license, log.Printf, func(updated *client.LicenseData) {
+				licenseState.Store(updated)
+			})
+			if err != nil && !errors.Is(err, context.Canceled) {
+				errCh <- fmt.Errorf("background verification error: %w", err)
+			}
+		}()
+	}
 
 	fmt.Println("\n🌐 HTTP server listening on http://localhost:8081")
 	fmt.Println("\nPress Ctrl+C to exit")
@@ -89,7 +121,7 @@ func runApplication(ctx context.Context, license *client.LicenseData) error {
 	case sig := <-sigCh:
 		fmt.Printf("\n🛑 Received %s. Shutting down server...\n", sig)
 	case err := <-errCh:
-		return fmt.Errorf("http server error: %w", err)
+		return fmt.Errorf("runtime error: %w", err)
 	}
 
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
