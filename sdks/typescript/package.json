@@ -1,0 +1,20 @@
+{
+    "name": "@oarkflow/licensing-client",
+    "version": "0.1.0",
+    "description": "TypeScript SDK for the hardware-key licensing service",
+    "type": "module",
+    "main": "dist/index.js",
+    "types": "dist/index.d.ts",
+    "scripts": {
+        "build": "tsc -p tsconfig.json",
+        "lint": "tsc --noEmit",
+        "test": "tsx scripts/verifyFixtures.ts"
+    },
+    "author": "oarkflow",
+    "license": "MIT",
+    "devDependencies": {
+        "@types/node": "^20.11.0",
+        "tsx": "^4.7.0",
+        "typescript": "^5.6.0"
+    }
+}

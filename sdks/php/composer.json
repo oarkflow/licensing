@@ -1,0 +1,20 @@
+{
+    "name": "oarkflow/licensing-client",
+    "description": "PHP SDK for the hardware-key licensing server",
+    "type": "library",
+    "license": "MIT",
+    "require": {
+        "php": "^8.2",
+        "ext-json": "*",
+        "ext-openssl": "*",
+        "phpseclib/phpseclib": "^3.0"
+    },
+    "autoload": {
+        "psr-4": {
+            "Oarkflow\\Licensing\\": "src/"
+        }
+    },
+    "scripts": {
+        "verify-fixtures": "php scripts/verify-fixtures.php"
+    }
+}

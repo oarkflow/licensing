@@ -1,0 +1,30 @@
+{
+  "id": "lic_fixture_v1",
+  "client_id": "client-provider",
+  "subject_client_id": "client-runtime",
+  "email": "owner@example.com",
+  "plan_slug": "enterprise",
+  "relationship": "direct",
+  "license_key": "ABCD-EFGH-IJKL-MNOP-QRST-UVWX-YZ12-3456",
+  "issued_at": "2025-01-01T12:00:00Z",
+  "expires_at": "2026-01-01T12:00:00Z",
+  "last_activated_at": "2025-01-02T08:30:00Z",
+  "current_activations": 1,
+  "max_devices": 5,
+  "device_count": 1,
+  "is_revoked": false,
+  "revoked_at": "0001-01-01T00:00:00Z",
+  "revoke_reason": "",
+  "devices": [
+    {
+      "fingerprint": "f4cee5d7a65ef56c5b1ad834cf6741c9793d9e1efd9f1bb7d3a9f3c0a7d8b6e2",
+      "activated_at": "2025-01-02T08:30:00Z",
+      "last_seen_at": "2025-01-02T08:30:00Z"
+    }
+  ],
+  "check_mode": "monthly",
+  "check_interval_seconds": 0,
+  "next_check_at": "2025-02-01T00:00:00Z",
+  "last_check_at": "2025-01-02T08:30:00Z",
+  "device_fingerprint": "f4cee5d7a65ef56c5b1ad834cf6741c9793d9e1efd9f1bb7d3a9f3c0a7d8b6e2"
+}

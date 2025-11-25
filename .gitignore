@@ -1,2 +1,4 @@
 *.pem
 data
+vendor
+node_modules

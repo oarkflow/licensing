@@ -1,0 +1,207 @@
+openapi: 3.0.3
+info:
+  title: Licensing Service API
+  version: 0.1.0
+  description: |
+    Minimal contract for the licensing client/server handshake. This file focuses on the
+    activation and verification flows that cross-language SDKs must implement.
+servers:
+  - url: https://localhost:8801
+    description: Default development server
+components:
+  parameters:
+    DeviceFingerprintHeader:
+      name: X-Device-Fingerprint
+      in: header
+      required: true
+      schema:
+        type: string
+        minLength: 16
+        maxLength: 128
+      description: Deterministic SHA-256 hex fingerprint defined in docs/sdk_protocol.md.
+    LicenseKeyHeader:
+      name: X-License-Key
+      in: header
+      required: true
+      schema:
+        type: string
+        pattern: '^[A-Z2-7]{40}$'
+      description: Normalized license key (uppercase, hyphenless).
+    SecureFlagHeader:
+      name: X-License-Secure
+      in: header
+      required: false
+      schema:
+        type: string
+        enum: ["1"]
+      description: Indicates the request body is wrapped in a secure envelope.
+    UserAgentHeader:
+      name: User-Agent
+      in: header
+      required: true
+      schema:
+        type: string
+      description: Product/version identifier for logging and rate limiting.
+  schemas:
+    ActivationRequest:
+      type: object
+      required: [email, client_id, license_key, device_fingerprint]
+      properties:
+        email:
+          type: string
+          format: email
+        client_id:
+          type: string
+          minLength: 1
+        license_key:
+          type: string
+        device_fingerprint:
+          type: string
+    ActivationResponse:
+      type: object
+      required: [success, message]
+      properties:
+        success:
+          type: boolean
+        message:
+          type: string
+        encrypted_license:
+          type: string
+          description: Base64-encoded AES-GCM ciphertext (session key || license JSON).
+        nonce:
+          type: string
+          description: Base64-encoded 12-byte nonce.
+        signature:
+          type: string
+          description: Base64-encoded RSA PKCS#1 v1.5 SHA-256 signature.
+        public_key:
+          type: string
+          description: PEM-encoded RSA public key.
+        expires_at:
+          type: string
+          format: date-time
+    SecureEnvelope:
+      type: object
+      description: Transport wrapper returned when `X-License-Secure: 1` is honored.
+      properties:
+        nonce:
+          type: string
+          description: Base64-encoded nonce.
+        ciphertext:
+          type: string
+        tag:
+          type: string
+      required: [nonce, ciphertext, tag]
+    ErrorResponse:
+      type: object
+      properties:
+        error:
+          type: string
+      required: [error]
+paths:
+  /api/activate:
+    post:
+      summary: Activate a device for a license key.
+      tags: [Client]
+      parameters:
+        - $ref: '#/components/parameters/UserAgentHeader'
+        - $ref: '#/components/parameters/DeviceFingerprintHeader'
+        - $ref: '#/components/parameters/LicenseKeyHeader'
+        - $ref: '#/components/parameters/SecureFlagHeader'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ActivationRequest'
+      responses:
+        '200':
+          description: License activated successfully.
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: '#/components/schemas/ActivationResponse'
+                  - $ref: '#/components/schemas/SecureEnvelope'
+              examples:
+                plaintext:
+                  summary: Direct JSON response
+                  value:
+                    success: true
+                    message: Activated
+                    encrypted_license: BASE64...
+                    nonce: BASE64...
+                    signature: BASE64...
+                    public_key: "-----BEGIN PUBLIC KEY-----\n..."
+                secure:
+                  summary: Secure envelope response
+                  value:
+                    nonce: BASE64...
+                    ciphertext: BASE64...
+                    tag: BASE64...
+        '400':
+          description: Invalid request contents.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: Unauthorized, banned client, or revoked license.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: License not found.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '409':
+          description: Activation limit exceeded.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '429':
+          description: Rate limited.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: Server error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /api/verify:
+    post:
+      summary: Verify an existing device/license pairing.
+      tags: [Client]
+      parameters:
+        - $ref: '#/components/parameters/UserAgentHeader'
+        - $ref: '#/components/parameters/DeviceFingerprintHeader'
+        - $ref: '#/components/parameters/LicenseKeyHeader'
+        - $ref: '#/components/parameters/SecureFlagHeader'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ActivationRequest'
+      responses:
+        '200':
+          description: Verification succeeded.
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: '#/components/schemas/ActivationResponse'
+                  - $ref: '#/components/schemas/SecureEnvelope'
+        '400': { $ref: '#/paths/~1api~1activate/post/responses/400' }
+        '401': { $ref: '#/paths/~1api~1activate/post/responses/401' }
+        '404': { $ref: '#/paths/~1api~1activate/post/responses/404' }
+        '409': { $ref: '#/paths/~1api~1activate/post/responses/409' }
+        '429': { $ref: '#/paths/~1api~1activate/post/responses/429' }
+        '500': { $ref: '#/paths/~1api~1activate/post/responses/500' }
