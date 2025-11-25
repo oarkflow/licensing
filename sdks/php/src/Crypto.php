@@ -5,7 +5,7 @@ declare(strict_types=1);
 namespace Oarkflow\Licensing;
 
 use phpseclib3\Crypt\PublicKeyLoader;
-use phpseclib3\Crypt\RSA;
+use phpseclib3\Crypt\RSA\PublicKey;
 
 final class Crypto
 {
@@ -42,11 +42,8 @@ final class Crypto
     public static function verifySignature(string $payload, string $signature, string $publicKeyPem): bool
     {
         try {
-            $publicKey = PublicKeyLoader::load($publicKeyPem)
-                ->withPadding(RSA::SIGNATURE_PSS)
-                ->withHash('sha256')
-                ->withMGFHash('sha256')
-                ->withSaltLength(RSA::SALT_LENGTH_AUTO);
+            /** @var PublicKey $publicKey */
+            $publicKey = PublicKeyLoader::load($publicKeyPem);
         } catch (\Throwable $e) {
             throw new \RuntimeException('Failed to parse public key', 0, $e);
         }
