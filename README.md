@@ -211,6 +211,8 @@ Licenses now embed a **check mode** and the next scheduled verification timestam
 | `yearly` | Scheduled annually, relative to the most recent successful check. |
 | `custom` | Uses a fixed interval (`check_interval_seconds`). The client also spawns a background goroutine so long-running processes keep re-validating without restarts. Network outages defer verification but do not shut down the app; explicit revocations still terminate it. |
 
+If you omit `check_mode` the server now defaults to `yearly` (override via `LICENSE_SERVER_DEFAULT_CHECK_MODE`).
+
 Specify the check parameters when issuing a license:
 
 ```jsonc

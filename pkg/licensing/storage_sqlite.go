@@ -85,7 +85,7 @@ func ensureSQLiteSchema(db *squealx.DB) error {
 			expires_at TIMESTAMP NOT NULL,
 			current_activations INTEGER NOT NULL DEFAULT 0,
 			max_devices INTEGER NOT NULL DEFAULT 0,
-			check_mode TEXT NOT NULL DEFAULT 'each_execution',
+			check_mode TEXT NOT NULL DEFAULT 'yearly',
 			check_interval_seconds INTEGER NOT NULL DEFAULT 0,
 			next_check_at TIMESTAMP,
 			last_check_at TIMESTAMP,
@@ -156,7 +156,7 @@ func ensureSQLiteSchema(db *squealx.DB) error {
 	if err := ensureSQLiteColumn(db, "licenses", "plan_slug", "TEXT NOT NULL DEFAULT ''"); err != nil {
 		return err
 	}
-	if err := ensureSQLiteColumn(db, "licenses", "check_mode", "TEXT NOT NULL DEFAULT 'each_execution'"); err != nil {
+	if err := ensureSQLiteColumn(db, "licenses", "check_mode", "TEXT NOT NULL DEFAULT 'yearly'"); err != nil {
 		return err
 	}
 	if err := ensureSQLiteColumn(db, "licenses", "check_interval_seconds", "INTEGER NOT NULL DEFAULT 0"); err != nil {

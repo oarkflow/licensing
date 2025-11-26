@@ -64,13 +64,13 @@ func ParseLicenseCheckMode(input string) LicenseCheckMode {
 	case string(LicenseCheckModeCustom):
 		return LicenseCheckModeCustom
 	default:
-		return LicenseCheckModeEachRun
+		return LicenseCheckModeYearly
 	}
 }
 
 func (m LicenseCheckMode) String() string {
 	if m == "" {
-		return string(LicenseCheckModeEachRun)
+		return string(LicenseCheckModeYearly)
 	}
 	return string(m)
 }

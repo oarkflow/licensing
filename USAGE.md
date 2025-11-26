@@ -84,7 +84,7 @@ This document walks through everything you need to operate the licensing server,
 | `LICENSE_SERVER_KEY_PROVIDER` | `software`, `file`, or `tpm`. | `software` |
 | `LICENSE_SERVER_KEY_FILE` / `LICENSE_SERVER_KEY_PASSPHRASE` | Location + password for file-based signing keys. | — |
 | `LICENSE_SERVER_TPM_DEVICE` | Device path for TPM provider. | `/dev/tpmrm0` |
-| `LICENSE_SERVER_DEFAULT_CHECK_MODE` | Applied when new licenses omit `check_mode`. | `each_execution` |
+| `LICENSE_SERVER_DEFAULT_CHECK_MODE` | Applied when new licenses omit `check_mode`. | `yearly` |
 | `LICENSE_SERVER_DEFAULT_CHECK_INTERVAL` | Go duration string used when default mode is `custom`. | — |
 | `LICENSE_SERVER_BOOTSTRAP_DEMO` | `true` seeds demo clients/licenses on startup. | `false` |
 

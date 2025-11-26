@@ -132,7 +132,7 @@ func envBool(key string) bool {
 func resolveDefaultCheckPolicyFromEnv() (licensing.LicenseCheckMode, time.Duration, error) {
 	modeRaw := strings.TrimSpace(os.Getenv("LICENSE_SERVER_DEFAULT_CHECK_MODE"))
 	intervalRaw := strings.TrimSpace(os.Getenv("LICENSE_SERVER_DEFAULT_CHECK_INTERVAL"))
-	mode := licensing.LicenseCheckModeEachRun
+	mode := licensing.LicenseCheckModeYearly
 	if modeRaw != "" {
 		mode = licensing.ParseLicenseCheckMode(modeRaw)
 	}
@@ -141,7 +141,7 @@ func resolveDefaultCheckPolicyFromEnv() (licensing.LicenseCheckMode, time.Durati
 		if intervalRaw != "" {
 			parsed, err := time.ParseDuration(intervalRaw)
 			if err != nil {
-				return licensing.LicenseCheckModeEachRun, 0, fmt.Errorf("invalid LICENSE_SERVER_DEFAULT_CHECK_INTERVAL: %w", err)
+				return licensing.LicenseCheckModeYearly, 0, fmt.Errorf("invalid LICENSE_SERVER_DEFAULT_CHECK_INTERVAL: %w", err)
 			}
 			interval = parsed
 		}

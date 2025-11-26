@@ -40,7 +40,7 @@ const (
 
 func normalizeCheckMode(mode LicenseCheckMode) LicenseCheckMode {
 	if mode == "" {
-		return LicenseCheckModeEachRun
+		return LicenseCheckModeYearly
 	}
 	switch mode {
 	case LicenseCheckModeNone,
@@ -50,7 +50,7 @@ func normalizeCheckMode(mode LicenseCheckMode) LicenseCheckMode {
 		LicenseCheckModeCustom:
 		return mode
 	default:
-		return LicenseCheckModeEachRun
+		return LicenseCheckModeYearly
 	}
 }
 
@@ -169,7 +169,7 @@ func NewLicenseManager(storage Storage) (*LicenseManager, error) {
 		storage:              storage,
 		signer:               signer,
 		signerID:             signer.ID(),
-		defaultCheckMode:     LicenseCheckModeEachRun,
+		defaultCheckMode:     LicenseCheckModeYearly,
 		defaultCheckInterval: defaultCustomCheckInterval,
 	}
 

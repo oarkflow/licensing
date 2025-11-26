@@ -70,7 +70,9 @@ func runApplication(ctx context.Context, license *client.LicenseData) error {
 	fmt.Println("🚀 Starting application...")
 	var licenseState atomic.Value
 	licenseState.Store(license)
-
+	t, _ := json.MarshalIndent(license, "", "  ")
+	fmt.Println("Current License State:")
+	fmt.Println(string(t))
 	bgCtx, bgCancel := context.WithCancel(ctx)
 	defer bgCancel()
 
