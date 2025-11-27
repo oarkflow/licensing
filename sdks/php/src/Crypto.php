@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Oarkflow\Licensing;
 
 use phpseclib3\Crypt\PublicKeyLoader;
+use phpseclib3\Crypt\RSA;
 use phpseclib3\Crypt\RSA\PublicKey;
 
 final class Crypto
@@ -42,11 +43,26 @@ final class Crypto
     public static function verifySignature(string $payload, string $signature, string $publicKeyPem): bool
     {
         try {
-            /** @var PublicKey $publicKey */
-            $publicKey = PublicKeyLoader::load($publicKeyPem);
+            $baseKey = PublicKeyLoader::loadPublicKey($publicKeyPem);
         } catch (\Throwable $e) {
             throw new \RuntimeException('Failed to parse public key', 0, $e);
         }
-        return $publicKey->verify($payload, $signature);
+        if (!$baseKey instanceof PublicKey) {
+            throw new \RuntimeException('Loaded key is not an RSA public key');
+        }
+        // Go's rsa.SignPSS with nil options uses PSSSaltLengthAuto which equals
+        // the maximum possible salt length: (keyBits/8) - hashLen - 2.
+        // For 2048-bit RSA with SHA-256: 256 - 32 - 2 = 222 bytes.
+        // We calculate this dynamically from the key size.
+        $keyBits = $baseKey->getLength();
+        $hashLen = 32; // SHA-256
+        $maxSaltLen = (int)($keyBits / 8) - $hashLen - 2;
+        /** @var PublicKey $rsaKey */
+        $rsaKey = $baseKey
+            ->withPadding(RSA::SIGNATURE_PSS)
+            ->withHash('sha256')
+            ->withMGFHash('sha256')
+            ->withSaltLength($maxSaltLen);
+        return $rsaKey->verify($payload, $signature);
     }
 }

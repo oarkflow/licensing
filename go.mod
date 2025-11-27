@@ -15,6 +15,7 @@ require (
 	github.com/oarkflow/expr v0.0.11 // indirect
 	github.com/oarkflow/jet v0.0.4 // indirect
 	github.com/oarkflow/json v0.0.28 // indirect
+	github.com/oarkflow/xid v1.2.5 // indirect
 	modernc.org/sqlite v1.40.1 // indirect
 )
 
@@ -23,6 +24,7 @@ require (
 	github.com/google/go-tpm v0.9.7
 	github.com/mattn/go-isatty v0.0.20 // indirect
 	github.com/ncruces/go-strftime v0.1.9 // indirect
+	github.com/oarkflow/log v1.0.84
 	github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec // indirect
 	golang.org/x/exp v0.0.0-20250620022241-b7579e27df2b // indirect
 	golang.org/x/sys v0.38.0 // indirect

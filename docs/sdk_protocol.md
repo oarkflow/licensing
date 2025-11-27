@@ -97,6 +97,29 @@ To prevent plaintext license data from crossing the wire, the client may encrypt
 
 This blob lives at `$CONFIG_DIR/$LICENSE_FILE` (default `~/.licensing/.license.dat`) with `0600` permissions. A checksum sidecar (`.license.dat.chk`) stores an encrypted SHA-256 digest to detect tampering.
 
+### Checksum File Format
+
+The checksum file is JSON with AES-256-GCM encrypted payload:
+
+```json
+{
+  "version": 1,
+  "nonce": "<12-byte nonce as hex>",
+  "payload": "<encrypted hash + GCM tag as hex>",
+  "created_at": "2025-01-02T08:30:00Z"
+}
+```
+
+The checksum key is derived as:
+```
+checksum_key = SHA-256("github.com/oarkflow/licensing/client-checksum/v1" + fingerprint)
+```
+
+To verify:
+1. Compute `expected_hash = SHA-256(license.dat raw bytes)`
+2. Decrypt payload using `checksum_key` and `nonce`
+3. Compare decrypted bytes to `expected_hash`
+
 ## 4. License Payload Schema
 
 Decrypted payloads (after stripping the 32-byte session key) match `pkg/client.LicenseData`:
