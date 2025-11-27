@@ -312,7 +312,7 @@ If you prefer file-based automation, include `email`, `client_id`, and `license_
 ```
 go.mod              # module definition
 licensing.go        # entry point + wiring
-license_manager.go  # core business logic + signing provider integration
+license_manager.go  # core businesses logic + signing provider integration
 server.go           # HTTP handlers, security middleware
 storage.go          # in-memory + persistent storage backends
 client/app.go       # CLI activation + runtime verification
