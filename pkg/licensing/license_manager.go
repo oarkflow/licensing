@@ -257,6 +257,11 @@ func (lm *LicenseManager) DefaultCheckPolicy() (LicenseCheckMode, time.Duration)
 	return mode, interval
 }
 
+// Storage returns the underlying storage implementation.
+func (lm *LicenseManager) Storage() Storage {
+	return lm.storage
+}
+
 func (lm *LicenseManager) Close() error {
 	lm.mu.Lock()
 	defer lm.mu.Unlock()
