@@ -155,7 +155,8 @@ func (s *SQLiteStorage) GetProduct(ctx context.Context, productID string) (*Prod
 	row := s.db.QueryRowContext(ctx, query, productID)
 	product := &Product{}
 	var description, logoURL sql.NullString
-	err := row.Scan(&product.ID, &product.Name, &product.Slug, &description, &logoURL, &product.CreatedAt, &product.UpdatedAt)
+	var createdAt, updatedAt sqliteTimeValue
+	err := row.Scan(&product.ID, &product.Name, &product.Slug, &description, &logoURL, &createdAt, &updatedAt)
 	if err == sql.ErrNoRows {
 		return nil, errProductMissing
 	}
@@ -164,6 +165,8 @@ func (s *SQLiteStorage) GetProduct(ctx context.Context, productID string) (*Prod
 	}
 	product.Description = description.String
 	product.LogoURL = logoURL.String
+	product.CreatedAt = createdAt.Time
+	product.UpdatedAt = updatedAt.Time
 	return product, nil
 }
 
@@ -172,7 +175,8 @@ func (s *SQLiteStorage) GetProductBySlug(ctx context.Context, slug string) (*Pro
 	row := s.db.QueryRowContext(ctx, query, strings.ToLower(slug))
 	product := &Product{}
 	var description, logoURL sql.NullString
-	err := row.Scan(&product.ID, &product.Name, &product.Slug, &description, &logoURL, &product.CreatedAt, &product.UpdatedAt)
+	var createdAt, updatedAt sqliteTimeValue
+	err := row.Scan(&product.ID, &product.Name, &product.Slug, &description, &logoURL, &createdAt, &updatedAt)
 	if err == sql.ErrNoRows {
 		return nil, errProductMissing
 	}
@@ -181,6 +185,8 @@ func (s *SQLiteStorage) GetProductBySlug(ctx context.Context, slug string) (*Pro
 	}
 	product.Description = description.String
 	product.LogoURL = logoURL.String
+	product.CreatedAt = createdAt.Time
+	product.UpdatedAt = updatedAt.Time
 	return product, nil
 }
 
@@ -195,11 +201,14 @@ func (s *SQLiteStorage) ListProducts(ctx context.Context) ([]*Product, error) {
 	for rows.Next() {
 		product := &Product{}
 		var description, logoURL sql.NullString
-		if err := rows.Scan(&product.ID, &product.Name, &product.Slug, &description, &logoURL, &product.CreatedAt, &product.UpdatedAt); err != nil {
+		var createdAt, updatedAt sqliteTimeValue
+		if err := rows.Scan(&product.ID, &product.Name, &product.Slug, &description, &logoURL, &createdAt, &updatedAt); err != nil {
 			return nil, err
 		}
 		product.Description = description.String
 		product.LogoURL = logoURL.String
+		product.CreatedAt = createdAt.Time
+		product.UpdatedAt = updatedAt.Time
 		products = append(products, product)
 	}
 	return products, rows.Err()
@@ -296,6 +305,12 @@ func (s *SQLiteStorage) GetPlanBySlug(ctx context.Context, productID, slug strin
 	return s.scanPlan(row)
 }
 
+func (s *SQLiteStorage) FindPlanBySlug(ctx context.Context, slug string) (*Plan, error) {
+	query := `SELECT id, product_id, name, slug, description, price, currency, billing_cycle, trial_days, is_active, display_order, metadata, created_at, updated_at FROM plans WHERE LOWER(slug)=LOWER(?) LIMIT 1`
+	row := s.db.QueryRowContext(ctx, query, slug)
+	return s.scanPlan(row)
+}
+
 func (s *SQLiteStorage) ListPlansByProduct(ctx context.Context, productID string) ([]*Plan, error) {
 	query := `SELECT id, product_id, name, slug, description, price, currency, billing_cycle, trial_days, is_active, display_order, metadata, created_at, updated_at FROM plans WHERE product_id=? ORDER BY display_order, name`
 	rows, err := s.db.QueryContext(ctx, query, productID)
@@ -331,10 +346,11 @@ func (s *SQLiteStorage) scanPlan(scanner productRowScanner) (*Plan, error) {
 	plan := &Plan{}
 	var description sql.NullString
 	var metadataJSON sql.NullString
+	var createdAt, updatedAt sqliteTimeValue
 	err := scanner.Scan(&plan.ID, &plan.ProductID, &plan.Name, &plan.Slug, &description,
 		&plan.Price, &plan.Currency, &plan.BillingCycle, &plan.TrialDays,
 		&plan.IsActive, &plan.DisplayOrder, &metadataJSON,
-		&plan.CreatedAt, &plan.UpdatedAt)
+		&createdAt, &updatedAt)
 	if err == sql.ErrNoRows {
 		return nil, errPlanMissing
 	}
@@ -342,6 +358,8 @@ func (s *SQLiteStorage) scanPlan(scanner productRowScanner) (*Plan, error) {
 		return nil, err
 	}
 	plan.Description = description.String
+	plan.CreatedAt = createdAt.Time
+	plan.UpdatedAt = updatedAt.Time
 	if metadataJSON.Valid && metadataJSON.String != "" {
 		json.Unmarshal([]byte(metadataJSON.String), &plan.Metadata)
 	}
@@ -352,14 +370,17 @@ func (s *SQLiteStorage) scanPlanRow(scanner productRowScanner) (*Plan, error) {
 	plan := &Plan{}
 	var description sql.NullString
 	var metadataJSON sql.NullString
+	var createdAt, updatedAt sqliteTimeValue
 	err := scanner.Scan(&plan.ID, &plan.ProductID, &plan.Name, &plan.Slug, &description,
 		&plan.Price, &plan.Currency, &plan.BillingCycle, &plan.TrialDays,
 		&plan.IsActive, &plan.DisplayOrder, &metadataJSON,
-		&plan.CreatedAt, &plan.UpdatedAt)
+		&createdAt, &updatedAt)
 	if err != nil {
 		return nil, err
 	}
 	plan.Description = description.String
+	plan.CreatedAt = createdAt.Time
+	plan.UpdatedAt = updatedAt.Time
 	if metadataJSON.Valid && metadataJSON.String != "" {
 		json.Unmarshal([]byte(metadataJSON.String), &plan.Metadata)
 	}
@@ -424,7 +445,8 @@ func (s *SQLiteStorage) GetFeature(ctx context.Context, featureID string) (*Feat
 	row := s.db.QueryRowContext(ctx, query, featureID)
 	feature := &Feature{}
 	var description, category sql.NullString
-	err := row.Scan(&feature.ID, &feature.ProductID, &feature.Name, &feature.Slug, &description, &category, &feature.CreatedAt, &feature.UpdatedAt)
+	var createdAt, updatedAt sqliteTimeValue
+	err := row.Scan(&feature.ID, &feature.ProductID, &feature.Name, &feature.Slug, &description, &category, &createdAt, &updatedAt)
 	if err == sql.ErrNoRows {
 		return nil, errFeatureMissing
 	}
@@ -433,6 +455,8 @@ func (s *SQLiteStorage) GetFeature(ctx context.Context, featureID string) (*Feat
 	}
 	feature.Description = description.String
 	feature.Category = category.String
+	feature.CreatedAt = createdAt.Time
+	feature.UpdatedAt = updatedAt.Time
 	return feature, nil
 }
 
@@ -442,7 +466,8 @@ func (s *SQLiteStorage) GetFeatureBySlug(ctx context.Context, productID, slug st
 	row := s.db.QueryRowContext(ctx, query, slugKey)
 	feature := &Feature{}
 	var description, category sql.NullString
-	err := row.Scan(&feature.ID, &feature.ProductID, &feature.Name, &feature.Slug, &description, &category, &feature.CreatedAt, &feature.UpdatedAt)
+	var createdAt, updatedAt sqliteTimeValue
+	err := row.Scan(&feature.ID, &feature.ProductID, &feature.Name, &feature.Slug, &description, &category, &createdAt, &updatedAt)
 	if err == sql.ErrNoRows {
 		return nil, errFeatureMissing
 	}
@@ -451,6 +476,8 @@ func (s *SQLiteStorage) GetFeatureBySlug(ctx context.Context, productID, slug st
 	}
 	feature.Description = description.String
 	feature.Category = category.String
+	feature.CreatedAt = createdAt.Time
+	feature.UpdatedAt = updatedAt.Time
 	return feature, nil
 }
 
@@ -465,11 +492,14 @@ func (s *SQLiteStorage) ListFeaturesByProduct(ctx context.Context, productID str
 	for rows.Next() {
 		feature := &Feature{}
 		var description, category sql.NullString
-		if err := rows.Scan(&feature.ID, &feature.ProductID, &feature.Name, &feature.Slug, &description, &category, &feature.CreatedAt, &feature.UpdatedAt); err != nil {
+		var createdAt, updatedAt sqliteTimeValue
+		if err := rows.Scan(&feature.ID, &feature.ProductID, &feature.Name, &feature.Slug, &description, &category, &createdAt, &updatedAt); err != nil {
 			return nil, err
 		}
 		feature.Description = description.String
 		feature.Category = category.String
+		feature.CreatedAt = createdAt.Time
+		feature.UpdatedAt = updatedAt.Time
 		features = append(features, feature)
 	}
 	return features, rows.Err()
@@ -587,9 +617,10 @@ func (s *SQLiteStorage) scanFeatureScope(scanner productRowScanner) (*FeatureSco
 	scope := &FeatureScope{}
 	var permission string
 	var metadataJSON sql.NullString
+	var createdAt, updatedAt sqliteTimeValue
 	err := scanner.Scan(&scope.ID, &scope.FeatureID, &scope.Name, &scope.Slug,
 		&permission, &scope.Limit, &metadataJSON,
-		&scope.CreatedAt, &scope.UpdatedAt)
+		&createdAt, &updatedAt)
 	if err == sql.ErrNoRows {
 		return nil, errFeatureScopeMissing
 	}
@@ -597,6 +628,8 @@ func (s *SQLiteStorage) scanFeatureScope(scanner productRowScanner) (*FeatureSco
 		return nil, err
 	}
 	scope.Permission = ScopePermission(permission)
+	scope.CreatedAt = createdAt.Time
+	scope.UpdatedAt = updatedAt.Time
 	if metadataJSON.Valid && metadataJSON.String != "" {
 		json.Unmarshal([]byte(metadataJSON.String), &scope.Metadata)
 	}
@@ -607,13 +640,16 @@ func (s *SQLiteStorage) scanFeatureScopeRow(scanner productRowScanner) (*Feature
 	scope := &FeatureScope{}
 	var permission string
 	var metadataJSON sql.NullString
+	var createdAt, updatedAt sqliteTimeValue
 	err := scanner.Scan(&scope.ID, &scope.FeatureID, &scope.Name, &scope.Slug,
 		&permission, &scope.Limit, &metadataJSON,
-		&scope.CreatedAt, &scope.UpdatedAt)
+		&createdAt, &updatedAt)
 	if err != nil {
 		return nil, err
 	}
 	scope.Permission = ScopePermission(permission)
+	scope.CreatedAt = createdAt.Time
+	scope.UpdatedAt = updatedAt.Time
 	if metadataJSON.Valid && metadataJSON.String != "" {
 		json.Unmarshal([]byte(metadataJSON.String), &scope.Metadata)
 	}
@@ -716,14 +752,17 @@ func (s *SQLiteStorage) DeletePlanFeature(ctx context.Context, planID, featureID
 func (s *SQLiteStorage) scanPlanFeature(scanner productRowScanner) (*PlanFeature, error) {
 	pf := &PlanFeature{}
 	var overridesJSON sql.NullString
+	var createdAt, updatedAt sqliteTimeValue
 	err := scanner.Scan(&pf.ID, &pf.PlanID, &pf.FeatureID, &pf.Enabled, &overridesJSON,
-		&pf.CreatedAt, &pf.UpdatedAt)
+		&createdAt, &updatedAt)
 	if err == sql.ErrNoRows {
 		return nil, errPlanFeatureMissing
 	}
 	if err != nil {
 		return nil, err
 	}
+	pf.CreatedAt = createdAt.Time
+	pf.UpdatedAt = updatedAt.Time
 	if overridesJSON.Valid && overridesJSON.String != "" {
 		json.Unmarshal([]byte(overridesJSON.String), &pf.ScopeOverrides)
 	}
@@ -733,11 +772,14 @@ func (s *SQLiteStorage) scanPlanFeature(scanner productRowScanner) (*PlanFeature
 func (s *SQLiteStorage) scanPlanFeatureRow(scanner productRowScanner) (*PlanFeature, error) {
 	pf := &PlanFeature{}
 	var overridesJSON sql.NullString
+	var createdAt, updatedAt sqliteTimeValue
 	err := scanner.Scan(&pf.ID, &pf.PlanID, &pf.FeatureID, &pf.Enabled, &overridesJSON,
-		&pf.CreatedAt, &pf.UpdatedAt)
+		&createdAt, &updatedAt)
 	if err != nil {
 		return nil, err
 	}
+	pf.CreatedAt = createdAt.Time
+	pf.UpdatedAt = updatedAt.Time
 	if overridesJSON.Valid && overridesJSON.String != "" {
 		json.Unmarshal([]byte(overridesJSON.String), &pf.ScopeOverrides)
 	}

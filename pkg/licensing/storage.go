@@ -47,6 +47,7 @@ type Storage interface {
 	UpdatePlan(ctx context.Context, plan *Plan) error
 	GetPlan(ctx context.Context, planID string) (*Plan, error)
 	GetPlanBySlug(ctx context.Context, productID, slug string) (*Plan, error)
+	FindPlanBySlug(ctx context.Context, slug string) (*Plan, error) // Search across all products
 	ListPlansByProduct(ctx context.Context, productID string) ([]*Plan, error)
 	DeletePlan(ctx context.Context, planID string) error
 

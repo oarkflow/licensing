@@ -262,6 +262,74 @@ func (lm *LicenseManager) Storage() Storage {
 	return lm.storage
 }
 
+// ensureLicenseEntitlements computes and attaches entitlements to a license if they're missing.
+// It tries to look up the plan by ID first, then by slug if needed.
+func (lm *LicenseManager) ensureLicenseEntitlements(ctx context.Context, license *License) error {
+	if license == nil {
+		return nil
+	}
+
+	// If entitlements already exist, nothing to do
+	if license.Entitlements != nil {
+		return nil
+	}
+
+	// Try to get product and plan IDs
+	productID := strings.TrimSpace(license.ProductID)
+	planID := strings.TrimSpace(license.PlanID)
+	planSlug := strings.TrimSpace(license.PlanSlug)
+
+	// If we don't have plan info, we can't compute entitlements
+	if planSlug == "" && planID == "" {
+		return nil
+	}
+
+	// If we have planID and productID, compute entitlements directly
+	if productID != "" && planID != "" {
+		entitlements, err := lm.storage.ComputeLicenseEntitlements(ctx, productID, planID)
+		if err != nil {
+			return fmt.Errorf("failed to compute entitlements: %w", err)
+		}
+		license.Entitlements = entitlements
+		return nil
+	}
+
+	// Try to find plan by ID first
+	var plan *Plan
+	var err error
+	if planID != "" {
+		plan, err = lm.storage.GetPlan(ctx, planID)
+	}
+
+	// If not found by ID, try by slug
+	if plan == nil && planSlug != "" {
+		plan, err = lm.storage.FindPlanBySlug(ctx, planSlug)
+	}
+
+	if plan == nil {
+		if err != nil {
+			return fmt.Errorf("failed to find plan: %w", err)
+		}
+		return nil // No plan found, can't compute entitlements
+	}
+
+	// Update license with plan info if missing
+	if license.ProductID == "" {
+		license.ProductID = plan.ProductID
+	}
+	if license.PlanID == "" {
+		license.PlanID = plan.ID
+	}
+
+	// Compute entitlements
+	entitlements, err := lm.storage.ComputeLicenseEntitlements(ctx, plan.ProductID, plan.ID)
+	if err != nil {
+		return fmt.Errorf("failed to compute entitlements: %w", err)
+	}
+	license.Entitlements = entitlements
+	return nil
+}
+
 func (lm *LicenseManager) Close() error {
 	lm.mu.Lock()
 	defer lm.mu.Unlock()
@@ -765,6 +833,12 @@ func (lm *LicenseManager) ActivateLicense(ctx context.Context, req *ActivationRe
 	refreshLicenseDeviceStats(license)
 	lm.markServerCheck(license, now)
 
+	// Ensure entitlements are computed if missing
+	if err := lm.ensureLicenseEntitlements(ctx, license); err != nil {
+		log.Printf("Warning: failed to compute entitlements for license %s: %v", license.ID, err)
+		// Don't fail activation if entitlements can't be computed
+	}
+
 	if err := lm.storage.UpdateLicense(ctx, license); err != nil {
 		return nil, fmt.Errorf("failed to persist license state: %w", err)
 	}
@@ -887,6 +961,13 @@ func (lm *LicenseManager) VerifyLicense(ctx context.Context, req *ActivationRequ
 	license.LastActivatedAt = now
 	refreshLicenseDeviceStats(license)
 	lm.markServerCheck(license, now)
+
+	// Ensure entitlements are computed if missing
+	if err := lm.ensureLicenseEntitlements(ctx, license); err != nil {
+		log.Printf("Warning: failed to compute entitlements for license %s: %v", license.ID, err)
+		// Don't fail verification if entitlements can't be computed
+	}
+
 	if err := lm.storage.UpdateLicense(ctx, license); err != nil {
 		return nil, fmt.Errorf("failed to persist license state: %w", err)
 	}

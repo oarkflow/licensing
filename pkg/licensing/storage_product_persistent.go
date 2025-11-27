@@ -63,6 +63,10 @@ func (ps *PersistentStorage) GetPlanBySlug(ctx context.Context, productID, slug 
 	return ps.backend.GetPlanBySlug(ctx, productID, slug)
 }
 
+func (ps *PersistentStorage) FindPlanBySlug(ctx context.Context, slug string) (*Plan, error) {
+	return ps.backend.FindPlanBySlug(ctx, slug)
+}
+
 func (ps *PersistentStorage) ListPlansByProduct(ctx context.Context, productID string) ([]*Plan, error) {
 	return ps.backend.ListPlansByProduct(ctx, productID)
 }

@@ -162,6 +162,18 @@ func (s *InMemoryStorage) GetPlanBySlug(_ context.Context, productID, slug strin
 	return clonePlan(s.plans[planID]), nil
 }
 
+func (s *InMemoryStorage) FindPlanBySlug(_ context.Context, slug string) (*Plan, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	slugLower := strings.ToLower(slug)
+	for _, p := range s.plans {
+		if strings.ToLower(p.Slug) == slugLower {
+			return clonePlan(p), nil
+		}
+	}
+	return nil, errPlanMissing
+}
+
 func (s *InMemoryStorage) ListPlansByProduct(_ context.Context, productID string) ([]*Plan, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
