@@ -162,6 +162,15 @@ func createDemoData(ctx context.Context, lm *licensing.LicenseManager) error {
 		{"jane@example.com", 30 * 24 * time.Hour, 5, "standard"},
 		{"bob@example.com", 90 * 24 * time.Hour, 2, "starter"},
 	}
+
+	// Collect credentials for display
+	type credentialInfo struct {
+		clientID   string
+		email      string
+		licenseKey string
+	}
+	var credentials []credentialInfo
+
 	mode, interval := lm.DefaultCheckPolicy()
 	for _, s := range seeds {
 		client, err := lm.CreateClient(ctx, s.email)
@@ -180,6 +189,36 @@ func createDemoData(ctx context.Context, lm *licensing.LicenseManager) error {
 			continue
 		}
 		log.Printf("   ✓ Client: %s (ID: %s) | License: %s", client.Email, client.ID, license.LicenseKey)
+		credentials = append(credentials, credentialInfo{
+			clientID:   client.ID,
+			email:      client.Email,
+			licenseKey: license.LicenseKey,
+		})
 	}
+
+	// Display credentials in JSON format for easy saving
+	if len(credentials) > 0 {
+		fmt.Println()
+		fmt.Println("═══════════════════════════════════════════════════════════════════════════════")
+		fmt.Println("📄 Demo License Credentials (save these to JSON files for SDK examples)")
+		fmt.Println("═══════════════════════════════════════════════════════════════════════════════")
+		for _, cred := range credentials {
+			fmt.Println()
+			fmt.Printf("📁 File: license-%s.json\n", cred.clientID)
+			fmt.Println("───────────────────────────────────────────────────────────────────────────────")
+			fmt.Printf(`{
+  "email": "%s",
+  "client_id": "%s",
+  "license_key": "%s"
+}
+`, cred.email, cred.clientID, cred.licenseKey)
+			fmt.Println("───────────────────────────────────────────────────────────────────────────────")
+		}
+		fmt.Println()
+		fmt.Println("Usage: go run main.go --license-file license-<client_id>.json")
+		fmt.Println("═══════════════════════════════════════════════════════════════════════════════")
+		fmt.Println()
+	}
+
 	return nil
 }

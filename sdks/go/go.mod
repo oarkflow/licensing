@@ -1,4 +1,4 @@
-module github.com/oarkflow/licensing/sdks/golang
+module github.com/oarkflow/licensing/sdks/go
 
 go 1.25.0
 

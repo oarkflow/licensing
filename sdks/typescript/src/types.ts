@@ -11,10 +11,51 @@ export interface ActivationPayload {
     deviceFingerprint: string;
 }
 
+/**
+ * Represents a JSON file containing license activation credentials.
+ * Expected file format:
+ * {
+ *   "email": "user@example.com",
+ *   "client_id": "client-123",
+ *   "license_key": "XXXX-XXXX-..."
+ * }
+ */
+export interface CredentialsFile {
+    email: string;
+    client_id: string;
+    license_key: string;
+}
+
 export interface LicenseDevice {
     fingerprint: string;
     activated_at: string;
     last_seen_at: string;
+}
+
+export type ScopePermission = 'allow' | 'deny' | 'limit';
+
+export interface ScopeGrant {
+    scope_id: string;
+    scope_slug: string;
+    permission: ScopePermission;
+    limit?: number;
+    metadata?: Record<string, unknown>;
+}
+
+export interface FeatureGrant {
+    feature_id: string;
+    feature_slug: string;
+    category?: string;
+    enabled: boolean;
+    scopes?: Record<string, ScopeGrant>;
+}
+
+export interface LicenseEntitlements {
+    product_id: string;
+    product_slug: string;
+    plan_id: string;
+    plan_slug: string;
+    features: Record<string, FeatureGrant>;
 }
 
 export interface LicenseData {
@@ -22,6 +63,8 @@ export interface LicenseData {
     client_id: string;
     subject_client_id: string;
     email: string;
+    product_id?: string;
+    plan_id?: string;
     plan_slug: string;
     relationship: string;
     granted_by?: string;
@@ -41,4 +84,5 @@ export interface LicenseData {
     check_interval_seconds: number;
     next_check_at: string;
     last_check_at: string;
+    entitlements?: LicenseEntitlements;
 }

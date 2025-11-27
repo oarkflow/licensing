@@ -405,7 +405,19 @@ func (s *Server) handleLicenses(w http.ResponseWriter, r *http.Request) {
 			_, defaultInterval := s.lm.DefaultCheckPolicy()
 			interval = defaultInterval
 		}
-		license, err := s.lm.GenerateLicense(r.Context(), req.ClientID, duration, req.MaxDevices, plan, mode, interval)
+
+		// Build options with product and plan IDs if provided
+		var opts *GenerateLicenseOptions
+		productID := strings.TrimSpace(req.ProductID)
+		planID := strings.TrimSpace(req.PlanID)
+		if productID != "" || planID != "" {
+			opts = &GenerateLicenseOptions{
+				ProductID: productID,
+				PlanID:    planID,
+			}
+		}
+
+		license, err := s.lm.GenerateLicenseWithOptions(r.Context(), req.ClientID, duration, req.MaxDevices, plan, mode, interval, opts)
 		if err != nil {
 			s.respondError(w, http.StatusBadRequest, err.Error())
 			return
@@ -698,6 +710,9 @@ func (s *Server) Start() error {
 	mux.HandleFunc("/api/clients/", s.handleClientActions)
 	mux.HandleFunc("/api/admin/users", s.handleAdminUsers)
 	mux.HandleFunc("/api/admin/api-keys", s.handleAdminAPIKeys)
+	mux.HandleFunc("/api/products", s.handleProducts)
+	mux.HandleFunc("/api/products/", s.handleProductActions)
+	mux.HandleFunc("/api/entitlements", s.handleEntitlements)
 	mux.HandleFunc("/health", s.handleHealth)
 
 	server := &http.Server{

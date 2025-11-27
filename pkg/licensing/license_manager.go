@@ -446,7 +446,17 @@ func (lm *LicenseManager) UnbanClient(ctx context.Context, clientID string) (*Cl
 	return client, nil
 }
 
+// GenerateLicenseOptions contains optional parameters for license generation.
+type GenerateLicenseOptions struct {
+	ProductID string
+	PlanID    string
+}
+
 func (lm *LicenseManager) GenerateLicense(ctx context.Context, clientID string, duration time.Duration, maxDevices int, planSlug string, mode LicenseCheckMode, interval time.Duration) (*License, error) {
+	return lm.GenerateLicenseWithOptions(ctx, clientID, duration, maxDevices, planSlug, mode, interval, nil)
+}
+
+func (lm *LicenseManager) GenerateLicenseWithOptions(ctx context.Context, clientID string, duration time.Duration, maxDevices int, planSlug string, mode LicenseCheckMode, interval time.Duration, opts *GenerateLicenseOptions) (*License, error) {
 	if maxDevices <= 0 {
 		maxDevices = 1
 	}
@@ -468,12 +478,43 @@ func (lm *LicenseManager) GenerateLicense(ctx context.Context, clientID string, 
 		return nil, fmt.Errorf("client is banned")
 	}
 
+	var productID, planID string
+	var entitlements *LicenseEntitlements
+	if opts != nil {
+		productID = strings.TrimSpace(opts.ProductID)
+		planID = strings.TrimSpace(opts.PlanID)
+
+		// If product and plan IDs are provided, validate and compute entitlements
+		if productID != "" && planID != "" {
+			plan, err := lm.storage.GetPlan(ctx, planID)
+			if err != nil {
+				return nil, fmt.Errorf("failed to get plan: %w", err)
+			}
+			if plan.ProductID != productID {
+				return nil, fmt.Errorf("plan does not belong to the specified product")
+			}
+			if !plan.IsActive {
+				return nil, fmt.Errorf("plan is not active")
+			}
+			// Use plan slug from the plan record
+			planSlug = plan.Slug
+
+			// Compute entitlements
+			entitlements, err = lm.storage.ComputeLicenseEntitlements(ctx, productID, planID)
+			if err != nil {
+				return nil, fmt.Errorf("failed to compute entitlements: %w", err)
+			}
+		}
+	}
+
 	licenseKey := lm.generateLicenseKey(client.Email, client.ID)
 	now := time.Now()
 	license := &License{
 		ID:                 uuid.New().String(),
 		ClientID:           clientID,
 		Email:              client.Email,
+		ProductID:          productID,
+		PlanID:             planID,
 		PlanSlug:           planSlug,
 		LicenseKey:         licenseKey,
 		IsRevoked:          false,
@@ -485,6 +526,7 @@ func (lm *LicenseManager) GenerateLicense(ctx context.Context, clientID string, 
 		CurrentActivations: 0,
 		CheckMode:          mode,
 		CheckIntervalSecs:  int64(interval.Seconds()),
+		Entitlements:       entitlements,
 	}
 	lm.applyLicenseCheckDefaults(license)
 	refreshLicenseDeviceStats(license)
@@ -922,6 +964,17 @@ func (lm *LicenseManager) buildLicensePayload(license *License, identity *Licens
 		"is_revoked":          license.IsRevoked,
 		"revoked_at":          license.RevokedAt,
 		"revoke_reason":       license.RevokeReason,
+	}
+	// Add product and plan info if available
+	if license.ProductID != "" {
+		payload["product_id"] = license.ProductID
+	}
+	if license.PlanID != "" {
+		payload["plan_id"] = license.PlanID
+	}
+	// Add entitlements if available
+	if license.Entitlements != nil {
+		payload["entitlements"] = license.Entitlements
 	}
 	if grantedBy != "" {
 		payload["granted_by"] = grantedBy

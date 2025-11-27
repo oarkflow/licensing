@@ -32,7 +32,7 @@ import (
     "log"
     "os"
 
-    licensing "github.com/oarkflow/licensing/sdks/golang"
+    licensing "github.com/oarkflow/licensing/sdks/go"
 )
 
 func main() {
@@ -49,27 +49,22 @@ func main() {
     }
 
     // Check if already activated
-    if !client.HasLicense() {
+    if !client.IsActivated() {
         // Activate with credentials
-        err := client.ActivateWithCredentials(licensing.ActivationRequest{
-            Email:      "user@example.com",
-            ClientID:   "client-123",
-            LicenseKey: "ABCD-EFGH-IJKL-MNOP-QRST-UVWX-YZ12-3456",
-        })
+        err := client.Activate(
+            "user@example.com",
+            "client-123",
+            "ABCD-EFGH-IJKL-MNOP-QRST-UVWX-YZ12-3456",
+        )
         if err != nil {
             log.Fatalf("activation failed: %v", err)
         }
     }
 
-    // Verify license is valid
-    if err := client.Verify(); err != nil {
-        log.Fatalf("verification failed: %v", err)
-    }
-
-    // Get license data
-    license, err := client.License()
+    // Verify license is valid (returns *LicenseData and error)
+    license, err := client.Verify()
     if err != nil {
-        log.Fatalf("failed to get license: %v", err)
+        log.Fatalf("verification failed: %v", err)
     }
 
     log.Printf("License: %s (plan: %s)", license.ID, license.PlanSlug)
@@ -77,28 +72,36 @@ func main() {
 }
 ```
 
-### 2. Feature Gating
+### 2. Feature Gating with Entitlements
+
+The SDK provides built-in entitlement checking methods on `LicenseData`:
 
 ```go
-func isFeatureEnabled(license *licensing.LicenseData, feature string) bool {
-    planFeatures := map[string][]string{
-        "starter":      {"basic"},
-        "professional": {"basic", "advanced"},
-        "enterprise":   {"basic", "advanced", "premium", "api"},
-    }
-
-    for _, f := range planFeatures[license.PlanSlug] {
-        if f == feature {
-            return true
-        }
-    }
-    return false
-}
-
-// Usage
-if isFeatureEnabled(license, "api") {
+// Check if a feature is available
+if license.HasFeature("api") {
     enableAPIAccess()
 }
+
+// Check scope permissions
+if license.HasScope("billing", "create") {
+    enableBillingCreate()
+}
+
+// Check if an operation is allowed (and get limit if any)
+allowed, limit := license.CanPerform("users", "create")
+if allowed {
+    if limit > 0 {
+        log.Printf("User creation enabled (limit: %d)", limit)
+    } else {
+        log.Println("User creation enabled (unlimited)")
+    }
+}
+
+// Get feature details
+if feature, ok := license.GetFeature("api"); ok {
+    log.Printf("API feature: permission=%s", feature.Permission)
+}
+```
 ```
 
 ### 3. Background Verification
@@ -106,6 +109,7 @@ if isFeatureEnabled(license, "api") {
 ```go
 import (
     "context"
+    "log"
     "os"
     "os/signal"
     "syscall"
@@ -114,9 +118,23 @@ import (
 func main() {
     client, _ := licensing.New(cfg)
 
+    // Initial verification
+    license, err := client.Verify()
+    if err != nil {
+        log.Fatalf("verification failed: %v", err)
+    }
+
     // Start background verification
     ctx, cancel := context.WithCancel(context.Background())
-    go client.StartBackgroundVerification(ctx)
+    go client.RunBackgroundVerification(
+        ctx,
+        license,
+        log.Printf, // logging function
+        func(updated *licensing.LicenseData) {
+            // Handle license updates
+            log.Printf("License updated: %s", updated.ID)
+        },
+    )
 
     // Handle graceful shutdown
     sigCh := make(chan os.Signal, 1)
@@ -170,6 +188,8 @@ type LicenseData struct {
     ClientID           string          // Owner client ID
     SubjectClientID    string          // Runtime client ID
     Email              string          // License owner email
+    ProductID          string          // Product ID (if configured)
+    PlanID             string          // Plan ID (if configured)
     PlanSlug           string          // Plan for feature gating
     Relationship       string          // "direct" or "delegated"
     GrantedBy          string          // Granting client (delegated)
@@ -189,6 +209,162 @@ type LicenseData struct {
     CheckIntervalSecs  int64           // Custom interval (seconds)
     NextCheckAt        time.Time       // Next scheduled check
     LastCheckAt        time.Time       // Last check timestamp
+    Entitlements       *LicenseEntitlements // Feature entitlements (optional)
+}
+```
+
+#### `LicenseEntitlements`
+
+The `Entitlements` field in `LicenseData` contains the complete set of features and scopes granted to the license holder. This is only populated when a product/plan is configured on the server.
+
+```go
+type LicenseEntitlements struct {
+    ProductID   string                  // Product UUID
+    ProductSlug string                  // Product slug (e.g., "my-app")
+    PlanID      string                  // Plan UUID
+    PlanSlug    string                  // Plan slug (e.g., "enterprise")
+    Features    map[string]FeatureGrant // Map of feature slug → grant
+}
+
+type FeatureGrant struct {
+    FeatureID   string                // Feature UUID
+    FeatureSlug string                // Feature slug (e.g., "api")
+    Category    string                // Category (e.g., "gui", "cli", "api")
+    Enabled     bool                  // Whether feature is enabled
+    Scopes      map[string]ScopeGrant // Map of scope slug → grant
+}
+
+type ScopeGrant struct {
+    ScopeID    string            // Scope UUID
+    ScopeSlug  string            // Scope slug (e.g., "create")
+    Permission ScopePermission   // "allow", "deny", or "limit"
+    Limit      int               // Limit value (when permission is "limit")
+    Metadata   map[string]string // Additional metadata
+}
+
+type ScopePermission string // "allow" | "deny" | "limit"
+```
+
+**Example JSON payload** (as received from the server):
+
+```json
+{
+  "id": "lic_abc123",
+  "client_id": "client_xyz",
+  "email": "user@example.com",
+  "plan_slug": "enterprise",
+  "product_id": "prod_001",
+  "plan_id": "plan_001",
+  "entitlements": {
+    "product_id": "prod_001",
+    "product_slug": "my-saas-app",
+    "plan_id": "plan_001",
+    "plan_slug": "enterprise",
+    "features": {
+      "gui": {
+        "feature_id": "feat_gui",
+        "feature_slug": "gui",
+        "category": "interface",
+        "enabled": true,
+        "scopes": {
+          "list": {
+            "scope_id": "scope_list",
+            "scope_slug": "list",
+            "permission": "allow",
+            "limit": 0
+          },
+          "create": {
+            "scope_id": "scope_create",
+            "scope_slug": "create",
+            "permission": "allow",
+            "limit": 0
+          },
+          "update": {
+            "scope_id": "scope_update",
+            "scope_slug": "update",
+            "permission": "allow",
+            "limit": 0
+          },
+          "delete": {
+            "scope_id": "scope_delete",
+            "scope_slug": "delete",
+            "permission": "allow",
+            "limit": 0
+          }
+        }
+      },
+      "cli": {
+        "feature_id": "feat_cli",
+        "feature_slug": "cli",
+        "category": "interface",
+        "enabled": true,
+        "scopes": {
+          "execute": {
+            "scope_id": "scope_exec",
+            "scope_slug": "execute",
+            "permission": "allow",
+            "limit": 0
+          }
+        }
+      },
+      "api": {
+        "feature_id": "feat_api",
+        "feature_slug": "api",
+        "category": "integration",
+        "enabled": true,
+        "scopes": {
+          "requests": {
+            "scope_id": "scope_req",
+            "scope_slug": "requests",
+            "permission": "limit",
+            "limit": 10000,
+            "metadata": {
+              "period": "monthly"
+            }
+          }
+        }
+      },
+      "premium": {
+        "feature_id": "feat_premium",
+        "feature_slug": "premium",
+        "category": "addon",
+        "enabled": false,
+        "scopes": {}
+      }
+    }
+  },
+  "issued_at": "2025-01-01T00:00:00Z",
+  "expires_at": "2026-01-01T00:00:00Z"
+}
+```
+
+**Key concepts:**
+
+| Field | Description |
+|-------|-------------|
+| `features` | Map where keys are feature slugs (e.g., "gui", "api") |
+| `enabled` | Whether the feature is available for this plan |
+| `scopes` | Map where keys are scope slugs (e.g., "create", "delete") |
+| `permission` | `"allow"` = permitted, `"deny"` = forbidden, `"limit"` = permitted with quota |
+| `limit` | Numeric quota when `permission` is `"limit"` (0 = unlimited for `"allow"`) |
+| `metadata` | Optional key-value pairs for additional configuration |
+
+#### `CredentialsFile`
+
+```go
+type CredentialsFile struct {
+    Email      string // Activation email
+    ClientID   string // Client identifier
+    LicenseKey string // License key
+}
+```
+
+**JSON format:**
+```json
+{
+  "email": "user@example.com",
+  "client_id": "client-123",
+  "license_key": "XXXX-XXXX-XXXX-XXXX-XXXX-XXXX-XXXX-XXXX"
 }
 ```
 
@@ -211,26 +387,45 @@ type StoredLicense struct {
 // New creates a new licensing client
 func New(cfg Config) (*Client, error)
 
-// Activate activates using environment variables
-func (c *Client) Activate() error
+// IsActivated returns true if a local license exists
+func (c *Client) IsActivated() bool
 
-// ActivateWithCredentials activates with explicit credentials
-func (c *Client) ActivateWithCredentials(req ActivationRequest) error
+// Activate activates with explicit credentials
+func (c *Client) Activate(email, clientID, licenseKey string) error
 
 // Verify checks license validity (online if due, offline otherwise)
-func (c *Client) Verify() error
+// Returns the license data and an error if invalid
+func (c *Client) Verify() (*LicenseData, error)
 
-// License returns the decrypted license data
-func (c *Client) License() (*LicenseData, error)
+// ServerURL returns the configured license server URL
+func (c *Client) ServerURL() string
 
-// HasLicense returns true if a local license exists
-func (c *Client) HasLicense() bool
+// RunBackgroundVerification starts the verification scheduler
+func (c *Client) RunBackgroundVerification(
+    ctx context.Context,
+    initial *LicenseData,
+    logf func(string, ...interface{}),
+    onUpdate func(*LicenseData),
+) error
+```
 
-// IsValid returns true if the license is currently valid
-func (c *Client) IsValid() bool
+### LicenseData Helper Methods
 
-// StartBackgroundVerification starts the verification scheduler
-func (c *Client) StartBackgroundVerification(ctx context.Context)
+```go
+// HasFeature checks if a feature is enabled
+func (ld *LicenseData) HasFeature(featureSlug string) bool
+
+// GetFeature returns the feature grant if available
+func (ld *LicenseData) GetFeature(featureSlug string) (FeatureGrant, bool)
+
+// HasScope checks if a scope is enabled for a feature
+func (ld *LicenseData) HasScope(featureSlug, scopeSlug string) bool
+
+// GetScope returns the scope grant if available
+func (ld *LicenseData) GetScope(featureSlug, scopeSlug string) (ScopeGrant, bool)
+
+// CanPerform checks if an operation is allowed and returns the limit
+func (ld *LicenseData) CanPerform(featureSlug, scopeSlug string) (allowed bool, limit int)
 ```
 
 ### Standalone Crypto Functions
@@ -253,7 +448,7 @@ func BuildStoredLicenseFromResponse(resp *ActivationResponse, fingerprint string
 ```go
 import "errors"
 
-err := client.Verify()
+license, err := client.Verify()
 if err != nil {
     switch {
     case errors.Is(err, licensing.ErrLicenseNotFound):
@@ -270,6 +465,9 @@ if err != nil {
         log.Fatalf("Verification failed: %v", err)
     }
 }
+
+// License is valid, continue
+log.Printf("License valid: %s", license.ID)
 ```
 
 ## Check Modes
@@ -285,7 +483,7 @@ The SDK supports various verification schedules:
 | `custom` | Use `check_interval_seconds` for custom scheduling |
 
 ```go
-license, _ := client.License()
+license, _ := client.Verify()
 switch license.CheckMode {
 case "each_execution":
     // Always verify on startup
@@ -311,7 +509,8 @@ type LicenseMiddleware struct {
 
 func (m *LicenseMiddleware) Handler(next http.Handler) http.Handler {
     return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-        if err := m.client.Verify(); err != nil {
+        license, err := m.client.Verify()
+        if err != nil {
             w.WriteHeader(http.StatusForbidden)
             json.NewEncoder(w).Encode(map[string]string{
                 "error": "License validation failed",
@@ -319,7 +518,6 @@ func (m *LicenseMiddleware) Handler(next http.Handler) http.Handler {
             return
         }
 
-        license, _ := m.client.License()
         ctx := context.WithValue(r.Context(), "license", license)
         next.ServeHTTP(w, r.WithContext(ctx))
     })
@@ -330,6 +528,10 @@ mux := http.NewServeMux()
 middleware := &LicenseMiddleware{client: client}
 http.ListenAndServe(":8080", middleware.Handler(mux))
 ```
+
+## GoFiber Integration
+
+For a complete GoFiber example, see the [examples/fiber-server](examples/fiber-server/) directory.
 
 ## gRPC Integration
 
@@ -347,9 +549,13 @@ func LicenseInterceptor(client *licensing.Client) grpc.UnaryServerInterceptor {
         info *grpc.UnaryServerInfo,
         handler grpc.UnaryHandler,
     ) (interface{}, error) {
-        if err := client.Verify(); err != nil {
+        license, err := client.Verify()
+        if err != nil {
             return nil, status.Error(codes.PermissionDenied, "license validation failed")
         }
+
+        // Optionally add license to context
+        ctx = context.WithValue(ctx, "license", license)
         return handler(ctx, req)
     }
 }
@@ -359,6 +565,13 @@ server := grpc.NewServer(
     grpc.UnaryInterceptor(LicenseInterceptor(client)),
 )
 ```
+
+## Examples
+
+See the [examples](examples/) directory for complete working examples:
+
+- **[basic](examples/basic/)** - Minimal example showing activation and verification
+- **[fiber-server](examples/fiber-server/)** - Full GoFiber HTTP server with license protection and entitlements
 
 ## Testing
 

@@ -33,17 +33,68 @@ type Storage interface {
 	UpdateAPIKey(ctx context.Context, key *APIKeyRecord) error
 	GetAPIKeyByHash(ctx context.Context, hash string) (*APIKeyRecord, error)
 	ListAPIKeysByUser(ctx context.Context, userID string) ([]*APIKeyRecord, error)
+
+	// Product management
+	SaveProduct(ctx context.Context, product *Product) error
+	UpdateProduct(ctx context.Context, product *Product) error
+	GetProduct(ctx context.Context, productID string) (*Product, error)
+	GetProductBySlug(ctx context.Context, slug string) (*Product, error)
+	ListProducts(ctx context.Context) ([]*Product, error)
+	DeleteProduct(ctx context.Context, productID string) error
+
+	// Plan management
+	SavePlan(ctx context.Context, plan *Plan) error
+	UpdatePlan(ctx context.Context, plan *Plan) error
+	GetPlan(ctx context.Context, planID string) (*Plan, error)
+	GetPlanBySlug(ctx context.Context, productID, slug string) (*Plan, error)
+	ListPlansByProduct(ctx context.Context, productID string) ([]*Plan, error)
+	DeletePlan(ctx context.Context, planID string) error
+
+	// Feature management
+	SaveFeature(ctx context.Context, feature *Feature) error
+	UpdateFeature(ctx context.Context, feature *Feature) error
+	GetFeature(ctx context.Context, featureID string) (*Feature, error)
+	GetFeatureBySlug(ctx context.Context, productID, slug string) (*Feature, error)
+	ListFeaturesByProduct(ctx context.Context, productID string) ([]*Feature, error)
+	DeleteFeature(ctx context.Context, featureID string) error
+
+	// Feature scope management
+	SaveFeatureScope(ctx context.Context, scope *FeatureScope) error
+	UpdateFeatureScope(ctx context.Context, scope *FeatureScope) error
+	GetFeatureScope(ctx context.Context, scopeID string) (*FeatureScope, error)
+	ListFeatureScopes(ctx context.Context, featureID string) ([]*FeatureScope, error)
+	DeleteFeatureScope(ctx context.Context, scopeID string) error
+
+	// Plan-Feature relationship management
+	SavePlanFeature(ctx context.Context, pf *PlanFeature) error
+	UpdatePlanFeature(ctx context.Context, pf *PlanFeature) error
+	GetPlanFeature(ctx context.Context, planID, featureID string) (*PlanFeature, error)
+	ListPlanFeatures(ctx context.Context, planID string) ([]*PlanFeature, error)
+	DeletePlanFeature(ctx context.Context, planID, featureID string) error
+
+	// Entitlement computation
+	ComputeLicenseEntitlements(ctx context.Context, productID, planID string) (*LicenseEntitlements, error)
 }
 
 var (
-	errClientExists   = errors.New("client already exists")
-	errClientMissing  = errors.New("client not found")
-	errLicenseExists  = errors.New("license already exists")
-	errLicenseMissing = errors.New("license not found")
-	errUserExists     = errors.New("user already exists")
-	errUserMissing    = errors.New("user not found")
-	errAPIKeyExists   = errors.New("api key already exists")
-	errAPIKeyMissing  = errors.New("api key not found")
+	errClientExists        = errors.New("client already exists")
+	errClientMissing       = errors.New("client not found")
+	errLicenseExists       = errors.New("license already exists")
+	errLicenseMissing      = errors.New("license not found")
+	errUserExists          = errors.New("user already exists")
+	errUserMissing         = errors.New("user not found")
+	errAPIKeyExists        = errors.New("api key already exists")
+	errAPIKeyMissing       = errors.New("api key not found")
+	errProductExists       = errors.New("product already exists")
+	errProductMissing      = errors.New("product not found")
+	errPlanExists          = errors.New("plan already exists")
+	errPlanMissing         = errors.New("plan not found")
+	errFeatureExists       = errors.New("feature already exists")
+	errFeatureMissing      = errors.New("feature not found")
+	errFeatureScopeExists  = errors.New("feature scope already exists")
+	errFeatureScopeMissing = errors.New("feature scope not found")
+	errPlanFeatureExists   = errors.New("plan feature already exists")
+	errPlanFeatureMissing  = errors.New("plan feature not found")
 )
 
 type AdminUser struct {
@@ -94,6 +145,15 @@ type InMemoryStorage struct {
 	apiKeys        map[string]*APIKeyRecord
 	apiKeysByHash  map[string]string
 	apiKeysByUser  map[string]map[string]struct{}
+	// Product management
+	products       map[string]*Product
+	productsBySlug map[string]string
+	plans          map[string]*Plan
+	plansBySlug    map[string]string // key: "productID:slug"
+	features       map[string]*Feature
+	featuresBySlug map[string]string // key: "productID:slug"
+	featureScopes  map[string]*FeatureScope
+	planFeatures   map[string]*PlanFeature // key: "planID:featureID"
 }
 
 func NewInMemoryStorage() *InMemoryStorage {
@@ -108,6 +168,14 @@ func NewInMemoryStorage() *InMemoryStorage {
 		apiKeys:        make(map[string]*APIKeyRecord),
 		apiKeysByHash:  make(map[string]string),
 		apiKeysByUser:  make(map[string]map[string]struct{}),
+		products:       make(map[string]*Product),
+		productsBySlug: make(map[string]string),
+		plans:          make(map[string]*Plan),
+		plansBySlug:    make(map[string]string),
+		features:       make(map[string]*Feature),
+		featuresBySlug: make(map[string]string),
+		featureScopes:  make(map[string]*FeatureScope),
+		planFeatures:   make(map[string]*PlanFeature),
 	}
 }
 

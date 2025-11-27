@@ -3,6 +3,7 @@ package licensing
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -37,6 +38,9 @@ func NewSQLiteStorage(path string) (*SQLiteStorage, error) {
 		return nil, err
 	}
 	if err := ensureSQLiteSchema(db); err != nil {
+		return nil, err
+	}
+	if err := ensureProductSchema(db); err != nil {
 		return nil, err
 	}
 	return &SQLiteStorage{db: db}, nil
@@ -154,6 +158,15 @@ func ensureSQLiteSchema(db *squealx.DB) error {
 		return err
 	}
 	if err := ensureSQLiteColumn(db, "licenses", "plan_slug", "TEXT NOT NULL DEFAULT ''"); err != nil {
+		return err
+	}
+	if err := ensureSQLiteColumn(db, "licenses", "product_id", "TEXT"); err != nil {
+		return err
+	}
+	if err := ensureSQLiteColumn(db, "licenses", "plan_id", "TEXT"); err != nil {
+		return err
+	}
+	if err := ensureSQLiteColumn(db, "licenses", "entitlements", "TEXT"); err != nil {
 		return err
 	}
 	if err := ensureSQLiteColumn(db, "licenses", "check_mode", "TEXT NOT NULL DEFAULT 'yearly'"); err != nil {
@@ -304,6 +317,13 @@ func nullTime(t time.Time) any {
 	return t.UTC()
 }
 
+func nullString(s string) any {
+	if s == "" {
+		return nil
+	}
+	return s
+}
+
 func scanClientRow(scanner rowScanner) (*Client, error) {
 	var c Client
 	var createdAt, updatedAt sqliteTimeValue
@@ -333,6 +353,7 @@ func scanClientRow(scanner rowScanner) (*Client, error) {
 
 func scanLicenseRow(scanner rowScanner) (*License, error) {
 	var lic License
+	var productID, planID sql.NullString
 	var revokedAt, lastActivated sqliteNullTime
 	var revokeReason sql.NullString
 	var issuedAt, expiresAt sqliteTimeValue
@@ -340,10 +361,13 @@ func scanLicenseRow(scanner rowScanner) (*License, error) {
 	var checkMode sql.NullString
 	var checkInterval sql.NullInt64
 	var nextCheck, lastCheck sqliteNullTime
+	var entitlementsJSON sql.NullString
 	if err := scanner.Scan(
 		&lic.ID,
 		&lic.ClientID,
 		&lic.Email,
+		&productID,
+		&planID,
 		&lic.PlanSlug,
 		&lic.LicenseKey,
 		&isRevoked,
@@ -359,6 +383,7 @@ func scanLicenseRow(scanner rowScanner) (*License, error) {
 		&checkInterval,
 		&nextCheck,
 		&lastCheck,
+		&entitlementsJSON,
 	); err != nil {
 		return nil, err
 	}
@@ -366,6 +391,12 @@ func scanLicenseRow(scanner rowScanner) (*License, error) {
 	lic.IsActivated = isActivated == 1
 	lic.IssuedAt = issuedAt.Time
 	lic.ExpiresAt = expiresAt.Time
+	if productID.Valid {
+		lic.ProductID = productID.String
+	}
+	if planID.Valid {
+		lic.PlanID = planID.String
+	}
 	if revokedAt.Valid {
 		lic.RevokedAt = revokedAt.Time
 	}
@@ -384,6 +415,12 @@ func scanLicenseRow(scanner rowScanner) (*License, error) {
 	}
 	if lastCheck.Valid {
 		lic.LastCheckAt = lastCheck.Time
+	}
+	if entitlementsJSON.Valid && entitlementsJSON.String != "" {
+		var entitlements LicenseEntitlements
+		if err := json.Unmarshal([]byte(entitlementsJSON.String), &entitlements); err == nil {
+			lic.Entitlements = &entitlements
+		}
 	}
 	lic.Devices = make(map[string]*LicenseDevice)
 	return &lic, nil
@@ -496,15 +533,25 @@ func (s *SQLiteStorage) SaveLicense(ctx context.Context, license *License) error
 		return fmt.Errorf("license is nil")
 	}
 	return s.withTx(ctx, func(tx squealx.SQLTx) error {
+		var entitlementsJSON sql.NullString
+		if license.Entitlements != nil {
+			data, err := json.Marshal(license.Entitlements)
+			if err != nil {
+				return fmt.Errorf("failed to marshal entitlements: %w", err)
+			}
+			entitlementsJSON = sql.NullString{String: string(data), Valid: true}
+		}
 		query := `INSERT INTO licenses (
-			id, client_id, email, plan_slug, license_key, license_key_norm, is_revoked, revoked_at,
+			id, client_id, email, product_id, plan_id, plan_slug, license_key, license_key_norm, is_revoked, revoked_at,
 			revoke_reason, is_activated, issued_at, last_activated_at, expires_at, current_activations, max_devices,
-			check_mode, check_interval_seconds, next_check_at, last_check_at)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+			check_mode, check_interval_seconds, next_check_at, last_check_at, entitlements)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 		_, err := tx.ExecContext(ctx, query,
 			license.ID,
 			license.ClientID,
 			license.Email,
+			nullString(license.ProductID),
+			nullString(license.PlanID),
 			license.PlanSlug,
 			license.LicenseKey,
 			normalizeLicenseKey(license.LicenseKey),
@@ -521,6 +568,7 @@ func (s *SQLiteStorage) SaveLicense(ctx context.Context, license *License) error
 			license.CheckIntervalSecs,
 			nullTime(license.NextCheckAt),
 			nullTime(license.LastCheckAt),
+			entitlementsJSON,
 		)
 		if err != nil {
 			if isSQLiteUniqueErr(err) {
@@ -540,15 +588,25 @@ func (s *SQLiteStorage) UpdateLicense(ctx context.Context, license *License) err
 		return fmt.Errorf("license is nil")
 	}
 	return s.withTx(ctx, func(tx squealx.SQLTx) error {
+		var entitlementsJSON sql.NullString
+		if license.Entitlements != nil {
+			data, err := json.Marshal(license.Entitlements)
+			if err != nil {
+				return fmt.Errorf("failed to marshal entitlements: %w", err)
+			}
+			entitlementsJSON = sql.NullString{String: string(data), Valid: true}
+		}
 		query := `UPDATE licenses SET
-			client_id = ?, email = ?, plan_slug = ?, license_key = ?, license_key_norm = ?,
+			client_id = ?, email = ?, product_id = ?, plan_id = ?, plan_slug = ?, license_key = ?, license_key_norm = ?,
 	            is_revoked = ?, revoked_at = ?, revoke_reason = ?, is_activated = ?, issued_at = ?,
 	            last_activated_at = ?, expires_at = ?, current_activations = ?, max_devices = ?,
-	            check_mode = ?, check_interval_seconds = ?, next_check_at = ?, last_check_at = ?
+	            check_mode = ?, check_interval_seconds = ?, next_check_at = ?, last_check_at = ?, entitlements = ?
 	            WHERE id = ?`
 		res, err := tx.ExecContext(ctx, query,
 			license.ClientID,
 			license.Email,
+			nullString(license.ProductID),
+			nullString(license.PlanID),
 			license.PlanSlug,
 			license.LicenseKey,
 			normalizeLicenseKey(license.LicenseKey),
@@ -565,6 +623,7 @@ func (s *SQLiteStorage) UpdateLicense(ctx context.Context, license *License) err
 			license.CheckIntervalSecs,
 			nullTime(license.NextCheckAt),
 			nullTime(license.LastCheckAt),
+			entitlementsJSON,
 			license.ID,
 		)
 		if err != nil {
@@ -585,9 +644,9 @@ func (s *SQLiteStorage) UpdateLicense(ctx context.Context, license *License) err
 }
 
 func (s *SQLiteStorage) GetLicense(ctx context.Context, licenseID string) (*License, error) {
-	query := `SELECT id, client_id, email, plan_slug, license_key, is_revoked, revoked_at,
+	query := `SELECT id, client_id, email, product_id, plan_id, plan_slug, license_key, is_revoked, revoked_at,
 		revoke_reason, is_activated, issued_at, last_activated_at, expires_at,
-		current_activations, max_devices, check_mode, check_interval_seconds, next_check_at, last_check_at
+		current_activations, max_devices, check_mode, check_interval_seconds, next_check_at, last_check_at, entitlements
 		FROM licenses WHERE id = ?`
 	row := s.db.QueryRowContext(ctx, query, licenseID)
 	license, err := scanLicenseRow(row)
@@ -607,9 +666,9 @@ func (s *SQLiteStorage) GetLicense(ctx context.Context, licenseID string) (*Lice
 }
 
 func (s *SQLiteStorage) GetLicenseByKey(ctx context.Context, licenseKey string) (*License, error) {
-	query := `SELECT id, client_id, email, plan_slug, license_key, is_revoked, revoked_at,
+	query := `SELECT id, client_id, email, product_id, plan_id, plan_slug, license_key, is_revoked, revoked_at,
 		revoke_reason, is_activated, issued_at, last_activated_at, expires_at,
-		current_activations, max_devices, check_mode, check_interval_seconds, next_check_at, last_check_at
+		current_activations, max_devices, check_mode, check_interval_seconds, next_check_at, last_check_at, entitlements
 		FROM licenses WHERE license_key_norm = ?`
 	row := s.db.QueryRowContext(ctx, query, normalizeLicenseKey(licenseKey))
 	license, err := scanLicenseRow(row)
@@ -629,9 +688,9 @@ func (s *SQLiteStorage) GetLicenseByKey(ctx context.Context, licenseKey string) 
 }
 
 func (s *SQLiteStorage) ListLicenses(ctx context.Context) ([]*License, error) {
-	query := `SELECT id, client_id, email, plan_slug, license_key, is_revoked, revoked_at,
+	query := `SELECT id, client_id, email, product_id, plan_id, plan_slug, license_key, is_revoked, revoked_at,
 		revoke_reason, is_activated, issued_at, last_activated_at, expires_at,
-		current_activations, max_devices, check_mode, check_interval_seconds, next_check_at, last_check_at
+		current_activations, max_devices, check_mode, check_interval_seconds, next_check_at, last_check_at, entitlements
 		FROM licenses ORDER BY issued_at DESC`
 	rows, err := s.db.QueryContext(ctx, query)
 	if err != nil {

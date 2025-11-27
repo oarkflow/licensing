@@ -9,6 +9,7 @@ This guide provides comprehensive documentation for integrating the Licensing sy
 3. [SDK Installation](#sdk-installation)
 4. [Configuration](#configuration)
 5. [Core Concepts](#core-concepts)
+   - [Products, Plans, and Features](#products-plans-and-features)
 6. [License Lifecycle](#license-lifecycle)
 7. [API Reference](#api-reference)
 8. [Error Handling](#error-handling)
@@ -254,6 +255,80 @@ A companion checksum file (`.license.dat.chk`) prevents tampering:
 }
 ```
 
+### Products, Plans, and Features
+
+The licensing system supports configurable products with hierarchical plans and features:
+
+```
+Product (e.g., "SecretR")
+├── Plan: Basic
+│   ├── Feature: GUI
+│   │   ├── Scope: view (allow)
+│   │   └── Scope: list (allow)
+│   └── Feature: CLI
+│       └── Scope: list (allow)
+├── Plan: Professional
+│   ├── Feature: GUI
+│   │   ├── Scope: view (allow)
+│   │   ├── Scope: list (allow)
+│   │   ├── Scope: create (allow)
+│   │   └── Scope: update (allow)
+│   └── Feature: CLI (all scopes)
+└── Plan: Enterprise
+    ├── Feature: GUI (all scopes)
+    ├── Feature: CLI (all scopes)
+    └── Feature: API (all scopes)
+```
+
+#### Key Concepts
+
+- **Product**: A software application or service (e.g., "SecretR")
+- **Plan**: A pricing tier within a product (e.g., "Basic", "Professional", "Enterprise")
+- **Feature**: A capability or module within a product (e.g., "GUI", "CLI", "API")
+- **Scope**: A specific operation within a feature (e.g., "list", "create", "update", "delete")
+- **Permission**: Controls access to a scope:
+  - `allow`: Full access to the scope
+  - `deny`: No access to the scope
+  - `limit`: Access with restrictions (uses the `limit` field)
+
+#### License Entitlements
+
+When a license is activated, it includes entitlements based on the associated plan:
+
+```json
+{
+  "entitlements": {
+    "product_id": "prod_123",
+    "product_slug": "secretr",
+    "plan_id": "plan_456",
+    "plan_slug": "professional",
+    "features": {
+      "gui": {
+        "feature_id": "feat_001",
+        "feature_slug": "gui",
+        "category": "interface",
+        "enabled": true,
+        "scopes": {
+          "view": { "scope_id": "s1", "scope_slug": "view", "permission": "allow" },
+          "list": { "scope_id": "s2", "scope_slug": "list", "permission": "allow" },
+          "create": { "scope_id": "s3", "scope_slug": "create", "permission": "allow" },
+          "update": { "scope_id": "s4", "scope_slug": "update", "permission": "allow" }
+        }
+      },
+      "cli": {
+        "feature_id": "feat_002",
+        "feature_slug": "cli",
+        "enabled": true,
+        "scopes": {
+          "list": { "scope_id": "s5", "scope_slug": "list", "permission": "allow" },
+          "create": { "scope_id": "s6", "scope_slug": "create", "permission": "allow" }
+        }
+      }
+    }
+  }
+}
+```
+
 ---
 
 ## License Lifecycle
@@ -422,6 +497,130 @@ function scheduleNextCheck(license: LicenseData) {
 }
 ```
 
+### 5. Feature & Scope Checking
+
+When a license is associated with a product and plan, you can use the entitlements to perform fine-grained feature access checks.
+
+#### Go
+
+```go
+license, err := client.License()
+if err != nil {
+    log.Fatal(err)
+}
+
+// Check if a feature is enabled
+if license.HasFeature("gui") {
+    fmt.Println("GUI access is enabled")
+}
+
+// Check a specific scope within a feature
+if license.HasScope("gui", "create") {
+    fmt.Println("Can create via GUI")
+}
+
+// Check with limit information
+allowed, limit := license.CanPerform("api", "requests")
+if allowed {
+    if limit > 0 {
+        fmt.Printf("API requests allowed (max %d per month)\n", limit)
+    } else {
+        fmt.Println("Unlimited API requests")
+    }
+}
+
+// Get full feature details
+if feature, ok := license.GetFeature("cli"); ok {
+    fmt.Printf("CLI feature: %s (category: %s)\n", feature.FeatureSlug, feature.Category)
+    for scopeSlug, scope := range feature.Scopes {
+        fmt.Printf("  - %s: %s\n", scopeSlug, scope.Permission)
+    }
+}
+```
+
+#### TypeScript
+
+```typescript
+import {
+    decryptStoredLicense,
+    hasFeature,
+    hasScope,
+    canPerform,
+    getFeature
+} from '@oarkflow/licensing-client';
+
+const { license } = decryptStoredLicense(stored);
+
+// Check if a feature is enabled
+if (hasFeature(license, 'gui')) {
+    console.log('GUI access is enabled');
+}
+
+// Check a specific scope within a feature
+if (hasScope(license, 'gui', 'create')) {
+    console.log('Can create via GUI');
+}
+
+// Check with limit information
+const { allowed, limit } = canPerform(license, 'api', 'requests');
+if (allowed) {
+    if (limit > 0) {
+        console.log(`API requests allowed (max ${limit} per month)`);
+    } else {
+        console.log('Unlimited API requests');
+    }
+}
+
+// Get full feature details
+const feature = getFeature(license, 'cli');
+if (feature) {
+    console.log(`CLI feature: ${feature.feature_slug}`);
+    if (feature.scopes) {
+        for (const [scopeSlug, scope] of Object.entries(feature.scopes)) {
+            console.log(`  - ${scopeSlug}: ${scope.permission}`);
+        }
+    }
+}
+```
+
+#### PHP
+
+```php
+use Oarkflow\Licensing\License;
+
+$result = License::decrypt($stored);
+$license = $result['license'];
+
+// Check if a feature is enabled
+if (License::hasFeature($license, 'gui')) {
+    echo "GUI access is enabled\n";
+}
+
+// Check a specific scope within a feature
+if (License::hasScope($license, 'gui', 'create')) {
+    echo "Can create via GUI\n";
+}
+
+// Check with limit information
+$check = License::canPerform($license, 'api', 'requests');
+if ($check['allowed']) {
+    if ($check['limit'] > 0) {
+        echo "API requests allowed (max {$check['limit']} per month)\n";
+    } else {
+        echo "Unlimited API requests\n";
+    }
+}
+
+// Get full feature details
+$feature = License::getFeature($license, 'cli');
+if ($feature !== null) {
+    echo "CLI feature: {$feature['feature_slug']}\n";
+    foreach ($feature['scopes'] ?? [] as $scopeSlug => $scope) {
+        echo "  - {$scopeSlug}: {$scope['permission']}\n";
+    }
+}
+```
+
 ---
 
 ## API Reference
@@ -445,29 +644,59 @@ type Config struct {
 
 // LicenseData contains decrypted license information
 type LicenseData struct {
-    ID                 string          // Unique license identifier
-    ClientID           string          // Owner client ID
-    SubjectClientID    string          // Runtime client ID
-    Email              string          // License owner email
-    PlanSlug           string          // Plan identifier for feature gating
-    Relationship       string          // "direct" or "delegated"
-    GrantedBy          string          // Granting client (for delegated)
-    LicenseKey         string          // The license key
-    IssuedAt           time.Time       // Issue timestamp
-    ExpiresAt          time.Time       // Expiration timestamp
-    LastActivatedAt    time.Time       // Last activation time
-    CurrentActivations int             // Current activation count
-    MaxDevices         int             // Maximum allowed devices
-    DeviceCount        int             // Current device count
-    IsRevoked          bool            // Revocation status
-    RevokedAt          time.Time       // Revocation timestamp
-    RevokeReason       string          // Revocation reason
-    Devices            []LicenseDevice // Registered devices
-    DeviceFingerprint  string          // Current device fingerprint
-    CheckMode          string          // Verification schedule
-    CheckIntervalSecs  int64           // Custom interval (seconds)
-    NextCheckAt        time.Time       // Next scheduled check
-    LastCheckAt        time.Time       // Last check timestamp
+    ID                 string              // Unique license identifier
+    ClientID           string              // Owner client ID
+    SubjectClientID    string              // Runtime client ID
+    Email              string              // License owner email
+    ProductID          string              // Product ID (if assigned)
+    PlanID             string              // Plan ID (if assigned)
+    PlanSlug           string              // Plan identifier for feature gating
+    Relationship       string              // "direct" or "delegated"
+    GrantedBy          string              // Granting client (for delegated)
+    LicenseKey         string              // The license key
+    IssuedAt           time.Time           // Issue timestamp
+    ExpiresAt          time.Time           // Expiration timestamp
+    LastActivatedAt    time.Time           // Last activation time
+    CurrentActivations int                 // Current activation count
+    MaxDevices         int                 // Maximum allowed devices
+    DeviceCount        int                 // Current device count
+    IsRevoked          bool                // Revocation status
+    RevokedAt          time.Time           // Revocation timestamp
+    RevokeReason       string              // Revocation reason
+    Devices            []LicenseDevice     // Registered devices
+    DeviceFingerprint  string              // Current device fingerprint
+    CheckMode          string              // Verification schedule
+    CheckIntervalSecs  int64               // Custom interval (seconds)
+    NextCheckAt        time.Time           // Next scheduled check
+    LastCheckAt        time.Time           // Last check timestamp
+    Entitlements       *LicenseEntitlements // Feature entitlements (if product/plan assigned)
+}
+
+// LicenseEntitlements contains feature grants from the plan
+type LicenseEntitlements struct {
+    ProductID   string                     // Product identifier
+    ProductSlug string                     // Product slug
+    PlanID      string                     // Plan identifier
+    PlanSlug    string                     // Plan slug
+    Features    map[string]FeatureGrant    // Feature grants by slug
+}
+
+// FeatureGrant represents a feature enabled for a license
+type FeatureGrant struct {
+    FeatureID   string                  // Feature identifier
+    FeatureSlug string                  // Feature slug
+    Category    string                  // Feature category
+    Enabled     bool                    // Is feature enabled
+    Scopes      map[string]ScopeGrant   // Scope grants by slug
+}
+
+// ScopeGrant represents a scope permission
+type ScopeGrant struct {
+    ScopeID    string                  // Scope identifier
+    ScopeSlug  string                  // Scope slug
+    Permission ScopePermission         // "allow", "deny", or "limit"
+    Limit      int                     // Limit value (when Permission is "limit")
+    Metadata   map[string]interface{}  // Additional scope metadata
 }
 ```
 
@@ -494,6 +723,23 @@ func (c *Client) StartBackgroundVerification(ctx context.Context)
 
 // IsValid returns true if the license is currently valid
 func (c *Client) IsValid() bool
+
+// Feature/Scope checking methods on LicenseData:
+
+// HasFeature checks if the license has access to a feature
+func (ld *LicenseData) HasFeature(featureSlug string) bool
+
+// GetFeature returns the feature grant for a feature slug
+func (ld *LicenseData) GetFeature(featureSlug string) (FeatureGrant, bool)
+
+// HasScope checks if the license has access to a scope within a feature
+func (ld *LicenseData) HasScope(featureSlug, scopeSlug string) bool
+
+// GetScope returns the scope grant for a feature and scope slug
+func (ld *LicenseData) GetScope(featureSlug, scopeSlug string) (ScopeGrant, bool)
+
+// CanPerform checks if an operation is allowed and returns any limit
+func (ld *LicenseData) CanPerform(featureSlug, scopeSlug string) (allowed bool, limit int)
 ```
 
 ### TypeScript SDK
@@ -512,6 +758,8 @@ interface LicenseData {
     client_id: string;
     subject_client_id: string;
     email: string;
+    product_id?: string;
+    plan_id?: string;
     plan_slug: string;
     relationship: string;
     granted_by?: string;
@@ -531,6 +779,33 @@ interface LicenseData {
     check_interval_seconds: number;
     next_check_at: string;
     last_check_at: string;
+    entitlements?: LicenseEntitlements;
+}
+
+type ScopePermission = 'allow' | 'deny' | 'limit';
+
+interface ScopeGrant {
+    scope_id: string;
+    scope_slug: string;
+    permission: ScopePermission;
+    limit?: number;
+    metadata?: Record<string, unknown>;
+}
+
+interface FeatureGrant {
+    feature_id: string;
+    feature_slug: string;
+    category?: string;
+    enabled: boolean;
+    scopes?: Record<string, ScopeGrant>;
+}
+
+interface LicenseEntitlements {
+    product_id: string;
+    product_slug: string;
+    plan_id: string;
+    plan_slug: string;
+    features: Record<string, FeatureGrant>;
 }
 
 interface StoredLicenseFile {
@@ -556,6 +831,13 @@ async function loadLicenseFile(path: string): Promise<StoredLicenseFile>
 
 // Decrypt a stored license and verify its signature
 function decryptStoredLicense(stored: StoredLicenseFile): DecryptedLicense
+
+// Feature/Scope checking functions
+function hasFeature(license: LicenseData, featureSlug: string): boolean
+function getFeature(license: LicenseData, featureSlug: string): FeatureGrant | undefined
+function hasScope(license: LicenseData, featureSlug: string, scopeSlug: string): boolean
+function getScope(license: LicenseData, featureSlug: string, scopeSlug: string): ScopeGrant | undefined
+function canPerform(license: LicenseData, featureSlug: string, scopeSlug: string): { allowed: boolean; limit: number }
 
 // Low-level crypto functions
 function deriveTransportKey(fingerprint: string, nonce: Buffer): Buffer
@@ -586,6 +868,32 @@ final class License
      * @throws RuntimeException If decryption or verification fails
      */
     public static function decrypt(array $stored): array
+
+    /**
+     * Check if the license has access to a specific feature.
+     */
+    public static function hasFeature(array $license, string $featureSlug): bool
+
+    /**
+     * Get a feature grant from the license.
+     */
+    public static function getFeature(array $license, string $featureSlug): ?array
+
+    /**
+     * Check if the license has access to a specific scope within a feature.
+     */
+    public static function hasScope(array $license, string $featureSlug, string $scopeSlug): bool
+
+    /**
+     * Get a scope grant from the license.
+     */
+    public static function getScope(array $license, string $featureSlug, string $scopeSlug): ?array
+
+    /**
+     * Check if an operation is allowed and return any limit.
+     * @return array{allowed: bool, limit: int}
+     */
+    public static function canPerform(array $license, string $featureSlug, string $scopeSlug): array
 }
 
 final class Crypto

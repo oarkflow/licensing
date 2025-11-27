@@ -1,0 +1,18 @@
+{
+    "name": "@oarkflow/licensing-example-basic",
+    "version": "1.0.0",
+    "description": "Basic example for TypeScript Licensing SDK",
+    "type": "module",
+    "scripts": {
+        "start": "npx tsx index.ts",
+        "build": "tsc"
+    },
+    "dependencies": {
+        "@oarkflow/licensing": "file:../.."
+    },
+    "devDependencies": {
+        "@types/node": "^20.0.0",
+        "tsx": "^4.0.0",
+        "typescript": "^5.0.0"
+    }
+}

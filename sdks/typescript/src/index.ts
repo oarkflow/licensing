@@ -1,4 +1,14 @@
-export { ActivationPayload, LicenseData, LicensingClientOptions } from "./types.js";
+export {
+    ActivationPayload,
+    CredentialsFile,
+    LicenseData,
+    LicenseDevice,
+    LicenseEntitlements,
+    FeatureGrant,
+    ScopeGrant,
+    ScopePermission,
+    LicensingClientOptions
+} from "./types.js";
 export * from "./license.js";
 
 import { LicensingClientOptions } from "./types.js";

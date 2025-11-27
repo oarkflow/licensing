@@ -105,6 +105,19 @@ if (isFeatureEnabled($license, 'api')) {
 }
 ```
 
+## Examples
+
+See the [examples](examples/) directory for complete working examples:
+
+- **[basic](examples/basic/)** - Load and verify license files, check features and scopes
+
+To run an example:
+
+```bash
+cd examples/basic
+php index.php --license-file ~/.licensing-example/.license.dat
+```
+
 ## API Reference
 
 ### Classes

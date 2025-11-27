@@ -23,7 +23,9 @@ type License struct {
 	ID                 string                      `json:"id"`
 	ClientID           string                      `json:"client_id"`
 	Email              string                      `json:"email"`
+	ProductID          string                      `json:"product_id,omitempty"`
 	PlanSlug           string                      `json:"plan_slug"`
+	PlanID             string                      `json:"plan_id,omitempty"`
 	LicenseKey         string                      `json:"license_key"`
 	IsRevoked          bool                        `json:"is_revoked"`
 	RevokedAt          time.Time                   `json:"revoked_at,omitempty"`
@@ -41,6 +43,7 @@ type License struct {
 	CheckIntervalSecs  int64                       `json:"check_interval_seconds,omitempty"`
 	NextCheckAt        time.Time                   `json:"next_check_at,omitempty"`
 	LastCheckAt        time.Time                   `json:"last_check_at,omitempty"`
+	Entitlements       *LicenseEntitlements        `json:"entitlements,omitempty"`
 }
 
 type LicenseCheckMode string
@@ -256,6 +259,8 @@ type banClientRequest struct {
 
 type createLicenseRequest struct {
 	ClientID             string `json:"client_id"`
+	ProductID            string `json:"product_id,omitempty"`
+	PlanID               string `json:"plan_id,omitempty"`
 	DurationDays         int    `json:"duration_days"`
 	MaxDevices           int    `json:"max_devices"`
 	CheckMode            string `json:"check_mode,omitempty"`

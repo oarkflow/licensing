@@ -32,11 +32,10 @@ export function decryptAesGcm(encrypted: Buffer, nonce: Buffer, key: Buffer): Bu
 export function verifySignature(payload: Buffer, signature: Buffer, publicKey: KeyLike): boolean {
     try {
         return verifyRSA("sha256", payload, {
-            key: publicKey,
+            key: publicKey as Parameters<typeof verifyRSA>[2] extends { key: infer K } ? K : never,
             padding: constants.RSA_PKCS1_PSS_PADDING,
             saltLength: constants.RSA_PSS_SALTLEN_AUTO,
-            mgf1Hash: "sha256",
-        }, signature);
+        } as Parameters<typeof verifyRSA>[2], signature);
     } catch {
         return false;
     }

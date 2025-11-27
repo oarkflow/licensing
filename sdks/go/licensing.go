@@ -54,6 +54,21 @@ type (
 
 	// ActivationResponse is returned by the licensing server.
 	ActivationResponse = client.ActivationResponse
+
+	// LicenseEntitlements contains all features and scopes granted by a license.
+	LicenseEntitlements = client.LicenseEntitlements
+
+	// FeatureGrant represents a feature enabled for a license.
+	FeatureGrant = client.FeatureGrant
+
+	// ScopeGrant represents a scope permission granted for a feature.
+	ScopeGrant = client.ScopeGrant
+
+	// ScopePermission defines the permission level for a scope.
+	ScopePermission = client.ScopePermission
+
+	// CredentialsFile represents a JSON file containing license activation credentials.
+	CredentialsFile = client.CredentialsFile
 )
 
 // Re-export constants.
@@ -69,6 +84,15 @@ const (
 
 	// DefaultServerURL is the default licensing server URL.
 	DefaultServerURL = client.DefaultServerURL
+
+	// ScopePermissionAllow indicates the scope action is allowed.
+	ScopePermissionAllow = client.ScopePermissionAllow
+
+	// ScopePermissionDeny indicates the scope action is denied.
+	ScopePermissionDeny = client.ScopePermissionDeny
+
+	// ScopePermissionLimit indicates the scope action is allowed with limits.
+	ScopePermissionLimit = client.ScopePermissionLimit
 )
 
 // Re-export errors.
@@ -80,4 +104,10 @@ var (
 // NewClient creates a new licensing client with the given configuration.
 func NewClient(cfg Config) (*Client, error) {
 	return client.New(cfg)
+}
+
+// LoadCredentialsFile loads license activation credentials from a JSON file.
+// The file should contain: {"email": "...", "client_id": "...", "license_key": "..."}
+func LoadCredentialsFile(path string) (*CredentialsFile, error) {
+	return client.LoadCredentialsFile(path)
 }

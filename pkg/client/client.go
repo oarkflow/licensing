@@ -120,29 +120,119 @@ type StoredLicense struct {
 
 // LicenseData is the decrypted license information consumed by applications.
 type LicenseData struct {
-	ID                 string          `json:"id"`
-	ClientID           string          `json:"client_id"`
-	SubjectClientID    string          `json:"subject_client_id"`
-	Email              string          `json:"email"`
-	PlanSlug           string          `json:"plan_slug"`
-	Relationship       string          `json:"relationship"`
-	GrantedBy          string          `json:"granted_by,omitempty"`
-	LicenseKey         string          `json:"license_key"`
-	IssuedAt           time.Time       `json:"issued_at"`
-	ExpiresAt          time.Time       `json:"expires_at"`
-	LastActivatedAt    time.Time       `json:"last_activated_at"`
-	CurrentActivations int             `json:"current_activations"`
-	MaxDevices         int             `json:"max_devices"`
-	DeviceCount        int             `json:"device_count"`
-	IsRevoked          bool            `json:"is_revoked"`
-	RevokedAt          time.Time       `json:"revoked_at"`
-	RevokeReason       string          `json:"revoke_reason"`
-	Devices            []LicenseDevice `json:"devices"`
-	DeviceFingerprint  string          `json:"-"`
-	CheckMode          string          `json:"check_mode"`
-	CheckIntervalSecs  int64           `json:"check_interval_seconds"`
-	NextCheckAt        time.Time       `json:"next_check_at"`
-	LastCheckAt        time.Time       `json:"last_check_at"`
+	ID                 string               `json:"id"`
+	ClientID           string               `json:"client_id"`
+	SubjectClientID    string               `json:"subject_client_id"`
+	Email              string               `json:"email"`
+	ProductID          string               `json:"product_id,omitempty"`
+	PlanID             string               `json:"plan_id,omitempty"`
+	PlanSlug           string               `json:"plan_slug"`
+	Relationship       string               `json:"relationship"`
+	GrantedBy          string               `json:"granted_by,omitempty"`
+	LicenseKey         string               `json:"license_key"`
+	IssuedAt           time.Time            `json:"issued_at"`
+	ExpiresAt          time.Time            `json:"expires_at"`
+	LastActivatedAt    time.Time            `json:"last_activated_at"`
+	CurrentActivations int                  `json:"current_activations"`
+	MaxDevices         int                  `json:"max_devices"`
+	DeviceCount        int                  `json:"device_count"`
+	IsRevoked          bool                 `json:"is_revoked"`
+	RevokedAt          time.Time            `json:"revoked_at"`
+	RevokeReason       string               `json:"revoke_reason"`
+	Devices            []LicenseDevice      `json:"devices"`
+	DeviceFingerprint  string               `json:"-"`
+	CheckMode          string               `json:"check_mode"`
+	CheckIntervalSecs  int64                `json:"check_interval_seconds"`
+	NextCheckAt        time.Time            `json:"next_check_at"`
+	LastCheckAt        time.Time            `json:"last_check_at"`
+	Entitlements       *LicenseEntitlements `json:"entitlements,omitempty"`
+}
+
+// ScopePermission defines the permission level for a scope.
+type ScopePermission string
+
+const (
+	ScopePermissionAllow ScopePermission = "allow"
+	ScopePermissionDeny  ScopePermission = "deny"
+	ScopePermissionLimit ScopePermission = "limit"
+)
+
+// LicenseEntitlements contains all features and scopes granted by a license.
+type LicenseEntitlements struct {
+	ProductID   string                  `json:"product_id"`
+	ProductSlug string                  `json:"product_slug"`
+	PlanID      string                  `json:"plan_id"`
+	PlanSlug    string                  `json:"plan_slug"`
+	Features    map[string]FeatureGrant `json:"features"`
+}
+
+// FeatureGrant represents a feature enabled for a license.
+type FeatureGrant struct {
+	FeatureID   string                `json:"feature_id"`
+	FeatureSlug string                `json:"feature_slug"`
+	Category    string                `json:"category,omitempty"`
+	Enabled     bool                  `json:"enabled"`
+	Scopes      map[string]ScopeGrant `json:"scopes,omitempty"`
+}
+
+// ScopeGrant represents a scope permission granted for a feature.
+type ScopeGrant struct {
+	ScopeID    string                 `json:"scope_id"`
+	ScopeSlug  string                 `json:"scope_slug"`
+	Permission ScopePermission        `json:"permission"`
+	Limit      int                    `json:"limit,omitempty"`
+	Metadata   map[string]interface{} `json:"metadata,omitempty"`
+}
+
+// HasFeature checks if the license has access to a specific feature by slug.
+func (ld *LicenseData) HasFeature(featureSlug string) bool {
+	if ld.Entitlements == nil || ld.Entitlements.Features == nil {
+		return false
+	}
+	feature, exists := ld.Entitlements.Features[featureSlug]
+	return exists && feature.Enabled
+}
+
+// GetFeature returns the feature grant for a given feature slug.
+func (ld *LicenseData) GetFeature(featureSlug string) (FeatureGrant, bool) {
+	if ld.Entitlements == nil || ld.Entitlements.Features == nil {
+		return FeatureGrant{}, false
+	}
+	feature, exists := ld.Entitlements.Features[featureSlug]
+	return feature, exists && feature.Enabled
+}
+
+// HasScope checks if the license has access to a specific scope within a feature.
+func (ld *LicenseData) HasScope(featureSlug, scopeSlug string) bool {
+	feature, hasFeature := ld.GetFeature(featureSlug)
+	if !hasFeature {
+		return false
+	}
+	scope, exists := feature.Scopes[scopeSlug]
+	return exists && scope.Permission != ScopePermissionDeny
+}
+
+// GetScope returns the scope grant for a given feature and scope slug.
+func (ld *LicenseData) GetScope(featureSlug, scopeSlug string) (ScopeGrant, bool) {
+	feature, hasFeature := ld.GetFeature(featureSlug)
+	if !hasFeature {
+		return ScopeGrant{}, false
+	}
+	scope, exists := feature.Scopes[scopeSlug]
+	return scope, exists && scope.Permission != ScopePermissionDeny
+}
+
+// CanPerform checks if the license allows performing an operation (scope) on a feature.
+// Returns true if the scope is allowed, along with any limit.
+func (ld *LicenseData) CanPerform(featureSlug, scopeSlug string) (allowed bool, limit int) {
+	scope, hasScope := ld.GetScope(featureSlug, scopeSlug)
+	if !hasScope {
+		return false, 0
+	}
+	if scope.Permission == ScopePermissionDeny {
+		return false, 0
+	}
+	return true, scope.Limit
 }
 
 // LicenseDevice represents device metadata tied to a license.
@@ -150,6 +240,39 @@ type LicenseDevice struct {
 	Fingerprint string    `json:"fingerprint"`
 	ActivatedAt time.Time `json:"activated_at"`
 	LastSeenAt  time.Time `json:"last_seen_at"`
+}
+
+// CredentialsFile represents a JSON file containing license activation credentials.
+type CredentialsFile struct {
+	Email      string `json:"email"`
+	ClientID   string `json:"client_id"`
+	LicenseKey string `json:"license_key"`
+}
+
+// LoadCredentialsFile loads license activation credentials from a JSON file.
+// The file should contain: {"email": "...", "client_id": "...", "license_key": "..."}
+func LoadCredentialsFile(path string) (*CredentialsFile, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read credentials file: %w", err)
+	}
+
+	var creds CredentialsFile
+	if err := json.Unmarshal(data, &creds); err != nil {
+		return nil, fmt.Errorf("failed to parse credentials file: %w", err)
+	}
+
+	if creds.Email == "" {
+		return nil, errors.New("credentials file missing 'email' field")
+	}
+	if creds.ClientID == "" {
+		return nil, errors.New("credentials file missing 'client_id' field")
+	}
+	if creds.LicenseKey == "" {
+		return nil, errors.New("credentials file missing 'license_key' field")
+	}
+
+	return &creds, nil
 }
 
 // New constructs a licensing client using the provided configuration.
