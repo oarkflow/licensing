@@ -1,0 +1,92 @@
+{{template "base" .}}
+
+{{define "content"}}
+<div class="space-y-6">
+    <!-- Page Header -->
+    <div class="md:flex md:items-center md:justify-between">
+        <div class="min-w-0 flex-1">
+            <h2 class="text-2xl font-bold leading-7 text-gray-900 sm:truncate sm:text-3xl sm:tracking-tight">Admin Users
+            </h2>
+            <p class="mt-1 text-sm text-gray-500">Manage administrator accounts for the licensing server.</p>
+        </div>
+        <div class="mt-4 flex md:ml-4 md:mt-0">
+            <a href="/admin/users/new"
+                class="inline-flex items-center rounded-md bg-primary-600 px-3 py-2 text-sm font-semibold text-white shadow-sm hover:bg-primary-500 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary-600">
+                <svg class="-ml-0.5 mr-1.5 h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+                    <path
+                        d="M10.75 4.75a.75.75 0 00-1.5 0v4.5h-4.5a.75.75 0 000 1.5h4.5v4.5a.75.75 0 001.5 0v-4.5h4.5a.75.75 0 000-1.5h-4.5v-4.5z" />
+                </svg>
+                Add User
+            </a>
+        </div>
+    </div>
+
+    <!-- Admin Users Table -->
+    <div class="overflow-hidden bg-white shadow sm:rounded-lg">
+        <table class="min-w-full divide-y divide-gray-200">
+            <thead class="bg-gray-50">
+                <tr>
+                    <th scope="col"
+                        class="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">User</th>
+                    <th scope="col"
+                        class="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">API Keys
+                    </th>
+                    <th scope="col"
+                        class="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">Created
+                    </th>
+                    <th scope="col"
+                        class="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">Updated
+                    </th>
+                    <th scope="col" class="relative px-6 py-3">
+                        <span class="sr-only">Actions</span>
+                    </th>
+                </tr>
+            </thead>
+            <tbody class="divide-y divide-gray-200 bg-white">
+                {{range .Data.Users}}
+                <tr class="hover:bg-gray-50">
+                    <td class="whitespace-nowrap px-6 py-4">
+                        <div class="flex items-center">
+                            <div
+                                class="flex h-10 w-10 items-center justify-center rounded-full bg-primary-100 text-primary-700 font-semibold">
+                                {{slice .Username 0 1 | upper}}
+                            </div>
+                            <div class="ml-4">
+                                <div class="font-medium text-gray-900">{{.Username}}</div>
+                                <div class="text-sm text-gray-500 font-mono">{{truncate .ID 8}}</div>
+                            </div>
+                        </div>
+                    </td>
+                    <td class="whitespace-nowrap px-6 py-4 text-sm text-gray-500">
+                        {{index $.Data.UserKeyCount .ID}} keys
+                    </td>
+                    <td class="whitespace-nowrap px-6 py-4 text-sm text-gray-500">{{formatDate .CreatedAt}}</td>
+                    <td class="whitespace-nowrap px-6 py-4 text-sm text-gray-500">{{formatDate .UpdatedAt}}</td>
+                    <td class="whitespace-nowrap px-6 py-4 text-right text-sm font-medium">
+                        <a href="/admin/users/{{.ID}}" class="text-primary-600 hover:text-primary-900">Edit</a>
+                    </td>
+                </tr>
+                {{else}}
+                <tr>
+                    <td colspan="5" class="px-6 py-12 text-center">
+                        <svg class="mx-auto h-12 w-12 text-gray-400" fill="none" viewBox="0 0 24 24"
+                            stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" />
+                        </svg>
+                        <h3 class="mt-2 text-sm font-semibold text-gray-900">No admin users</h3>
+                        <p class="mt-1 text-sm text-gray-500">Get started by creating a new admin user.</p>
+                        <div class="mt-6">
+                            <a href="/admin/users/new"
+                                class="inline-flex items-center rounded-md bg-primary-600 px-3 py-2 text-sm font-semibold text-white shadow-sm hover:bg-primary-500">
+                                Add User
+                            </a>
+                        </div>
+                    </td>
+                </tr>
+                {{end}}
+            </tbody>
+        </table>
+    </div>
+</div>
+{{end}}

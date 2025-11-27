@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/oarkflow/licensing/pkg/licensing"
+	"github.com/oarkflow/licensing/pkg/licensing/web"
 	"github.com/oarkflow/licensing/pkg/utils"
 )
 
@@ -56,15 +57,12 @@ func main() {
 		log.Printf("🔑 Public key stored at %s", pubPath)
 	}
 	log.Printf("🔏 Signing provider: %s", lm.SigningProviderID())
-	adminUser, bootstrapPassword, bootstrapKey, err := lm.EnsureDefaultAdmin(ctx)
+	adminUsers, err := lm.ListAdminUsers(ctx)
 	if err != nil {
-		log.Fatalf("Failed to initialize admin user: %v", err)
+		log.Fatalf("Failed to inspect admin users: %v", err)
 	}
-	if adminUser != nil {
-		log.Printf("🆕 Default admin user created: %s", adminUser.Username)
-		log.Printf("   Temporary password: %s", bootstrapPassword)
-		log.Printf("   Bootstrap API key: %s", bootstrapKey)
-		log.Printf("   Rotate these credentials immediately after logging in.")
+	if len(adminUsers) == 0 {
+		log.Printf("🚩 No admin users found. Open the /setup page in your browser to create the first administrator.")
 	}
 
 	if shouldBootstrapDemoData() {
@@ -100,6 +98,14 @@ func main() {
 	if err != nil {
 		log.Fatalf("Failed to initialize server: %v", err)
 	}
+
+	// Initialize and attach web UI
+	webServer, err := web.NewWebServer(lm)
+	if err != nil {
+		log.Fatalf("Failed to initialize web UI: %v", err)
+	}
+	server.SetWebHandler(webServer.Handler())
+	log.Printf("🖥️  Web Admin UI available at %s", *httpServer)
 
 	// Start HTTP server
 	if err := server.Start(); err != nil {

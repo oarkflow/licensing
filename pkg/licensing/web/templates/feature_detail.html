@@ -1,0 +1,199 @@
+{{template "base" .}}
+
+{{define "content"}}
+{{$product := .Data.Product}}
+{{$feature := .Data.Feature}}
+<div class="space-y-6">
+    <!-- Breadcrumb -->
+    <nav class="flex" aria-label="Breadcrumb">
+        <ol class="flex items-center space-x-4">
+            <li><a href="/" class="text-gray-400 hover:text-gray-500"><svg class="h-5 w-5" viewBox="0 0 20 20"
+                        fill="currentColor">
+                        <path fill-rule="evenodd"
+                            d="M9.293 2.293a1 1 0 011.414 0l7 7A1 1 0 0117 11h-1v6a1 1 0 01-1 1h-2a1 1 0 01-1-1v-3a1 1 0 00-1-1H9a1 1 0 00-1 1v3a1 1 0 01-1 1H5a1 1 0 01-1-1v-6H3a1 1 0 01-.707-1.707l7-7z"
+                            clip-rule="evenodd" />
+                    </svg></a></li>
+            <li>
+                <div class="flex items-center"><svg class="h-5 w-5 text-gray-300" fill="currentColor"
+                        viewBox="0 0 20 20">
+                        <path d="M5.555 17.776l8-16 .894.448-8 16-.894-.448z" />
+                    </svg><a href="/products"
+                        class="ml-4 text-sm font-medium text-gray-500 hover:text-gray-700">Products</a></div>
+            </li>
+            <li>
+                <div class="flex items-center"><svg class="h-5 w-5 text-gray-300" fill="currentColor"
+                        viewBox="0 0 20 20">
+                        <path d="M5.555 17.776l8-16 .894.448-8 16-.894-.448z" />
+                    </svg><a href="/products/{{$product.ID}}"
+                        class="ml-4 text-sm font-medium text-gray-500 hover:text-gray-700">{{$product.Name}}</a></div>
+            </li>
+            <li>
+                <div class="flex items-center"><svg class="h-5 w-5 text-gray-300" fill="currentColor"
+                        viewBox="0 0 20 20">
+                        <path d="M5.555 17.776l8-16 .894.448-8 16-.894-.448z" />
+                    </svg><span class="ml-4 text-sm font-medium text-gray-500">{{$feature.Name}}</span></div>
+            </li>
+        </ol>
+    </nav>
+
+    <!-- Header -->
+    <div class="md:flex md:items-center md:justify-between">
+        <div class="min-w-0 flex-1">
+            <div class="flex items-center">
+                <div class="flex h-12 w-12 items-center justify-center rounded-lg bg-primary-100 mr-4">
+                    <svg class="h-6 w-6 text-primary-600" fill="none" viewBox="0 0 24 24" stroke-width="1.5"
+                        stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round"
+                            d="M9.813 15.904L9 18.75l-.813-2.846a4.5 4.5 0 00-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 003.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 003.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 00-3.09 3.09z" />
+                    </svg>
+                </div>
+                <div>
+                    <h2 class="text-2xl font-bold leading-7 text-gray-900 sm:truncate sm:text-3xl">{{$feature.Name}}
+                    </h2>
+                    <p class="text-sm text-gray-500 font-mono">{{$feature.Slug}}</p>
+                </div>
+            </div>
+        </div>
+        <div class="mt-4 flex md:ml-4 md:mt-0 gap-3">
+            <a href="/products/{{$product.ID}}/features/{{$feature.ID}}/edit"
+                class="inline-flex items-center rounded-md bg-white px-3 py-2 text-sm font-semibold text-gray-900 shadow-sm ring-1 ring-inset ring-gray-300 hover:bg-gray-50">Edit</a>
+            <form action="/products/{{$product.ID}}/features/{{$feature.ID}}/delete" method="POST"
+                onsubmit="return confirm('Delete this feature?')">
+                <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
+                <button type="submit"
+                    class="inline-flex items-center rounded-md bg-red-600 px-3 py-2 text-sm font-semibold text-white shadow-sm hover:bg-red-500">Delete</button>
+            </form>
+        </div>
+    </div>
+
+    <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        <!-- Feature Info -->
+        <div class="lg:col-span-1">
+            <div class="bg-white shadow rounded-lg p-6">
+                <h3 class="text-lg font-semibold text-gray-900 mb-4">Details</h3>
+                <dl class="space-y-3">
+                    {{if $feature.Category}}
+                    <div>
+                        <dt class="text-sm text-gray-500">Category</dt>
+                        <dd class="mt-1">
+                            <span
+                                class="inline-flex items-center rounded-md bg-blue-50 px-2 py-1 text-sm font-medium text-blue-700 ring-1 ring-inset ring-blue-700/10">
+                                {{$feature.Category}}
+                            </span>
+                        </dd>
+                    </div>
+                    {{end}}
+                    {{if $feature.Description}}
+                    <div>
+                        <dt class="text-sm text-gray-500">Description</dt>
+                        <dd class="mt-1 text-sm text-gray-900">{{$feature.Description}}</dd>
+                    </div>
+                    {{end}}
+                    <div>
+                        <dt class="text-sm text-gray-500">Created</dt>
+                        <dd class="mt-1 text-sm text-gray-900">{{formatDate $feature.CreatedAt}}</dd>
+                    </div>
+                </dl>
+            </div>
+        </div>
+
+        <!-- Scopes -->
+        <div class="lg:col-span-2">
+            <div class="bg-white shadow rounded-lg">
+                <div class="px-6 py-4 border-b border-gray-200 flex items-center justify-between">
+                    <h3 class="text-lg font-semibold text-gray-900">Feature Scopes</h3>
+                    <a href="/products/{{$product.ID}}/features/{{$feature.ID}}/scopes/new"
+                        class="inline-flex items-center text-sm font-medium text-primary-600 hover:text-primary-500">
+                        <svg class="-ml-0.5 mr-1 h-4 w-4" viewBox="0 0 20 20" fill="currentColor">
+                            <path
+                                d="M10.75 4.75a.75.75 0 00-1.5 0v4.5h-4.5a.75.75 0 000 1.5h4.5v4.5a.75.75 0 001.5 0v-4.5h4.5a.75.75 0 000-1.5h-4.5v-4.5z" />
+                        </svg>
+                        Add Scope
+                    </a>
+                </div>
+                {{if .Data.Scopes}}
+                <ul class="divide-y divide-gray-200">
+                    {{range .Data.Scopes}}
+                    <li class="px-6 py-4">
+                        <div class="flex items-center justify-between">
+                            <div>
+                                <p class="font-medium text-gray-900">{{.Name}}</p>
+                                <p class="text-sm text-gray-500 font-mono">{{.Slug}}</p>
+                                {{$scopeDesc := index .Metadata "description"}}
+                                {{if $scopeDesc}}
+                                <p class="text-sm text-gray-500 mt-1">{{$scopeDesc}}</p>
+                                {{end}}
+                            </div>
+                            <div class="flex items-center gap-3">
+                                <a href="/products/{{$product.ID}}/features/{{$feature.ID}}/scopes/{{.ID}}/edit"
+                                    class="text-gray-600 hover:text-gray-900 text-sm">Edit</a>
+                                <form action="/products/{{$product.ID}}/features/{{$feature.ID}}/scopes/{{.ID}}/delete"
+                                    method="POST" onsubmit="return confirm('Delete this scope?')">
+                                    <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
+                                    <button type="submit"
+                                        class="text-red-600 hover:text-red-800 text-sm">Delete</button>
+                                </form>
+                            </div>
+                        </div>
+                    </li>
+                    {{end}}
+                </ul>
+                {{else}}
+                <div class="px-6 py-12 text-center">
+                    <svg class="mx-auto h-12 w-12 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                            d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
+                    </svg>
+                    <h3 class="mt-2 text-sm font-semibold text-gray-900">No scopes</h3>
+                    <p class="mt-1 text-sm text-gray-500">Define scopes to control granular permissions.</p>
+                    <div class="mt-6">
+                        <a href="/products/{{$product.ID}}/features/{{$feature.ID}}/scopes/new"
+                            class="inline-flex items-center rounded-md bg-primary-600 px-3 py-2 text-sm font-semibold text-white shadow-sm hover:bg-primary-500">
+                            Add Scope
+                        </a>
+                    </div>
+                </div>
+                {{end}}
+            </div>
+        </div>
+    </div>
+
+    <!-- Plans using this feature -->
+    {{if .Data.PlansUsingFeature}}
+    <div class="bg-white shadow rounded-lg">
+        <div class="px-6 py-4 border-b border-gray-200">
+            <h3 class="text-lg font-semibold text-gray-900">Plans Using This Feature</h3>
+        </div>
+        <ul class="divide-y divide-gray-200">
+            {{range .Data.PlansUsingFeature}}
+            <li class="px-6 py-4">
+                <div class="flex items-center justify-between">
+                    <div class="flex items-center">
+                        <div>
+                            <a href="/products/{{$product.ID}}/plans/{{.Plan.ID}}"
+                                class="font-medium text-primary-600 hover:text-primary-500">{{.Plan.Name}}</a>
+                            <p class="text-sm text-gray-500">{{formatCurrency .Plan.Price
+                                .Plan.Currency}}/{{.Plan.BillingCycle}}</p>
+                        </div>
+                    </div>
+                    <div>
+                        {{if .Limit}}
+                        <span
+                            class="inline-flex items-center rounded-md bg-blue-50 px-2 py-1 text-xs font-medium text-blue-700 ring-1 ring-inset ring-blue-600/20">
+                            Limit: {{.Limit}}
+                        </span>
+                        {{else}}
+                        <span
+                            class="inline-flex items-center rounded-md bg-green-50 px-2 py-1 text-xs font-medium text-green-700 ring-1 ring-inset ring-green-600/20">
+                            Unlimited
+                        </span>
+                        {{end}}
+                    </div>
+                </div>
+            </li>
+            {{end}}
+        </ul>
+    </div>
+    {{end}}
+</div>
+{{end}}

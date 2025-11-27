@@ -1,0 +1,166 @@
+{{template "base" .}}
+
+{{define "content"}}
+<div class="space-y-6">
+    <!-- Page Header -->
+    <div class="md:flex md:items-center md:justify-between">
+        <div class="min-w-0 flex-1">
+            <h2 class="text-2xl font-bold leading-7 text-gray-900 sm:truncate sm:text-3xl sm:tracking-tight">API Keys
+            </h2>
+            <p class="mt-1 text-sm text-gray-500">Manage API keys for programmatic access to the licensing server.</p>
+        </div>
+        <div class="mt-4 flex md:ml-4 md:mt-0">
+            <a href="/admin/api-keys/new"
+                class="inline-flex items-center rounded-md bg-primary-600 px-3 py-2 text-sm font-semibold text-white shadow-sm hover:bg-primary-500 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary-600">
+                <svg class="-ml-0.5 mr-1.5 h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+                    <path
+                        d="M10.75 4.75a.75.75 0 00-1.5 0v4.5h-4.5a.75.75 0 000 1.5h4.5v4.5a.75.75 0 001.5 0v-4.5h4.5a.75.75 0 000-1.5h-4.5v-4.5z" />
+                </svg>
+                Generate API Key
+            </a>
+        </div>
+    </div>
+
+    <!-- API Keys Table -->
+    <div class="overflow-hidden bg-white shadow sm:rounded-lg">
+        <table class="min-w-full divide-y divide-gray-200">
+            <thead class="bg-gray-50">
+                <tr>
+                    <th scope="col"
+                        class="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">Name</th>
+                    <th scope="col"
+                        class="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">Key
+                        Prefix</th>
+                    <th scope="col"
+                        class="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">Scopes
+                    </th>
+                    <th scope="col"
+                        class="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">Status
+                    </th>
+                    <th scope="col"
+                        class="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">Last Used
+                    </th>
+                    <th scope="col"
+                        class="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">Expires
+                    </th>
+                    <th scope="col" class="relative px-6 py-3">
+                        <span class="sr-only">Actions</span>
+                    </th>
+                </tr>
+            </thead>
+            <tbody class="divide-y divide-gray-200 bg-white">
+                {{range .Data.APIKeys}}
+                <tr class="hover:bg-gray-50">
+                    <td class="whitespace-nowrap px-6 py-4">
+                        <div class="flex items-center">
+                            <div class="flex h-10 w-10 items-center justify-center rounded-lg bg-gray-100">
+                                <svg class="h-5 w-5 text-gray-500" fill="none" viewBox="0 0 24 24" stroke-width="1.5"
+                                    stroke="currentColor">
+                                    <path stroke-linecap="round" stroke-linejoin="round"
+                                        d="M15.75 5.25a3 3 0 013 3m3 0a6 6 0 01-7.029 5.912c-.563-.097-1.159.026-1.563.43L10.5 17.25H8.25v2.25H6v2.25H2.25v-2.818c0-.597.237-1.17.659-1.591l6.499-6.499c.404-.404.527-1 .43-1.563A6 6 0 1121.75 8.25z" />
+                                </svg>
+                            </div>
+                            <div class="ml-4">
+                                <div class="font-medium text-gray-900">{{.Name}}</div>
+                                {{if .Description}}
+                                <div class="text-sm text-gray-500">{{.Description}}</div>
+                                {{end}}
+                            </div>
+                        </div>
+                    </td>
+                    <td class="whitespace-nowrap px-6 py-4 text-sm text-gray-500 font-mono">
+                        {{.KeyPrefix}}...
+                    </td>
+                    <td class="px-6 py-4">
+                        <div class="flex flex-wrap gap-1">
+                            {{range .Scopes}}
+                            <span
+                                class="inline-flex items-center rounded-md bg-gray-100 px-1.5 py-0.5 text-xs font-medium text-gray-600">{{.}}</span>
+                            {{end}}
+                        </div>
+                    </td>
+                    <td class="whitespace-nowrap px-6 py-4">
+                        {{if .IsActive}}
+                        <span
+                            class="inline-flex items-center rounded-full bg-green-100 px-2.5 py-0.5 text-xs font-medium text-green-800">Active</span>
+                        {{else}}
+                        <span
+                            class="inline-flex items-center rounded-full bg-red-100 px-2.5 py-0.5 text-xs font-medium text-red-800">Revoked</span>
+                        {{end}}
+                    </td>
+                    <td class="whitespace-nowrap px-6 py-4 text-sm text-gray-500">
+                        {{if .LastUsedAt}}
+                        {{formatDate .LastUsedAt}}
+                        {{else}}
+                        Never
+                        {{end}}
+                    </td>
+                    <td class="whitespace-nowrap px-6 py-4 text-sm text-gray-500">
+                        {{if .ExpiresAt}}
+                        {{formatDate .ExpiresAt}}
+                        {{else}}
+                        Never
+                        {{end}}
+                    </td>
+                    <td class="whitespace-nowrap px-6 py-4 text-right text-sm font-medium">
+                        {{if .IsActive}}
+                        <form action="/admin/api-keys/{{.ID}}/revoke" method="POST" class="inline"
+                            onsubmit="return confirm('Revoke this API key?')">
+                            <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
+                            <button type="submit" class="text-red-600 hover:text-red-900">Revoke</button>
+                        </form>
+                        {{else}}
+                        <form action="/admin/api-keys/{{.ID}}/delete" method="POST" class="inline"
+                            onsubmit="return confirm('Permanently delete this API key?')">
+                            <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
+                            <button type="submit" class="text-gray-600 hover:text-gray-900">Delete</button>
+                        </form>
+                        {{end}}
+                    </td>
+                </tr>
+                {{else}}
+                <tr>
+                    <td colspan="7" class="px-6 py-12 text-center">
+                        <svg class="mx-auto h-12 w-12 text-gray-400" fill="none" viewBox="0 0 24 24"
+                            stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                d="M15.75 5.25a3 3 0 013 3m3 0a6 6 0 01-7.029 5.912c-.563-.097-1.159.026-1.563.43L10.5 17.25H8.25v2.25H6v2.25H2.25v-2.818c0-.597.237-1.17.659-1.591l6.499-6.499c.404-.404.527-1 .43-1.563A6 6 0 1121.75 8.25z" />
+                        </svg>
+                        <h3 class="mt-2 text-sm font-semibold text-gray-900">No API keys</h3>
+                        <p class="mt-1 text-sm text-gray-500">Generate an API key for programmatic access.</p>
+                        <div class="mt-6">
+                            <a href="/admin/api-keys/new"
+                                class="inline-flex items-center rounded-md bg-primary-600 px-3 py-2 text-sm font-semibold text-white shadow-sm hover:bg-primary-500">
+                                Generate API Key
+                            </a>
+                        </div>
+                    </td>
+                </tr>
+                {{end}}
+            </tbody>
+        </table>
+    </div>
+
+    <!-- Usage Instructions -->
+    <div class="rounded-lg bg-blue-50 p-4">
+        <div class="flex">
+            <div class="flex-shrink-0">
+                <svg class="h-5 w-5 text-blue-400" viewBox="0 0 20 20" fill="currentColor">
+                    <path fill-rule="evenodd"
+                        d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a.75.75 0 000 1.5h.253a.25.25 0 01.244.304l-.459 2.066A1.75 1.75 0 0010.747 15H11a.75.75 0 000-1.5h-.253a.25.25 0 01-.244-.304l.459-2.066A1.75 1.75 0 009.253 9H9z"
+                        clip-rule="evenodd" />
+                </svg>
+            </div>
+            <div class="ml-3">
+                <h3 class="text-sm font-medium text-blue-800">API Authentication</h3>
+                <div class="mt-2 text-sm text-blue-700">
+                    <p>Include your API key in the <code class="bg-blue-100 px-1 py-0.5 rounded">Authorization</code>
+                        header:</p>
+                    <pre
+                        class="mt-2 bg-blue-100 p-2 rounded text-xs overflow-x-auto">Authorization: Bearer your-api-key</pre>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{{end}}

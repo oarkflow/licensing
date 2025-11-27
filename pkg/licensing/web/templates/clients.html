@@ -1,0 +1,135 @@
+{{template "base" .}}
+
+{{define "content"}}
+<div class="space-y-6">
+    <!-- Page Header -->
+    <div class="md:flex md:items-center md:justify-between">
+        <div class="min-w-0 flex-1">
+            <h2 class="text-2xl font-bold leading-7 text-gray-900 sm:truncate sm:text-3xl sm:tracking-tight">
+                Clients
+            </h2>
+            <p class="mt-1 text-sm text-gray-500">
+                Manage your customers and their license access
+            </p>
+        </div>
+        <div class="mt-4 flex md:ml-4 md:mt-0">
+            <a href="/clients/new"
+                class="inline-flex items-center rounded-md bg-primary-600 px-3 py-2 text-sm font-semibold text-white shadow-sm hover:bg-primary-500">
+                <svg class="-ml-0.5 mr-1.5 h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+                    <path
+                        d="M10.75 4.75a.75.75 0 00-1.5 0v4.5h-4.5a.75.75 0 000 1.5h4.5v4.5a.75.75 0 001.5 0v-4.5h4.5a.75.75 0 000-1.5h-4.5v-4.5z" />
+                </svg>
+                New Client
+            </a>
+        </div>
+    </div>
+
+    <!-- Filters -->
+    <div class="flex flex-wrap gap-2">
+        <a href="/clients"
+            class="{{if eq .Data.CurrentFilter ""}}bg-primary-100 text-primary-700 ring-primary-700{{else}}bg-white text-gray-600 ring-gray-300 hover:bg-gray-50{{end}} inline-flex items-center rounded-full px-3 py-1.5 text-sm font-medium ring-1 ring-inset">
+            All ({{.Data.TotalCount}})
+        </a>
+        <a href="/clients?filter=active" class="{{if eq .Data.CurrentFilter " active"}}bg-green-100 text-green-700
+            ring-green-700{{else}}bg-white text-gray-600 ring-gray-300 hover:bg-gray-50{{end}} inline-flex items-center
+            rounded-full px-3 py-1.5 text-sm font-medium ring-1 ring-inset">
+            Active
+        </a>
+        <a href="/clients?filter=banned" class="{{if eq .Data.CurrentFilter " banned"}}bg-red-100 text-red-700
+            ring-red-700{{else}}bg-white text-gray-600 ring-gray-300 hover:bg-gray-50{{end}} inline-flex items-center
+            rounded-full px-3 py-1.5 text-sm font-medium ring-1 ring-inset">
+            Banned
+        </a>
+    </div>
+
+    <!-- Clients Table -->
+    <div class="overflow-hidden bg-white shadow ring-1 ring-black ring-opacity-5 sm:rounded-lg">
+        <table class="min-w-full divide-y divide-gray-300">
+            <thead class="bg-gray-50">
+                <tr>
+                    <th scope="col" class="py-3.5 pl-4 pr-3 text-left text-sm font-semibold text-gray-900 sm:pl-6">Email
+                    </th>
+                    <th scope="col" class="px-3 py-3.5 text-left text-sm font-semibold text-gray-900">Status</th>
+                    <th scope="col" class="px-3 py-3.5 text-left text-sm font-semibold text-gray-900">Created</th>
+                    <th scope="col" class="relative py-3.5 pl-3 pr-4 sm:pr-6">
+                        <span class="sr-only">Actions</span>
+                    </th>
+                </tr>
+            </thead>
+            <tbody class="divide-y divide-gray-200 bg-white">
+                {{range .Data.Clients}}
+                <tr class="hover:bg-gray-50">
+                    <td class="whitespace-nowrap py-4 pl-4 pr-3 text-sm sm:pl-6">
+                        <a href="/clients/{{.ID}}" class="font-medium text-primary-600 hover:text-primary-900">
+                            {{.Email}}
+                        </a>
+                    </td>
+                    <td class="whitespace-nowrap px-3 py-4 text-sm">
+                        {{statusBadge (print .Status)}}
+                    </td>
+                    <td class="whitespace-nowrap px-3 py-4 text-sm text-gray-500">
+                        {{formatDate .CreatedAt}}
+                    </td>
+                    <td class="relative whitespace-nowrap py-4 pl-3 pr-4 text-right text-sm font-medium sm:pr-6">
+                        <div x-data="{ open: false }" class="relative inline-block text-left">
+                            <button @click="open = !open" type="button"
+                                class="flex items-center rounded-full bg-white p-1 text-gray-400 hover:text-gray-600">
+                                <svg class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+                                    <path
+                                        d="M10 3a1.5 1.5 0 110 3 1.5 1.5 0 010-3zM10 8.5a1.5 1.5 0 110 3 1.5 1.5 0 010-3zM11.5 15.5a1.5 1.5 0 10-3 0 1.5 1.5 0 003 0z" />
+                                </svg>
+                            </button>
+                            <div x-show="open" @click.outside="open = false" x-cloak x-transition.origin-top-right
+                                style="display: none;"
+                                class="absolute right-0 z-10 mt-2 w-48 origin-top-right rounded-md bg-white shadow-lg ring-1 ring-black ring-opacity-5">
+                                <div class="py-1">
+                                    <a href="/clients/{{.ID}}"
+                                        class="block px-4 py-2 text-sm text-gray-700 hover:bg-gray-100">View Details</a>
+                                    {{if eq (print .Status) "banned"}}
+                                    <form action="/clients/{{.ID}}/unban" method="POST">
+                                        <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
+                                        <button type="submit"
+                                            class="w-full text-left px-4 py-2 text-sm text-green-700 hover:bg-gray-100">Unban</button>
+                                    </form>
+                                    {{else}}
+                                    <form action="/clients/{{.ID}}/ban" method="POST"
+                                        onsubmit="return confirm('Are you sure you want to ban this client?')">
+                                        <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
+                                        <input type="hidden" name="reason" value="Banned by admin">
+                                        <button type="submit"
+                                            class="w-full text-left px-4 py-2 text-sm text-red-700 hover:bg-gray-100">Ban</button>
+                                    </form>
+                                    {{end}}
+                                </div>
+                            </div>
+                        </div>
+                    </td>
+                </tr>
+                {{else}}
+                <tr>
+                    <td colspan="4" class="px-6 py-12 text-center">
+                        <svg class="mx-auto h-12 w-12 text-gray-400" fill="none" viewBox="0 0 24 24"
+                            stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                d="M15 19.128a9.38 9.38 0 002.625.372 9.337 9.337 0 004.121-.952 4.125 4.125 0 00-7.533-2.493M15 19.128v-.003c0-1.113-.285-2.16-.786-3.07M15 19.128v.106A12.318 12.318 0 018.624 21c-2.331 0-4.512-.645-6.374-1.766l-.001-.109a6.375 6.375 0 0111.964-3.07M12 6.375a3.375 3.375 0 11-6.75 0 3.375 3.375 0 016.75 0zm8.25 2.25a2.625 2.625 0 11-5.25 0 2.625 2.625 0 015.25 0z" />
+                        </svg>
+                        <h3 class="mt-2 text-sm font-semibold text-gray-900">No clients</h3>
+                        <p class="mt-1 text-sm text-gray-500">Get started by creating a new client.</p>
+                        <div class="mt-6">
+                            <a href="/clients/new"
+                                class="inline-flex items-center rounded-md bg-primary-600 px-3 py-2 text-sm font-semibold text-white shadow-sm hover:bg-primary-500">
+                                <svg class="-ml-0.5 mr-1.5 h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+                                    <path
+                                        d="M10.75 4.75a.75.75 0 00-1.5 0v4.5h-4.5a.75.75 0 000 1.5h4.5v4.5a.75.75 0 001.5 0v-4.5h4.5a.75.75 0 000-1.5h-4.5v-4.5z" />
+                                </svg>
+                                New Client
+                            </a>
+                        </div>
+                    </td>
+                </tr>
+                {{end}}
+            </tbody>
+        </table>
+    </div>
+</div>
+{{end}}

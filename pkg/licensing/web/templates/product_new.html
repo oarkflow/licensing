@@ -1,0 +1,105 @@
+{{template "base" .}}
+
+{{define "content"}}
+<div class="space-y-6">
+    <!-- Breadcrumb -->
+    <nav class="flex" aria-label="Breadcrumb">
+        <ol class="flex items-center space-x-4">
+            <li>
+                <a href="/" class="text-gray-400 hover:text-gray-500">
+                    <svg class="h-5 w-5 flex-shrink-0" viewBox="0 0 20 20" fill="currentColor">
+                        <path fill-rule="evenodd"
+                            d="M9.293 2.293a1 1 0 011.414 0l7 7A1 1 0 0117 11h-1v6a1 1 0 01-1 1h-2a1 1 0 01-1-1v-3a1 1 0 00-1-1H9a1 1 0 00-1 1v3a1 1 0 01-1 1H5a1 1 0 01-1-1v-6H3a1 1 0 01-.707-1.707l7-7z"
+                            clip-rule="evenodd" />
+                    </svg>
+                </a>
+            </li>
+            <li>
+                <div class="flex items-center">
+                    <svg class="h-5 w-5 flex-shrink-0 text-gray-300" fill="currentColor" viewBox="0 0 20 20">
+                        <path d="M5.555 17.776l8-16 .894.448-8 16-.894-.448z" />
+                    </svg>
+                    <a href="/products" class="ml-4 text-sm font-medium text-gray-500 hover:text-gray-700">Products</a>
+                </div>
+            </li>
+            <li>
+                <div class="flex items-center">
+                    <svg class="h-5 w-5 flex-shrink-0 text-gray-300" fill="currentColor" viewBox="0 0 20 20">
+                        <path d="M5.555 17.776l8-16 .894.448-8 16-.894-.448z" />
+                    </svg>
+                    <span class="ml-4 text-sm font-medium text-gray-500">New Product</span>
+                </div>
+            </li>
+        </ol>
+    </nav>
+
+    <!-- Page Header -->
+    <div>
+        <h2 class="text-2xl font-bold leading-7 text-gray-900 sm:truncate sm:text-3xl sm:tracking-tight">
+            Create New Product
+        </h2>
+        <p class="mt-1 text-sm text-gray-500">
+            Define a new software product for licensing
+        </p>
+    </div>
+
+    <!-- Form -->
+    <form action="/products/new" method="POST" class="space-y-8">
+        <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+
+        <div class="bg-white shadow sm:rounded-lg">
+            <div class="px-4 py-5 sm:p-6">
+                <div class="grid grid-cols-1 gap-y-6 gap-x-4 sm:grid-cols-6">
+                    <div class="sm:col-span-3">
+                        <label for="name" class="block text-sm font-medium leading-6 text-gray-900">Product Name
+                            *</label>
+                        <div class="mt-2">
+                            <input type="text" name="name" id="name" required placeholder="My Awesome Software"
+                                class="block w-full rounded-md border-0 py-2 px-3 text-gray-900 shadow-sm ring-1 ring-inset ring-gray-300 placeholder:text-gray-400 focus:ring-2 focus:ring-inset focus:ring-primary-600 sm:text-sm sm:leading-6">
+                        </div>
+                    </div>
+
+                    <div class="sm:col-span-3">
+                        <label for="slug" class="block text-sm font-medium leading-6 text-gray-900">Slug *</label>
+                        <div class="mt-2">
+                            <input type="text" name="slug" id="slug" required placeholder="my-awesome-software"
+                                pattern="[a-z0-9-]+"
+                                class="block w-full rounded-md border-0 py-2 px-3 text-gray-900 shadow-sm ring-1 ring-inset ring-gray-300 placeholder:text-gray-400 focus:ring-2 focus:ring-inset focus:ring-primary-600 sm:text-sm sm:leading-6">
+                        </div>
+                        <p class="mt-2 text-sm text-gray-500">Lowercase letters, numbers, and hyphens only.</p>
+                    </div>
+
+                    <div class="sm:col-span-6">
+                        <label for="description"
+                            class="block text-sm font-medium leading-6 text-gray-900">Description</label>
+                        <div class="mt-2">
+                            <textarea name="description" id="description" rows="3"
+                                placeholder="Describe your product..."
+                                class="block w-full rounded-md border-0 py-2 px-3 text-gray-900 shadow-sm ring-1 ring-inset ring-gray-300 placeholder:text-gray-400 focus:ring-2 focus:ring-inset focus:ring-primary-600 sm:text-sm sm:leading-6"></textarea>
+                        </div>
+                    </div>
+
+                    <div class="sm:col-span-4">
+                        <label for="logo_url" class="block text-sm font-medium leading-6 text-gray-900">Logo URL</label>
+                        <div class="mt-2">
+                            <input type="url" name="logo_url" id="logo_url" placeholder="https://example.com/logo.png"
+                                class="block w-full rounded-md border-0 py-2 px-3 text-gray-900 shadow-sm ring-1 ring-inset ring-gray-300 placeholder:text-gray-400 focus:ring-2 focus:ring-inset focus:ring-primary-600 sm:text-sm sm:leading-6">
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="flex justify-end gap-x-3">
+            <a href="/products"
+                class="rounded-md bg-white py-2 px-3 text-sm font-semibold text-gray-900 shadow-sm ring-1 ring-inset ring-gray-300 hover:bg-gray-50">
+                Cancel
+            </a>
+            <button type="submit"
+                class="inline-flex justify-center rounded-md bg-primary-600 py-2 px-3 text-sm font-semibold text-white shadow-sm hover:bg-primary-500">
+                Create Product
+            </button>
+        </div>
+    </form>
+</div>
+{{end}}

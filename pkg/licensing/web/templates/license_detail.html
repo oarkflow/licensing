@@ -1,0 +1,419 @@
+{{template "base" .}}
+
+{{define "content"}}
+{{$license := .Data.License}}
+{{$client := .Data.Client}}
+{{$product := .Data.Product}}
+{{$plan := .Data.Plan}}
+<div class="space-y-6">
+    <!-- Breadcrumb -->
+    <nav class="flex" aria-label="Breadcrumb">
+        <ol class="flex items-center space-x-4">
+            <li>
+                <a href="/" class="text-gray-400 hover:text-gray-500">
+                    <svg class="h-5 w-5 flex-shrink-0" viewBox="0 0 20 20" fill="currentColor">
+                        <path fill-rule="evenodd"
+                            d="M9.293 2.293a1 1 0 011.414 0l7 7A1 1 0 0117 11h-1v6a1 1 0 01-1 1h-2a1 1 0 01-1-1v-3a1 1 0 00-1-1H9a1 1 0 00-1 1v3a1 1 0 01-1 1H5a1 1 0 01-1-1v-6H3a1 1 0 01-.707-1.707l7-7z"
+                            clip-rule="evenodd" />
+                    </svg>
+                </a>
+            </li>
+            <li>
+                <div class="flex items-center">
+                    <svg class="h-5 w-5 flex-shrink-0 text-gray-300" fill="currentColor" viewBox="0 0 20 20">
+                        <path d="M5.555 17.776l8-16 .894.448-8 16-.894-.448z" />
+                    </svg>
+                    <a href="/licenses" class="ml-4 text-sm font-medium text-gray-500 hover:text-gray-700">Licenses</a>
+                </div>
+            </li>
+            <li>
+                <div class="flex items-center">
+                    <svg class="h-5 w-5 flex-shrink-0 text-gray-300" fill="currentColor" viewBox="0 0 20 20">
+                        <path d="M5.555 17.776l8-16 .894.448-8 16-.894-.448z" />
+                    </svg>
+                    <span class="ml-4 text-sm font-medium text-gray-500">{{truncate $license.LicenseKey 20}}</span>
+                </div>
+            </li>
+        </ol>
+    </nav>
+
+    <!-- Page Header -->
+    <div class="md:flex md:items-center md:justify-between">
+        <div class="min-w-0 flex-1">
+            <h2 class="text-2xl font-bold leading-7 text-gray-900 sm:truncate sm:text-3xl sm:tracking-tight">
+                License Details
+            </h2>
+            <div class="mt-1 flex flex-col sm:mt-0 sm:flex-row sm:flex-wrap sm:space-x-6">
+                <div class="mt-2 flex items-center text-sm text-gray-500">
+                    {{if $license.IsRevoked}}
+                    {{statusBadge "revoked"}}
+                    {{else if isExpired $license.ExpiresAt}}
+                    {{statusBadge "expired"}}
+                    {{else}}
+                    {{statusBadge "active"}}
+                    {{end}}
+                </div>
+            </div>
+        </div>
+        <div class="mt-4 flex md:ml-4 md:mt-0 gap-3">
+            {{if $license.IsRevoked}}
+            <form action="/licenses/{{$license.ID}}/reinstate" method="POST">
+                <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
+                <button type="submit"
+                    class="inline-flex items-center rounded-md bg-green-600 px-3 py-2 text-sm font-semibold text-white shadow-sm hover:bg-green-500">
+                    <svg class="-ml-0.5 mr-1.5 h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+                        <path fill-rule="evenodd"
+                            d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.857-9.809a.75.75 0 00-1.214-.882l-3.483 4.79-1.88-1.88a.75.75 0 10-1.06 1.061l2.5 2.5a.75.75 0 001.137-.089l4-5.5z"
+                            clip-rule="evenodd" />
+                    </svg>
+                    Reinstate License
+                </button>
+            </form>
+            {{else}}
+            <div x-data="{ showModal: false }">
+                <button @click="showModal = true" type="button"
+                    class="inline-flex items-center rounded-md bg-red-600 px-3 py-2 text-sm font-semibold text-white shadow-sm hover:bg-red-500">
+                    <svg class="-ml-0.5 mr-1.5 h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+                        <path fill-rule="evenodd"
+                            d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.28 7.22a.75.75 0 00-1.06 1.06L8.94 10l-1.72 1.72a.75.75 0 101.06 1.06L10 11.06l1.72 1.72a.75.75 0 101.06-1.06L11.06 10l1.72-1.72a.75.75 0 00-1.06-1.06L10 8.94 8.28 7.22z"
+                            clip-rule="evenodd" />
+                    </svg>
+                    Revoke License
+                </button>
+
+                <!-- Modal -->
+                <div x-show="showModal" x-cloak class="relative z-10 hidden" aria-labelledby="modal-title" role="dialog"
+                    aria-modal="true">
+                    <div class="fixed inset-0 bg-gray-500 bg-opacity-75 transition-opacity"></div>
+                    <div class="fixed inset-0 z-10 overflow-y-auto">
+                        <div class="flex min-h-full items-end justify-center p-4 text-center sm:items-center sm:p-0">
+                            <div @click.away="showModal = false"
+                                class="relative transform overflow-hidden rounded-lg bg-white px-4 pb-4 pt-5 text-left shadow-xl transition-all sm:my-8 sm:w-full sm:max-w-lg sm:p-6">
+                                <form action="/licenses/{{$license.ID}}/revoke" method="POST">
+                                    <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
+                                    <div class="sm:flex sm:items-start">
+                                        <div
+                                            class="mx-auto flex h-12 w-12 flex-shrink-0 items-center justify-center rounded-full bg-red-100 sm:mx-0 sm:h-10 sm:w-10">
+                                            <svg class="h-6 w-6 text-red-600" fill="none" viewBox="0 0 24 24"
+                                                stroke-width="1.5" stroke="currentColor">
+                                                <path stroke-linecap="round" stroke-linejoin="round"
+                                                    d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z" />
+                                            </svg>
+                                        </div>
+                                        <div class="mt-3 text-center sm:ml-4 sm:mt-0 sm:text-left flex-1">
+                                            <h3 class="text-base font-semibold leading-6 text-gray-900"
+                                                id="modal-title">Revoke License</h3>
+                                            <div class="mt-2">
+                                                <p class="text-sm text-gray-500">Are you sure you want to revoke this
+                                                    license? The client will no longer be able to use the software.</p>
+                                            </div>
+                                            <div class="mt-4">
+                                                <label for="reason"
+                                                    class="block text-sm font-medium text-gray-700">Reason</label>
+                                                <textarea name="reason" id="reason" rows="2"
+                                                    class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-primary-500 focus:ring-primary-500 sm:text-sm"
+                                                    placeholder="Enter reason for revocation"></textarea>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <div class="mt-5 sm:mt-4 sm:flex sm:flex-row-reverse gap-3">
+                                        <button type="submit"
+                                            class="inline-flex w-full justify-center rounded-md bg-red-600 px-3 py-2 text-sm font-semibold text-white shadow-sm hover:bg-red-500 sm:w-auto">Revoke</button>
+                                        <button @click="showModal = false" type="button"
+                                            class="mt-3 inline-flex w-full justify-center rounded-md bg-white px-3 py-2 text-sm font-semibold text-gray-900 shadow-sm ring-1 ring-inset ring-gray-300 hover:bg-gray-50 sm:mt-0 sm:w-auto">Cancel</button>
+                                    </div>
+                                </form>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            {{end}}
+        </div>
+    </div>
+
+    <!-- License Info Cards -->
+    <div class="grid grid-cols-1 gap-6 lg:grid-cols-2">
+        <!-- License Details -->
+        <div class="overflow-hidden bg-white shadow sm:rounded-lg">
+            <div class="px-4 py-5 sm:px-6">
+                <h3 class="text-lg font-semibold leading-6 text-gray-900">License Information</h3>
+            </div>
+            <div class="border-t border-gray-200 px-4 py-5 sm:px-6">
+                <dl class="grid grid-cols-1 gap-x-4 gap-y-6 sm:grid-cols-2">
+                    <div class="sm:col-span-2">
+                        <dt class="text-sm font-medium text-gray-500">License Key</dt>
+                        <dd class="mt-1 text-sm text-gray-900 font-mono bg-gray-50 p-2 rounded break-all">
+                            {{$license.LicenseKey}}</dd>
+                    </div>
+                    <div>
+                        <dt class="text-sm font-medium text-gray-500">ID</dt>
+                        <dd class="mt-1 text-sm text-gray-900 font-mono">{{$license.ID}}</dd>
+                    </div>
+                    <div>
+                        <dt class="text-sm font-medium text-gray-500">Email</dt>
+                        <dd class="mt-1 text-sm text-gray-900">{{$license.Email}}</dd>
+                    </div>
+                    <div>
+                        <dt class="text-sm font-medium text-gray-500">Plan</dt>
+                        <dd class="mt-1 text-sm text-gray-900">
+                            <span
+                                class="inline-flex items-center rounded-md bg-blue-50 px-2 py-1 text-xs font-medium text-blue-700 ring-1 ring-inset ring-blue-700/10">
+                                {{$license.PlanSlug}}
+                            </span>
+                        </dd>
+                    </div>
+                    <div>
+                        <dt class="text-sm font-medium text-gray-500">Check Mode</dt>
+                        <dd class="mt-1 text-sm text-gray-900">{{$license.CheckMode}}</dd>
+                    </div>
+                    <div>
+                        <dt class="text-sm font-medium text-gray-500">Issued At</dt>
+                        <dd class="mt-1 text-sm text-gray-900">{{formatTime $license.IssuedAt}}</dd>
+                    </div>
+                    <div>
+                        <dt class="text-sm font-medium text-gray-500">Expires At</dt>
+                        <dd class="mt-1 text-sm text-gray-900">
+                            {{formatTime $license.ExpiresAt}}
+                            {{if not $license.IsRevoked}}
+                            {{if isExpired $license.ExpiresAt}}
+                            <span class="text-red-500 text-xs">(expired)</span>
+                            {{else}}
+                            <span class="text-gray-400 text-xs">({{daysUntil $license.ExpiresAt}} days remaining)</span>
+                            {{end}}
+                            {{end}}
+                        </dd>
+                    </div>
+                    {{if $license.IsRevoked}}
+                    <div>
+                        <dt class="text-sm font-medium text-gray-500">Revoked At</dt>
+                        <dd class="mt-1 text-sm text-red-600">{{formatTime $license.RevokedAt}}</dd>
+                    </div>
+                    <div>
+                        <dt class="text-sm font-medium text-gray-500">Revoke Reason</dt>
+                        <dd class="mt-1 text-sm text-red-600">{{if
+                            $license.RevokeReason}}{{$license.RevokeReason}}{{else}}-{{end}}</dd>
+                    </div>
+                    {{end}}
+                </dl>
+            </div>
+        </div>
+
+        <!-- Client & Product Info -->
+        <div class="overflow-hidden bg-white shadow sm:rounded-lg">
+            <div class="px-4 py-5 sm:px-6">
+                <h3 class="text-lg font-semibold leading-6 text-gray-900">Client & Product</h3>
+            </div>
+            <div class="border-t border-gray-200 px-4 py-5 sm:px-6">
+                <dl class="grid grid-cols-1 gap-x-4 gap-y-6 sm:grid-cols-2">
+                    {{if $client}}
+                    <div class="sm:col-span-2">
+                        <dt class="text-sm font-medium text-gray-500">Client</dt>
+                        <dd class="mt-1 text-sm text-gray-900">
+                            <a href="/clients/{{$client.ID}}" class="text-primary-600 hover:text-primary-900">
+                                {{$client.Email}}
+                            </a>
+                            {{statusBadge (print $client.Status)}}
+                        </dd>
+                    </div>
+                    {{end}}
+                    {{if $product}}
+                    <div>
+                        <dt class="text-sm font-medium text-gray-500">Product</dt>
+                        <dd class="mt-1 text-sm text-gray-900">
+                            <a href="/products/{{$product.ID}}" class="text-primary-600 hover:text-primary-900">
+                                {{$product.Name}}
+                            </a>
+                        </dd>
+                    </div>
+                    {{end}}
+                    {{if $plan}}
+                    <div>
+                        <dt class="text-sm font-medium text-gray-500">Plan</dt>
+                        <dd class="mt-1 text-sm text-gray-900">
+                            <a href="/products/{{$plan.ProductID}}/plans/{{$plan.ID}}"
+                                class="text-primary-600 hover:text-primary-900">
+                                {{$plan.Name}}
+                            </a>
+                        </dd>
+                    </div>
+                    {{end}}
+                    <div>
+                        <dt class="text-sm font-medium text-gray-500">Max Devices</dt>
+                        <dd class="mt-1 text-sm text-gray-900">{{$license.MaxDevices}}</dd>
+                    </div>
+                    <div>
+                        <dt class="text-sm font-medium text-gray-500">Current Activations</dt>
+                        <dd class="mt-1 text-sm text-gray-900">{{$license.DeviceCount}}</dd>
+                    </div>
+                </dl>
+            </div>
+        </div>
+    </div>
+
+    <!-- Devices -->
+    <div class="overflow-hidden bg-white shadow sm:rounded-lg">
+        <div class="px-4 py-5 sm:px-6">
+            <h3 class="text-lg font-semibold leading-6 text-gray-900">Activated Devices</h3>
+            <p class="mt-1 text-sm text-gray-500">{{$license.DeviceCount}} of {{$license.MaxDevices}} devices activated
+            </p>
+        </div>
+        <div class="border-t border-gray-200">
+            {{if $license.Devices}}
+            <table class="min-w-full divide-y divide-gray-200">
+                <thead class="bg-gray-50">
+                    <tr>
+                        <th scope="col"
+                            class="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">
+                            Fingerprint</th>
+                        <th scope="col"
+                            class="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">
+                            Activated At</th>
+                        <th scope="col"
+                            class="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">Last
+                            Seen</th>
+                        <th scope="col" class="relative px-6 py-3">
+                            <span class="sr-only">Actions</span>
+                        </th>
+                    </tr>
+                </thead>
+                <tbody class="divide-y divide-gray-200 bg-white">
+                    {{range $fp, $device := $license.Devices}}
+                    <tr>
+                        <td class="whitespace-nowrap px-6 py-4 text-sm font-mono text-gray-900">{{truncate $fp 30}}</td>
+                        <td class="whitespace-nowrap px-6 py-4 text-sm text-gray-500">{{formatTime $device.ActivatedAt}}
+                        </td>
+                        <td class="whitespace-nowrap px-6 py-4 text-sm text-gray-500">{{formatTime $device.LastSeenAt}}
+                        </td>
+                        <td class="whitespace-nowrap px-6 py-4 text-right text-sm font-medium">
+                            <form action="/licenses/{{$license.ID}}/deactivate-device" method="POST" class="inline"
+                                onsubmit="return confirm('Are you sure you want to deactivate this device?')">
+                                <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
+                                <input type="hidden" name="fingerprint" value="{{$fp}}">
+                                <button type="submit" class="text-red-600 hover:text-red-900">Deactivate</button>
+                            </form>
+                        </td>
+                    </tr>
+                    {{end}}
+                </tbody>
+            </table>
+            {{else}}
+            <div class="px-6 py-12 text-center">
+                <svg class="mx-auto h-12 w-12 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                        d="M9 3v2m6-2v2M9 19v2m6-2v2M5 9H3m2 6H3m18-6h-2m2 6h-2M7 19h10a2 2 0 002-2V7a2 2 0 00-2-2H7a2 2 0 00-2 2v10a2 2 0 002 2zM9 9h6v6H9V9z" />
+                </svg>
+                <h3 class="mt-2 text-sm font-semibold text-gray-900">No devices activated</h3>
+                <p class="mt-1 text-sm text-gray-500">This license has not been activated on any devices yet.</p>
+            </div>
+            {{end}}
+        </div>
+    </div>
+
+    <!-- Activation History -->
+    <div class="overflow-hidden bg-white shadow sm:rounded-lg">
+        <div class="px-4 py-5 sm:px-6">
+            <h3 class="text-lg font-semibold leading-6 text-gray-900">Activation History</h3>
+        </div>
+        <div class="border-t border-gray-200">
+            {{if .Data.Activations}}
+            <table class="min-w-full divide-y divide-gray-200">
+                <thead class="bg-gray-50">
+                    <tr>
+                        <th scope="col"
+                            class="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">Time
+                        </th>
+                        <th scope="col"
+                            class="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">
+                            Device</th>
+                        <th scope="col"
+                            class="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">IP
+                            Address</th>
+                        <th scope="col"
+                            class="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">
+                            Result</th>
+                        <th scope="col"
+                            class="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">
+                            Message</th>
+                    </tr>
+                </thead>
+                <tbody class="divide-y divide-gray-200 bg-white">
+                    {{range .Data.Activations}}
+                    <tr>
+                        <td class="whitespace-nowrap px-6 py-4 text-sm text-gray-500">{{formatTime .Timestamp}}</td>
+                        <td class="whitespace-nowrap px-6 py-4 text-sm font-mono text-gray-900">{{truncate
+                            .DeviceFingerprint 20}}</td>
+                        <td class="whitespace-nowrap px-6 py-4 text-sm text-gray-500">{{.IPAddress}}</td>
+                        <td class="whitespace-nowrap px-6 py-4 text-sm">
+                            {{if .Success}}
+                            <span
+                                class="inline-flex items-center rounded-full bg-green-100 px-2.5 py-0.5 text-xs font-medium text-green-800">Success</span>
+                            {{else}}
+                            <span
+                                class="inline-flex items-center rounded-full bg-red-100 px-2.5 py-0.5 text-xs font-medium text-red-800">Failed</span>
+                            {{end}}
+                        </td>
+                        <td class="px-6 py-4 text-sm text-gray-500">{{.Message}}</td>
+                    </tr>
+                    {{end}}
+                </tbody>
+            </table>
+            {{else}}
+            <div class="px-6 py-12 text-center">
+                <p class="text-sm text-gray-500">No activation history available.</p>
+            </div>
+            {{end}}
+        </div>
+    </div>
+
+    <!-- Entitlements -->
+    {{if $license.Entitlements}}
+    <div class="overflow-hidden bg-white shadow sm:rounded-lg">
+        <div class="px-4 py-5 sm:px-6">
+            <h3 class="text-lg font-semibold leading-6 text-gray-900">Entitlements</h3>
+            <p class="mt-1 text-sm text-gray-500">Features and scopes granted to this license</p>
+        </div>
+        <div class="border-t border-gray-200 px-4 py-5 sm:px-6">
+            <div class="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                {{range $slug, $feature := $license.Entitlements.Features}}
+                <div
+                    class="relative rounded-lg border {{if $feature.Enabled}}border-green-200 bg-green-50{{else}}border-gray-200 bg-gray-50{{end}} p-4">
+                    <div class="flex items-center gap-2">
+                        {{if $feature.Enabled}}
+                        <svg class="h-5 w-5 text-green-500" viewBox="0 0 20 20" fill="currentColor">
+                            <path fill-rule="evenodd"
+                                d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.857-9.809a.75.75 0 00-1.214-.882l-3.483 4.79-1.88-1.88a.75.75 0 10-1.06 1.061l2.5 2.5a.75.75 0 001.137-.089l4-5.5z"
+                                clip-rule="evenodd" />
+                        </svg>
+                        {{else}}
+                        <svg class="h-5 w-5 text-gray-400" viewBox="0 0 20 20" fill="currentColor">
+                            <path fill-rule="evenodd"
+                                d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.28 7.22a.75.75 0 00-1.06 1.06L8.94 10l-1.72 1.72a.75.75 0 101.06 1.06L10 11.06l1.72 1.72a.75.75 0 101.06-1.06L11.06 10l1.72-1.72a.75.75 0 00-1.06-1.06L10 8.94 8.28 7.22z"
+                                clip-rule="evenodd" />
+                        </svg>
+                        {{end}}
+                        <span class="font-medium text-gray-900">{{$feature.FeatureSlug}}</span>
+                    </div>
+                    {{if $feature.Category}}
+                    <p class="mt-1 text-xs text-gray-500">Category: {{$feature.Category}}</p>
+                    {{end}}
+                    {{if $feature.Scopes}}
+                    <div class="mt-2 space-y-1">
+                        {{range $scopeSlug, $scope := $feature.Scopes}}
+                        <div class="text-xs text-gray-600">
+                            • {{$scopeSlug}}: <span class="font-medium">{{$scope.Permission}}</span>
+                            {{if and (eq (print $scope.Permission) "limit") (gt $scope.Limit 0)}}
+                            ({{$scope.Limit}})
+                            {{end}}
+                        </div>
+                        {{end}}
+                    </div>
+                    {{end}}
+                </div>
+                {{end}}
+            </div>
+        </div>
+    </div>
+    {{end}}
+</div>
+{{end}}

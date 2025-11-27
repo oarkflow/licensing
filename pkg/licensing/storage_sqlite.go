@@ -916,6 +916,28 @@ func (s *SQLiteStorage) CreateAdminUser(ctx context.Context, user *AdminUser) er
 	return nil
 }
 
+func (s *SQLiteStorage) UpdateAdminUser(ctx context.Context, user *AdminUser) error {
+	if user == nil {
+		return fmt.Errorf("admin user is nil")
+	}
+	query := `UPDATE admin_users SET username = ?, username_lower = ?, password_hash = ?, updated_at = ? WHERE id = ?`
+	res, err := s.db.ExecContext(ctx, query,
+		user.Username,
+		strings.ToLower(strings.TrimSpace(user.Username)),
+		user.PasswordHash,
+		user.UpdatedAt,
+		user.ID,
+	)
+	if err != nil {
+		return err
+	}
+	rows, _ := res.RowsAffected()
+	if rows == 0 {
+		return errUserMissing
+	}
+	return nil
+}
+
 func (s *SQLiteStorage) GetAdminUser(ctx context.Context, userID string) (*AdminUser, error) {
 	query := `SELECT id, username, password_hash, created_at, updated_at FROM admin_users WHERE id = ?`
 	row := s.db.QueryRowContext(ctx, query, userID)
@@ -1005,6 +1027,19 @@ func (s *SQLiteStorage) UpdateAPIKey(ctx context.Context, key *APIKeyRecord) err
 		nullTime(key.LastUsed),
 		key.ID,
 	)
+	if err != nil {
+		return err
+	}
+	rows, _ := res.RowsAffected()
+	if rows == 0 {
+		return errAPIKeyMissing
+	}
+	return nil
+}
+
+func (s *SQLiteStorage) DeleteAPIKey(ctx context.Context, keyID string) error {
+	query := `DELETE FROM api_keys WHERE id = ?`
+	res, err := s.db.ExecContext(ctx, query, keyID)
 	if err != nil {
 		return err
 	}

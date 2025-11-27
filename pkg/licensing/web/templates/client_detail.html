@@ -1,0 +1,251 @@
+{{template "base" .}}
+
+{{define "content"}}
+{{$client := .Data.Client}}
+<div class="space-y-6">
+    <!-- Breadcrumb -->
+    <nav class="flex" aria-label="Breadcrumb">
+        <ol class="flex items-center space-x-4">
+            <li>
+                <a href="/" class="text-gray-400 hover:text-gray-500">
+                    <svg class="h-5 w-5 flex-shrink-0" viewBox="0 0 20 20" fill="currentColor">
+                        <path fill-rule="evenodd"
+                            d="M9.293 2.293a1 1 0 011.414 0l7 7A1 1 0 0117 11h-1v6a1 1 0 01-1 1h-2a1 1 0 01-1-1v-3a1 1 0 00-1-1H9a1 1 0 00-1 1v3a1 1 0 01-1 1H5a1 1 0 01-1-1v-6H3a1 1 0 01-.707-1.707l7-7z"
+                            clip-rule="evenodd" />
+                    </svg>
+                </a>
+            </li>
+            <li>
+                <div class="flex items-center">
+                    <svg class="h-5 w-5 flex-shrink-0 text-gray-300" fill="currentColor" viewBox="0 0 20 20">
+                        <path d="M5.555 17.776l8-16 .894.448-8 16-.894-.448z" />
+                    </svg>
+                    <a href="/clients" class="ml-4 text-sm font-medium text-gray-500 hover:text-gray-700">Clients</a>
+                </div>
+            </li>
+            <li>
+                <div class="flex items-center">
+                    <svg class="h-5 w-5 flex-shrink-0 text-gray-300" fill="currentColor" viewBox="0 0 20 20">
+                        <path d="M5.555 17.776l8-16 .894.448-8 16-.894-.448z" />
+                    </svg>
+                    <span class="ml-4 text-sm font-medium text-gray-500">{{$client.Email}}</span>
+                </div>
+            </li>
+        </ol>
+    </nav>
+
+    <!-- Page Header -->
+    <div class="md:flex md:items-center md:justify-between">
+        <div class="min-w-0 flex-1">
+            <h2 class="text-2xl font-bold leading-7 text-gray-900 sm:truncate sm:text-3xl sm:tracking-tight">
+                {{$client.Email}}
+            </h2>
+            <div class="mt-1 flex flex-col sm:mt-0 sm:flex-row sm:flex-wrap sm:space-x-6">
+                <div class="mt-2 flex items-center text-sm text-gray-500">
+                    {{statusBadge (print $client.Status)}}
+                </div>
+            </div>
+        </div>
+        <div class="mt-4 flex md:ml-4 md:mt-0 gap-3">
+            {{if eq (print $client.Status) "banned"}}
+            <form action="/clients/{{$client.ID}}/unban" method="POST">
+                <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
+                <button type="submit"
+                    class="inline-flex items-center rounded-md bg-green-600 px-3 py-2 text-sm font-semibold text-white shadow-sm hover:bg-green-500">
+                    <svg class="-ml-0.5 mr-1.5 h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+                        <path fill-rule="evenodd"
+                            d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.857-9.809a.75.75 0 00-1.214-.882l-3.483 4.79-1.88-1.88a.75.75 0 10-1.06 1.061l2.5 2.5a.75.75 0 001.137-.089l4-5.5z"
+                            clip-rule="evenodd" />
+                    </svg>
+                    Unban Client
+                </button>
+            </form>
+            {{else}}
+            <div x-data="{ showModal: false }">
+                <button @click="showModal = true" type="button"
+                    class="inline-flex items-center rounded-md bg-red-600 px-3 py-2 text-sm font-semibold text-white shadow-sm hover:bg-red-500">
+                    <svg class="-ml-0.5 mr-1.5 h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+                        <path fill-rule="evenodd"
+                            d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.28 7.22a.75.75 0 00-1.06 1.06L8.94 10l-1.72 1.72a.75.75 0 101.06 1.06L10 11.06l1.72 1.72a.75.75 0 101.06-1.06L11.06 10l1.72-1.72a.75.75 0 00-1.06-1.06L10 8.94 8.28 7.22z"
+                            clip-rule="evenodd" />
+                    </svg>
+                    Ban Client
+                </button>
+
+                <!-- Modal -->
+                <div x-show="showModal" x-cloak class="relative z-10 hidden" role="dialog" aria-modal="true">
+                    <div class="fixed inset-0 bg-gray-500 bg-opacity-75 transition-opacity"></div>
+                    <div class="fixed inset-0 z-10 overflow-y-auto">
+                        <div class="flex min-h-full items-end justify-center p-4 text-center sm:items-center sm:p-0">
+                            <div @click.away="showModal = false"
+                                class="relative transform overflow-hidden rounded-lg bg-white px-4 pb-4 pt-5 text-left shadow-xl transition-all sm:my-8 sm:w-full sm:max-w-lg sm:p-6">
+                                <form action="/clients/{{$client.ID}}/ban" method="POST">
+                                    <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
+                                    <div class="sm:flex sm:items-start">
+                                        <div
+                                            class="mx-auto flex h-12 w-12 flex-shrink-0 items-center justify-center rounded-full bg-red-100 sm:mx-0 sm:h-10 sm:w-10">
+                                            <svg class="h-6 w-6 text-red-600" fill="none" viewBox="0 0 24 24"
+                                                stroke-width="1.5" stroke="currentColor">
+                                                <path stroke-linecap="round" stroke-linejoin="round"
+                                                    d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z" />
+                                            </svg>
+                                        </div>
+                                        <div class="mt-3 text-center sm:ml-4 sm:mt-0 sm:text-left flex-1">
+                                            <h3 class="text-base font-semibold leading-6 text-gray-900">Ban Client</h3>
+                                            <div class="mt-2">
+                                                <p class="text-sm text-gray-500">Are you sure you want to ban this
+                                                    client? All their licenses will be affected.</p>
+                                            </div>
+                                            <div class="mt-4">
+                                                <label for="reason"
+                                                    class="block text-sm font-medium text-gray-700">Reason</label>
+                                                <textarea name="reason" id="reason" rows="2"
+                                                    class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-primary-500 focus:ring-primary-500 sm:text-sm"
+                                                    placeholder="Enter reason for banning"></textarea>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <div class="mt-5 sm:mt-4 sm:flex sm:flex-row-reverse gap-3">
+                                        <button type="submit"
+                                            class="inline-flex w-full justify-center rounded-md bg-red-600 px-3 py-2 text-sm font-semibold text-white shadow-sm hover:bg-red-500 sm:w-auto">Ban</button>
+                                        <button @click="showModal = false" type="button"
+                                            class="mt-3 inline-flex w-full justify-center rounded-md bg-white px-3 py-2 text-sm font-semibold text-gray-900 shadow-sm ring-1 ring-inset ring-gray-300 hover:bg-gray-50 sm:mt-0 sm:w-auto">Cancel</button>
+                                    </div>
+                                </form>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            {{end}}
+            <a href="/licenses/new?client={{$client.ID}}"
+                class="inline-flex items-center rounded-md bg-primary-600 px-3 py-2 text-sm font-semibold text-white shadow-sm hover:bg-primary-500">
+                <svg class="-ml-0.5 mr-1.5 h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+                    <path
+                        d="M10.75 4.75a.75.75 0 00-1.5 0v4.5h-4.5a.75.75 0 000 1.5h4.5v4.5a.75.75 0 001.5 0v-4.5h4.5a.75.75 0 000-1.5h-4.5v-4.5z" />
+                </svg>
+                Issue License
+            </a>
+        </div>
+    </div>
+
+    <!-- Client Info -->
+    <div class="overflow-hidden bg-white shadow sm:rounded-lg">
+        <div class="px-4 py-5 sm:px-6">
+            <h3 class="text-lg font-semibold leading-6 text-gray-900">Client Information</h3>
+        </div>
+        <div class="border-t border-gray-200 px-4 py-5 sm:px-6">
+            <dl class="grid grid-cols-1 gap-x-4 gap-y-6 sm:grid-cols-2">
+                <div>
+                    <dt class="text-sm font-medium text-gray-500">Client ID</dt>
+                    <dd class="mt-1 text-sm text-gray-900 font-mono">{{$client.ID}}</dd>
+                </div>
+                <div>
+                    <dt class="text-sm font-medium text-gray-500">Email</dt>
+                    <dd class="mt-1 text-sm text-gray-900">{{$client.Email}}</dd>
+                </div>
+                <div>
+                    <dt class="text-sm font-medium text-gray-500">Status</dt>
+                    <dd class="mt-1 text-sm text-gray-900">{{statusBadge (print $client.Status)}}</dd>
+                </div>
+                <div>
+                    <dt class="text-sm font-medium text-gray-500">Created At</dt>
+                    <dd class="mt-1 text-sm text-gray-900">{{formatTime $client.CreatedAt}}</dd>
+                </div>
+                {{if eq (print $client.Status) "banned"}}
+                <div>
+                    <dt class="text-sm font-medium text-gray-500">Banned At</dt>
+                    <dd class="mt-1 text-sm text-red-600">{{formatTime $client.BannedAt}}</dd>
+                </div>
+                <div>
+                    <dt class="text-sm font-medium text-gray-500">Ban Reason</dt>
+                    <dd class="mt-1 text-sm text-red-600">{{if $client.BanReason}}{{$client.BanReason}}{{else}}-{{end}}
+                    </dd>
+                </div>
+                {{end}}
+            </dl>
+        </div>
+    </div>
+
+    <!-- Client's Licenses -->
+    <div class="overflow-hidden bg-white shadow sm:rounded-lg">
+        <div class="px-4 py-5 sm:px-6 flex items-center justify-between">
+            <h3 class="text-lg font-semibold leading-6 text-gray-900">Licenses</h3>
+            <a href="/licenses/new?client={{$client.ID}}"
+                class="text-sm font-medium text-primary-600 hover:text-primary-500">
+                Issue new license
+            </a>
+        </div>
+        <div class="border-t border-gray-200">
+            {{if .Data.Licenses}}
+            <table class="min-w-full divide-y divide-gray-200">
+                <thead class="bg-gray-50">
+                    <tr>
+                        <th scope="col"
+                            class="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">
+                            License Key</th>
+                        <th scope="col"
+                            class="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">Plan
+                        </th>
+                        <th scope="col"
+                            class="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">
+                            Status</th>
+                        <th scope="col"
+                            class="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">
+                            Expires</th>
+                        <th scope="col" class="relative px-6 py-3">
+                            <span class="sr-only">View</span>
+                        </th>
+                    </tr>
+                </thead>
+                <tbody class="divide-y divide-gray-200 bg-white">
+                    {{range .Data.Licenses}}
+                    <tr class="hover:bg-gray-50">
+                        <td class="whitespace-nowrap px-6 py-4 text-sm font-medium text-gray-900">
+                            <a href="/licenses/{{.ID}}" class="text-primary-600 hover:text-primary-900">
+                                {{truncate .LicenseKey 25}}
+                            </a>
+                        </td>
+                        <td class="whitespace-nowrap px-6 py-4 text-sm text-gray-500">
+                            <span
+                                class="inline-flex items-center rounded-md bg-blue-50 px-2 py-1 text-xs font-medium text-blue-700 ring-1 ring-inset ring-blue-700/10">
+                                {{.PlanSlug}}
+                            </span>
+                        </td>
+                        <td class="whitespace-nowrap px-6 py-4 text-sm">
+                            {{if .IsRevoked}}
+                            {{statusBadge "revoked"}}
+                            {{else if isExpired .ExpiresAt}}
+                            {{statusBadge "expired"}}
+                            {{else}}
+                            {{statusBadge "active"}}
+                            {{end}}
+                        </td>
+                        <td class="whitespace-nowrap px-6 py-4 text-sm text-gray-500">{{formatDate .ExpiresAt}}</td>
+                        <td class="whitespace-nowrap px-6 py-4 text-right text-sm font-medium">
+                            <a href="/licenses/{{.ID}}" class="text-primary-600 hover:text-primary-900">View</a>
+                        </td>
+                    </tr>
+                    {{end}}
+                </tbody>
+            </table>
+            {{else}}
+            <div class="px-6 py-12 text-center">
+                <svg class="mx-auto h-12 w-12 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                        d="M15.75 5.25a3 3 0 013 3m3 0a6 6 0 01-7.029 5.912c-.563-.097-1.159.026-1.563.43L10.5 17.25H8.25v2.25H6v2.25H2.25v-2.818c0-.597.237-1.17.659-1.591l6.499-6.499c.404-.404.527-1 .43-1.563A6 6 0 1121.75 8.25z" />
+                </svg>
+                <h3 class="mt-2 text-sm font-semibold text-gray-900">No licenses</h3>
+                <p class="mt-1 text-sm text-gray-500">This client has no licenses yet.</p>
+                <div class="mt-6">
+                    <a href="/licenses/new?client={{$client.ID}}"
+                        class="inline-flex items-center rounded-md bg-primary-600 px-3 py-2 text-sm font-semibold text-white shadow-sm hover:bg-primary-500">
+                        Issue License
+                    </a>
+                </div>
+            </div>
+            {{end}}
+        </div>
+    </div>
+</div>
+{{end}}

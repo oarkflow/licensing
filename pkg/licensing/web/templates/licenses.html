@@ -1,0 +1,165 @@
+{{template "base" .}}
+
+{{define "content"}}
+<div class="space-y-6">
+    <!-- Page Header -->
+    <div class="md:flex md:items-center md:justify-between">
+        <div class="min-w-0 flex-1">
+            <h2 class="text-2xl font-bold leading-7 text-gray-900 sm:truncate sm:text-3xl sm:tracking-tight">
+                Licenses
+            </h2>
+            <p class="mt-1 text-sm text-gray-500">
+                Manage all software licenses
+            </p>
+        </div>
+        <div class="mt-4 flex md:ml-4 md:mt-0">
+            <a href="/licenses/new"
+                class="inline-flex items-center rounded-md bg-primary-600 px-3 py-2 text-sm font-semibold text-white shadow-sm hover:bg-primary-500 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary-600">
+                <svg class="-ml-0.5 mr-1.5 h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+                    <path
+                        d="M10.75 4.75a.75.75 0 00-1.5 0v4.5h-4.5a.75.75 0 000 1.5h4.5v4.5a.75.75 0 001.5 0v-4.5h4.5a.75.75 0 000-1.5h-4.5v-4.5z" />
+                </svg>
+                New License
+            </a>
+        </div>
+    </div>
+
+    <!-- Filters -->
+    <div class="flex flex-wrap gap-2">
+        <a href="/licenses"
+            class="{{if eq .Data.CurrentFilter ""}}bg-primary-100 text-primary-700 ring-primary-700{{else}}bg-white text-gray-600 ring-gray-300 hover:bg-gray-50{{end}} inline-flex items-center rounded-full px-3 py-1.5 text-sm font-medium ring-1 ring-inset">
+            All ({{.Data.TotalCount}})
+        </a>
+        <a href="/licenses?filter=active" class="{{if eq .Data.CurrentFilter " active"}}bg-green-100 text-green-700
+            ring-green-700{{else}}bg-white text-gray-600 ring-gray-300 hover:bg-gray-50{{end}} inline-flex items-center
+            rounded-full px-3 py-1.5 text-sm font-medium ring-1 ring-inset">
+            Active
+        </a>
+        <a href="/licenses?filter=revoked" class="{{if eq .Data.CurrentFilter " revoked"}}bg-red-100 text-red-700
+            ring-red-700{{else}}bg-white text-gray-600 ring-gray-300 hover:bg-gray-50{{end}} inline-flex items-center
+            rounded-full px-3 py-1.5 text-sm font-medium ring-1 ring-inset">
+            Revoked
+        </a>
+        <a href="/licenses?filter=expired" class="{{if eq .Data.CurrentFilter " expired"}}bg-yellow-100 text-yellow-700
+            ring-yellow-700{{else}}bg-white text-gray-600 ring-gray-300 hover:bg-gray-50{{end}} inline-flex items-center
+            rounded-full px-3 py-1.5 text-sm font-medium ring-1 ring-inset">
+            Expired
+        </a>
+    </div>
+
+    <!-- Licenses Table -->
+    <div class="overflow-hidden bg-white shadow ring-1 ring-black ring-opacity-5 sm:rounded-lg">
+        <table class="min-w-full divide-y divide-gray-300">
+            <thead class="bg-gray-50">
+                <tr>
+                    <th scope="col" class="py-3.5 pl-4 pr-3 text-left text-sm font-semibold text-gray-900 sm:pl-6">
+                        License Key</th>
+                    <th scope="col" class="px-3 py-3.5 text-left text-sm font-semibold text-gray-900">Email</th>
+                    <th scope="col" class="px-3 py-3.5 text-left text-sm font-semibold text-gray-900">Plan</th>
+                    <th scope="col" class="px-3 py-3.5 text-left text-sm font-semibold text-gray-900">Status</th>
+                    <th scope="col" class="px-3 py-3.5 text-left text-sm font-semibold text-gray-900">Devices</th>
+                    <th scope="col" class="px-3 py-3.5 text-left text-sm font-semibold text-gray-900">Expires</th>
+                    <th scope="col" class="relative py-3.5 pl-3 pr-4 sm:pr-6">
+                        <span class="sr-only">Actions</span>
+                    </th>
+                </tr>
+            </thead>
+            <tbody class="divide-y divide-gray-200 bg-white">
+                {{range .Data.Licenses}}
+                <tr class="hover:bg-gray-50">
+                    <td class="whitespace-nowrap py-4 pl-4 pr-3 text-sm sm:pl-6">
+                        <a href="/licenses/{{.ID}}" class="font-medium text-primary-600 hover:text-primary-900">
+                            {{truncate .LicenseKey 25}}
+                        </a>
+                    </td>
+                    <td class="whitespace-nowrap px-3 py-4 text-sm text-gray-500">{{.Email}}</td>
+                    <td class="whitespace-nowrap px-3 py-4 text-sm text-gray-500">
+                        <span
+                            class="inline-flex items-center rounded-md bg-blue-50 px-2 py-1 text-xs font-medium text-blue-700 ring-1 ring-inset ring-blue-700/10">
+                            {{.PlanSlug}}
+                        </span>
+                    </td>
+                    <td class="whitespace-nowrap px-3 py-4 text-sm">
+                        {{if .IsRevoked}}
+                        {{statusBadge "revoked"}}
+                        {{else if isExpired .ExpiresAt}}
+                        {{statusBadge "expired"}}
+                        {{else}}
+                        {{statusBadge "active"}}
+                        {{end}}
+                    </td>
+                    <td class="whitespace-nowrap px-3 py-4 text-sm text-gray-500">
+                        {{.DeviceCount}} / {{.MaxDevices}}
+                    </td>
+                    <td class="whitespace-nowrap px-3 py-4 text-sm text-gray-500">
+                        {{formatDate .ExpiresAt}}
+                        {{if not .IsRevoked}}
+                        {{if isExpired .ExpiresAt}}
+                        <span class="text-red-500 text-xs">(expired)</span>
+                        {{else}}
+                        <span class="text-gray-400 text-xs">({{daysUntil .ExpiresAt}} days)</span>
+                        {{end}}
+                        {{end}}
+                    </td>
+                    <td class="relative whitespace-nowrap py-4 pl-3 pr-4 text-right text-sm font-medium sm:pr-6">
+                        <div x-data="{ open: false }" class="relative inline-block text-left">
+                            <button @click="open = !open" type="button"
+                                class="flex items-center rounded-full bg-white p-1 text-gray-400 hover:text-gray-600 focus:outline-none">
+                                <svg class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+                                    <path
+                                        d="M10 3a1.5 1.5 0 110 3 1.5 1.5 0 010-3zM10 8.5a1.5 1.5 0 110 3 1.5 1.5 0 010-3zM11.5 15.5a1.5 1.5 0 10-3 0 1.5 1.5 0 003 0z" />
+                                </svg>
+                            </button>
+                            <div x-show="open" @click.away="open = false" x-cloak
+                                class="absolute right-0 z-10 mt-2 w-48 origin-top-right rounded-md bg-white shadow-lg ring-1 ring-black ring-opacity-5 focus:outline-none">
+                                <div class="py-1">
+                                    <a href="/licenses/{{.ID}}"
+                                        class="block px-4 py-2 text-sm text-gray-700 hover:bg-gray-100">View Details</a>
+                                    {{if .IsRevoked}}
+                                    <form action="/licenses/{{.ID}}/reinstate" method="POST" class="block">
+                                        <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
+                                        <button type="submit"
+                                            class="w-full text-left px-4 py-2 text-sm text-green-700 hover:bg-gray-100">Reinstate</button>
+                                    </form>
+                                    {{else}}
+                                    <form action="/licenses/{{.ID}}/revoke" method="POST" class="block"
+                                        onsubmit="return confirm('Are you sure you want to revoke this license?')">
+                                        <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
+                                        <input type="hidden" name="reason" value="Revoked by admin">
+                                        <button type="submit"
+                                            class="w-full text-left px-4 py-2 text-sm text-red-700 hover:bg-gray-100">Revoke</button>
+                                    </form>
+                                    {{end}}
+                                </div>
+                            </div>
+                        </div>
+                    </td>
+                </tr>
+                {{else}}
+                <tr>
+                    <td colspan="7" class="px-6 py-12 text-center">
+                        <svg class="mx-auto h-12 w-12 text-gray-400" fill="none" viewBox="0 0 24 24"
+                            stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                d="M15.75 5.25a3 3 0 013 3m3 0a6 6 0 01-7.029 5.912c-.563-.097-1.159.026-1.563.43L10.5 17.25H8.25v2.25H6v2.25H2.25v-2.818c0-.597.237-1.17.659-1.591l6.499-6.499c.404-.404.527-1 .43-1.563A6 6 0 1121.75 8.25z" />
+                        </svg>
+                        <h3 class="mt-2 text-sm font-semibold text-gray-900">No licenses</h3>
+                        <p class="mt-1 text-sm text-gray-500">Get started by creating a new license.</p>
+                        <div class="mt-6">
+                            <a href="/licenses/new"
+                                class="inline-flex items-center rounded-md bg-primary-600 px-3 py-2 text-sm font-semibold text-white shadow-sm hover:bg-primary-500">
+                                <svg class="-ml-0.5 mr-1.5 h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+                                    <path
+                                        d="M10.75 4.75a.75.75 0 00-1.5 0v4.5h-4.5a.75.75 0 000 1.5h4.5v4.5a.75.75 0 001.5 0v-4.5h4.5a.75.75 0 000-1.5h-4.5v-4.5z" />
+                                </svg>
+                                New License
+                            </a>
+                        </div>
+                    </td>
+                </tr>
+                {{end}}
+            </tbody>
+        </table>
+    </div>
+</div>
+{{end}}

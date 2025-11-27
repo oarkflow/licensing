@@ -26,11 +26,13 @@ type Storage interface {
 	RecordActivation(ctx context.Context, record *ActivationRecord) error
 	ListActivations(ctx context.Context, licenseID string) ([]*ActivationRecord, error)
 	CreateAdminUser(ctx context.Context, user *AdminUser) error
+	UpdateAdminUser(ctx context.Context, user *AdminUser) error
 	GetAdminUser(ctx context.Context, userID string) (*AdminUser, error)
 	GetAdminUserByUsername(ctx context.Context, username string) (*AdminUser, error)
 	ListAdminUsers(ctx context.Context) ([]*AdminUser, error)
 	SaveAPIKey(ctx context.Context, key *APIKeyRecord) error
 	UpdateAPIKey(ctx context.Context, key *APIKeyRecord) error
+	DeleteAPIKey(ctx context.Context, keyID string) error
 	GetAPIKeyByHash(ctx context.Context, hash string) (*APIKeyRecord, error)
 	ListAPIKeysByUser(ctx context.Context, userID string) ([]*APIKeyRecord, error)
 
@@ -378,6 +380,19 @@ func (s *InMemoryStorage) CreateAdminUser(_ context.Context, user *AdminUser) er
 	return nil
 }
 
+func (s *InMemoryStorage) UpdateAdminUser(_ context.Context, user *AdminUser) error {
+	if user == nil {
+		return fmt.Errorf("user is nil")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, exists := s.adminUsers[user.ID]; !exists {
+		return errUserMissing
+	}
+	s.adminUsers[user.ID] = cloneAdminUser(user)
+	return nil
+}
+
 func (s *InMemoryStorage) GetAdminUser(_ context.Context, userID string) (*AdminUser, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -447,6 +462,21 @@ func (s *InMemoryStorage) UpdateAPIKey(_ context.Context, key *APIKeyRecord) err
 		return fmt.Errorf("api key hash mismatch")
 	}
 	s.apiKeys[key.ID] = cloneAPIKeyRecord(key)
+	return nil
+}
+
+func (s *InMemoryStorage) DeleteAPIKey(_ context.Context, keyID string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	key, exists := s.apiKeys[keyID]
+	if !exists {
+		return errAPIKeyMissing
+	}
+	delete(s.apiKeys, keyID)
+	delete(s.apiKeysByHash, key.Hash)
+	if keys, ok := s.apiKeysByUser[key.UserID]; ok {
+		delete(keys, keyID)
+	}
 	return nil
 }
 
@@ -648,6 +678,13 @@ func (ps *PersistentStorage) CreateAdminUser(ctx context.Context, user *AdminUse
 	return ps.persist()
 }
 
+func (ps *PersistentStorage) UpdateAdminUser(ctx context.Context, user *AdminUser) error {
+	if err := ps.backend.UpdateAdminUser(ctx, user); err != nil {
+		return err
+	}
+	return ps.persist()
+}
+
 func (ps *PersistentStorage) GetAdminUser(ctx context.Context, userID string) (*AdminUser, error) {
 	return ps.backend.GetAdminUser(ctx, userID)
 }
@@ -669,6 +706,13 @@ func (ps *PersistentStorage) SaveAPIKey(ctx context.Context, key *APIKeyRecord) 
 
 func (ps *PersistentStorage) UpdateAPIKey(ctx context.Context, key *APIKeyRecord) error {
 	if err := ps.backend.UpdateAPIKey(ctx, key); err != nil {
+		return err
+	}
+	return ps.persist()
+}
+
+func (ps *PersistentStorage) DeleteAPIKey(ctx context.Context, keyID string) error {
+	if err := ps.backend.DeleteAPIKey(ctx, keyID); err != nil {
 		return err
 	}
 	return ps.persist()

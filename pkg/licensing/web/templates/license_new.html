@@ -1,0 +1,149 @@
+{{template "base" .}}
+
+{{define "content"}}
+<div class="space-y-6">
+    <!-- Breadcrumb -->
+    <nav class="flex" aria-label="Breadcrumb">
+        <ol class="flex items-center space-x-4">
+            <li>
+                <a href="/licenses" class="text-gray-400 hover:text-gray-500">
+                    <svg class="h-5 w-5 flex-shrink-0" viewBox="0 0 20 20" fill="currentColor">
+                        <path fill-rule="evenodd"
+                            d="M9.293 2.293a1 1 0 011.414 0l7 7A1 1 0 0117 11h-1v6a1 1 0 01-1 1h-2a1 1 0 01-1-1v-3a1 1 0 00-1-1H9a1 1 0 00-1 1v3a1 1 0 01-1 1H5a1 1 0 01-1-1v-6H3a1 1 0 01-.707-1.707l7-7z"
+                            clip-rule="evenodd" />
+                    </svg>
+                </a>
+            </li>
+            <li>
+                <div class="flex items-center">
+                    <svg class="h-5 w-5 flex-shrink-0 text-gray-300" fill="currentColor" viewBox="0 0 20 20">
+                        <path d="M5.555 17.776l8-16 .894.448-8 16-.894-.448z" />
+                    </svg>
+                    <a href="/licenses" class="ml-4 text-sm font-medium text-gray-500 hover:text-gray-700">Licenses</a>
+                </div>
+            </li>
+            <li>
+                <div class="flex items-center">
+                    <svg class="h-5 w-5 flex-shrink-0 text-gray-300" fill="currentColor" viewBox="0 0 20 20">
+                        <path d="M5.555 17.776l8-16 .894.448-8 16-.894-.448z" />
+                    </svg>
+                    <span class="ml-4 text-sm font-medium text-gray-500">New License</span>
+                </div>
+            </li>
+        </ol>
+    </nav>
+
+    <!-- Page Header -->
+    <div>
+        <h2 class="text-2xl font-bold leading-7 text-gray-900 sm:truncate sm:text-3xl sm:tracking-tight">
+            Create New License
+        </h2>
+        <p class="mt-1 text-sm text-gray-500">
+            Issue a new license to a client
+        </p>
+    </div>
+
+    <!-- Form -->
+    <form action="/licenses/new" method="POST" class="space-y-8 divide-y divide-gray-200">
+        <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+
+        <div class="space-y-8 divide-y divide-gray-200">
+            <div class="pt-8 first:pt-0">
+                <div class="grid grid-cols-1 gap-y-6 gap-x-4 sm:grid-cols-6">
+                    <!-- Client Selection -->
+                    <div class="sm:col-span-4">
+                        <label for="client_id" class="block text-sm font-medium leading-6 text-gray-900">Client
+                            *</label>
+                        <div class="mt-2">
+                            <select id="client_id" name="client_id" required
+                                class="block w-full rounded-md border-0 py-2 pl-3 pr-10 text-gray-900 ring-1 ring-inset ring-gray-300 focus:ring-2 focus:ring-primary-600 sm:text-sm sm:leading-6">
+                                <option value="">Select a client...</option>
+                                {{range .Data.Clients}}
+                                <option value="{{.ID}}">{{.Email}} ({{.Status}})</option>
+                                {{end}}
+                            </select>
+                        </div>
+                        <p class="mt-2 text-sm text-gray-500">
+                            Don't see the client? <a href="/clients/new"
+                                class="text-primary-600 hover:text-primary-500">Create a new client</a>
+                        </p>
+                    </div>
+
+                    <!-- Product Selection -->
+                    <div class="sm:col-span-3" x-data="{ selectedProduct: '' }">
+                        <label for="product_id"
+                            class="block text-sm font-medium leading-6 text-gray-900">Product</label>
+                        <div class="mt-2">
+                            <select id="product_id" name="product_id" x-model="selectedProduct"
+                                class="block w-full rounded-md border-0 py-2 pl-3 pr-10 text-gray-900 ring-1 ring-inset ring-gray-300 focus:ring-2 focus:ring-primary-600 sm:text-sm sm:leading-6">
+                                <option value="">No specific product</option>
+                                {{range .Data.Products}}
+                                <option value="{{.ID}}">{{.Name}}</option>
+                                {{end}}
+                            </select>
+                        </div>
+                    </div>
+
+                    <!-- Plan Slug -->
+                    <div class="sm:col-span-3">
+                        <label for="plan_slug" class="block text-sm font-medium leading-6 text-gray-900">Plan Slug
+                            *</label>
+                        <div class="mt-2">
+                            <input type="text" name="plan_slug" id="plan_slug" required
+                                placeholder="e.g., professional, enterprise"
+                                class="block w-full rounded-md border-0 py-2 px-3 text-gray-900 shadow-sm ring-1 ring-inset ring-gray-300 placeholder:text-gray-400 focus:ring-2 focus:ring-inset focus:ring-primary-600 sm:text-sm sm:leading-6">
+                        </div>
+                    </div>
+
+                    <!-- Duration -->
+                    <div class="sm:col-span-2">
+                        <label for="duration_days" class="block text-sm font-medium leading-6 text-gray-900">Duration
+                            (days) *</label>
+                        <div class="mt-2">
+                            <input type="number" name="duration_days" id="duration_days" value="365" min="1" required
+                                class="block w-full rounded-md border-0 py-2 px-3 text-gray-900 shadow-sm ring-1 ring-inset ring-gray-300 placeholder:text-gray-400 focus:ring-2 focus:ring-inset focus:ring-primary-600 sm:text-sm sm:leading-6">
+                        </div>
+                    </div>
+
+                    <!-- Max Devices -->
+                    <div class="sm:col-span-2">
+                        <label for="max_devices" class="block text-sm font-medium leading-6 text-gray-900">Max Devices
+                            *</label>
+                        <div class="mt-2">
+                            <input type="number" name="max_devices" id="max_devices" value="1" min="1" required
+                                class="block w-full rounded-md border-0 py-2 px-3 text-gray-900 shadow-sm ring-1 ring-inset ring-gray-300 placeholder:text-gray-400 focus:ring-2 focus:ring-inset focus:ring-primary-600 sm:text-sm sm:leading-6">
+                        </div>
+                    </div>
+
+                    <!-- Check Mode -->
+                    <div class="sm:col-span-2">
+                        <label for="check_mode" class="block text-sm font-medium leading-6 text-gray-900">Check
+                            Mode</label>
+                        <div class="mt-2">
+                            <select id="check_mode" name="check_mode"
+                                class="block w-full rounded-md border-0 py-2 pl-3 pr-10 text-gray-900 ring-1 ring-inset ring-gray-300 focus:ring-2 focus:ring-primary-600 sm:text-sm sm:leading-6">
+                                {{range .Data.CheckModes}}
+                                <option value="{{.}}" {{if eq . "yearly" }}selected{{end}}>{{.}}</option>
+                                {{end}}
+                            </select>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="pt-5">
+            <div class="flex justify-end gap-x-3">
+                <a href="/licenses"
+                    class="rounded-md bg-white py-2 px-3 text-sm font-semibold text-gray-900 shadow-sm ring-1 ring-inset ring-gray-300 hover:bg-gray-50">
+                    Cancel
+                </a>
+                <button type="submit"
+                    class="inline-flex justify-center rounded-md bg-primary-600 py-2 px-3 text-sm font-semibold text-white shadow-sm hover:bg-primary-500 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary-600">
+                    Create License
+                </button>
+            </div>
+        </div>
+    </form>
+</div>
+{{end}}

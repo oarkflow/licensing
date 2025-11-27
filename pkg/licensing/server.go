@@ -29,6 +29,7 @@ type Server struct {
 	tlsKeyPath         string
 	clientCAPath       string
 	allowInsecureHTTP  bool
+	webHandler         http.Handler // Optional web UI handler
 }
 
 type adminUserResponse struct {
@@ -101,6 +102,12 @@ func NewServer(lm *LicenseManager, port string, apiKeys []string, limiter *RateL
 		clientCAPath:       clientCAPath,
 		allowInsecureHTTP:  allowInsecure,
 	}, nil
+}
+
+// SetWebHandler sets an optional web UI handler for the server
+// The web handler will handle all non-API routes (everything not starting with /api/ or /health)
+func (s *Server) SetWebHandler(h http.Handler) {
+	s.webHandler = h
 }
 
 func clientIP(r *http.Request) string {
@@ -702,6 +709,8 @@ func (s *Server) handleLicenseActions(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) Start() error {
 	mux := http.NewServeMux()
+
+	// API routes
 	mux.HandleFunc("/api/activate", s.handleActivate)
 	mux.HandleFunc("/api/licenses", s.handleLicenses)
 	mux.HandleFunc("/api/verify", s.handleVerify)
@@ -714,6 +723,11 @@ func (s *Server) Start() error {
 	mux.HandleFunc("/api/products/", s.handleProductActions)
 	mux.HandleFunc("/api/entitlements", s.handleEntitlements)
 	mux.HandleFunc("/health", s.handleHealth)
+
+	// If web UI handler is set, use it for all other routes
+	if s.webHandler != nil {
+		mux.Handle("/", s.webHandler)
+	}
 
 	server := &http.Server{
 		Addr:              s.port,

@@ -391,8 +391,51 @@ func (lm *LicenseManager) CreateAdminUser(ctx context.Context, username, passwor
 	return user, nil
 }
 
+// AuthenticateAdmin verifies admin credentials and returns the user if valid
+func (lm *LicenseManager) AuthenticateAdmin(ctx context.Context, username, password string) (*AdminUser, error) {
+	user, err := lm.storage.GetAdminUserByUsername(ctx, username)
+	if err != nil {
+		return nil, fmt.Errorf("invalid credentials")
+	}
+	if err := bcrypt.CompareHashAndPassword(user.PasswordHash, []byte(password)); err != nil {
+		return nil, fmt.Errorf("invalid credentials")
+	}
+	return user, nil
+}
+
 func (lm *LicenseManager) ListAdminUsers(ctx context.Context) ([]*AdminUser, error) {
 	return lm.storage.ListAdminUsers(ctx)
+}
+
+// GetAdminUser retrieves an admin user by ID
+func (lm *LicenseManager) GetAdminUser(ctx context.Context, userID string) (*AdminUser, error) {
+	return lm.storage.GetAdminUser(ctx, userID)
+}
+
+// ChangeAdminPassword changes an admin user's password
+func (lm *LicenseManager) ChangeAdminPassword(ctx context.Context, userID, currentPassword, newPassword string) error {
+	user, err := lm.storage.GetAdminUser(ctx, userID)
+	if err != nil {
+		return fmt.Errorf("user not found")
+	}
+
+	if err := bcrypt.CompareHashAndPassword(user.PasswordHash, []byte(currentPassword)); err != nil {
+		return fmt.Errorf("current password is incorrect")
+	}
+
+	if len(newPassword) < 8 {
+		return fmt.Errorf("new password must be at least 8 characters")
+	}
+
+	hash, err := bcrypt.GenerateFromPassword([]byte(newPassword), bcrypt.DefaultCost)
+	if err != nil {
+		return fmt.Errorf("failed to hash password: %w", err)
+	}
+
+	user.PasswordHash = hash
+	user.UpdatedAt = time.Now()
+
+	return lm.storage.UpdateAdminUser(ctx, user)
 }
 
 func (lm *LicenseManager) GenerateAPIKey(ctx context.Context, userID string) (string, *APIKeyRecord, error) {
@@ -422,6 +465,11 @@ func (lm *LicenseManager) ListAPIKeysByUser(ctx context.Context, userID string) 
 		return nil, err
 	}
 	return lm.storage.ListAPIKeysByUser(ctx, userID)
+}
+
+// RevokeAPIKey deletes an API key by ID
+func (lm *LicenseManager) RevokeAPIKey(ctx context.Context, keyID string) error {
+	return lm.storage.DeleteAPIKey(ctx, keyID)
 }
 
 func (lm *LicenseManager) ValidateAPIKey(ctx context.Context, token string) (*AdminUser, error) {
@@ -480,6 +528,11 @@ func (lm *LicenseManager) GetClientByEmail(ctx context.Context, email string) (*
 		return nil, err
 	}
 	return client, nil
+}
+
+// GetClient retrieves a client by ID
+func (lm *LicenseManager) GetClient(ctx context.Context, clientID string) (*Client, error) {
+	return lm.storage.GetClient(ctx, clientID)
 }
 
 func (lm *LicenseManager) ListClients(ctx context.Context) ([]*Client, error) {
@@ -1176,4 +1229,26 @@ func (lm *LicenseManager) ListLicenses(ctx context.Context) ([]*License, error) 
 
 func (lm *LicenseManager) ListActivations(ctx context.Context, licenseID string) ([]*ActivationRecord, error) {
 	return lm.storage.ListActivations(ctx, licenseID)
+}
+
+// DeactivateDevice removes a device from a license by fingerprint
+func (lm *LicenseManager) DeactivateDevice(ctx context.Context, licenseID, fingerprint string) error {
+	license, err := lm.storage.GetLicense(ctx, licenseID)
+	if err != nil {
+		return fmt.Errorf("license not found: %w", err)
+	}
+
+	if license.Devices == nil {
+		return fmt.Errorf("no devices found on this license")
+	}
+
+	if _, exists := license.Devices[fingerprint]; !exists {
+		return fmt.Errorf("device not found")
+	}
+
+	delete(license.Devices, fingerprint)
+	license.DeviceCount = len(license.Devices)
+	license.CurrentActivations = license.DeviceCount
+
+	return lm.storage.UpdateLicense(ctx, license)
 }
