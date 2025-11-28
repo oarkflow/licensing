@@ -17,6 +17,32 @@ type Product struct {
 	UpdatedAt   time.Time `json:"updated_at"`
 }
 
+// Subscription represents a customer's subscription to a product plan.
+type Subscription struct {
+	ID              string    `json:"id"`
+	ClientID        string    `json:"client_id"`
+	ProductID       string    `json:"product_id"`
+	PlanID          string    `json:"plan_id"`
+	LicenseID       string    `json:"license_id,omitempty"` // Links to generated license
+	Status          string    `json:"status"`               // active, cancelled, expired, pending
+	StartDate       time.Time `json:"start_date"`
+	EndDate         time.Time `json:"end_date"`
+	BillingCycle    string    `json:"billing_cycle"` // monthly, yearly, lifetime
+	NextBillingDate time.Time `json:"next_billing_date,omitempty"`
+	CancelledAt     time.Time `json:"cancelled_at,omitempty"`
+	CancelReason    string    `json:"cancel_reason,omitempty"`
+	CreatedAt       time.Time `json:"created_at"`
+	UpdatedAt       time.Time `json:"updated_at"`
+}
+
+// Subscription status constants
+const (
+	SubscriptionStatusActive    = "active"
+	SubscriptionStatusCancelled = "cancelled"
+	SubscriptionStatusExpired   = "expired"
+	SubscriptionStatusPending   = "pending"
+)
+
 // Plan represents a pricing/feature tier for a product.
 type Plan struct {
 	ID           string            `json:"id"`
@@ -28,11 +54,20 @@ type Plan struct {
 	Currency     string            `json:"currency"`      // ISO 4217 currency code (e.g., USD)
 	BillingCycle string            `json:"billing_cycle"` // monthly, yearly, lifetime, one-time
 	TrialDays    int               `json:"trial_days,omitempty"`
+	IsTrial      bool              `json:"is_trial"` // If true, this is the trial plan for the product (only one per product)
 	IsActive     bool              `json:"is_active"`
 	DisplayOrder int               `json:"display_order,omitempty"`
 	Metadata     map[string]string `json:"metadata,omitempty"`
 	CreatedAt    time.Time         `json:"created_at"`
 	UpdatedAt    time.Time         `json:"updated_at"`
+}
+
+// TrialDuration returns the trial duration as time.Duration.
+func (p *Plan) TrialDuration() time.Duration {
+	if !p.IsTrial || p.TrialDays <= 0 {
+		return 0
+	}
+	return time.Duration(p.TrialDays) * 24 * time.Hour
 }
 
 // Feature represents a capability or functionality that can be gated by plans.

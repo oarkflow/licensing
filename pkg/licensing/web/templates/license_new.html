@@ -70,13 +70,13 @@
                     </div>
 
                     <!-- Product Selection -->
-                    <div class="sm:col-span-3" x-data="{ selectedProduct: '' }">
-                        <label for="product_id"
-                            class="block text-sm font-medium leading-6 text-gray-900">Product</label>
+                    <div class="sm:col-span-3">
+                        <label for="product_id" class="block text-sm font-medium leading-6 text-gray-900">Product
+                            *</label>
                         <div class="mt-2">
-                            <select id="product_id" name="product_id" x-model="selectedProduct"
+                            <select id="product_id" name="product_id" required onchange="updatePlans()"
                                 class="block w-full rounded-md border-0 py-2 pl-3 pr-10 text-gray-900 ring-1 ring-inset ring-gray-300 focus:ring-2 focus:ring-primary-600 sm:text-sm sm:leading-6">
-                                <option value="">No specific product</option>
+                                <option value="">Select a product...</option>
                                 {{range .Data.Products}}
                                 <option value="{{.ID}}">{{.Name}}</option>
                                 {{end}}
@@ -84,15 +84,16 @@
                         </div>
                     </div>
 
-                    <!-- Plan Slug -->
+                    <!-- Plan Selection -->
                     <div class="sm:col-span-3">
-                        <label for="plan_slug" class="block text-sm font-medium leading-6 text-gray-900">Plan Slug
-                            *</label>
+                        <label for="plan_id" class="block text-sm font-medium leading-6 text-gray-900">Plan *</label>
                         <div class="mt-2">
-                            <input type="text" name="plan_slug" id="plan_slug" required
-                                placeholder="e.g., professional, enterprise"
-                                class="block w-full rounded-md border-0 py-2 px-3 text-gray-900 shadow-sm ring-1 ring-inset ring-gray-300 placeholder:text-gray-400 focus:ring-2 focus:ring-inset focus:ring-primary-600 sm:text-sm sm:leading-6">
+                            <select id="plan_id" name="plan_id" required onchange="updatePlanSlug()"
+                                class="block w-full rounded-md border-0 py-2 pl-3 pr-10 text-gray-900 ring-1 ring-inset ring-gray-300 focus:ring-2 focus:ring-primary-600 sm:text-sm sm:leading-6">
+                                <option value="">Select a product first...</option>
+                            </select>
                         </div>
+                        <input type="hidden" name="plan_slug" id="plan_slug" value="">
                     </div>
 
                     <!-- Duration -->
@@ -146,4 +147,62 @@
         </div>
     </form>
 </div>
+
+<script>
+    // Store all plans by product ID for filtering
+    const productPlans = {
+        { {range $productID, $plans := .Data.ProductPlans } } "{{$productID}}": [
+        {{ range $plans }}{ id: "{{.ID}}", name: "{{.Name}}", slug: "{{.Slug}}", price: {{.Price }}, currency: "{{.Currency}}", billingCycle: "{{.BillingCycle}}" },
+        {{ end }}
+    ],
+        {{ end }}
+    };
+
+    function updatePlans() {
+        const productSelect = document.getElementById('product_id');
+        const planSelect = document.getElementById('plan_id');
+        const planSlugInput = document.getElementById('plan_slug');
+        const selectedProductId = productSelect.value;
+
+        // Clear existing options
+        planSelect.innerHTML = '';
+        planSlugInput.value = '';
+
+        if (!selectedProductId) {
+            planSelect.innerHTML = '<option value="">Select a product first...</option>';
+            return;
+        }
+
+        const plans = productPlans[selectedProductId] || [];
+        if (plans.length === 0) {
+            planSelect.innerHTML = '<option value="">No plans available for this product</option>';
+            return;
+        }
+
+        // Add default option
+        planSelect.innerHTML = '<option value="">Select a plan...</option>';
+
+        // Add plan options
+        plans.forEach(plan => {
+            const option = document.createElement('option');
+            option.value = plan.id;
+            option.dataset.slug = plan.slug;
+            const priceStr = (plan.price / 100).toFixed(2);
+            option.textContent = `${plan.name} - ${plan.currency} ${priceStr}/${plan.billingCycle}`;
+            planSelect.appendChild(option);
+        });
+    }
+
+    function updatePlanSlug() {
+        const planSelect = document.getElementById('plan_id');
+        const planSlugInput = document.getElementById('plan_slug');
+        const selectedOption = planSelect.options[planSelect.selectedIndex];
+
+        if (selectedOption && selectedOption.dataset.slug) {
+            planSlugInput.value = selectedOption.dataset.slug;
+        } else {
+            planSlugInput.value = '';
+        }
+    }
+</script>
 {{end}}

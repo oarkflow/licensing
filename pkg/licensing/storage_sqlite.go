@@ -190,6 +190,35 @@ func ensureSQLiteSchema(db *squealx.DB) error {
 			return fmt.Errorf("sqlite migration update failed: %w", err)
 		}
 	}
+	// Add trial-related columns to licenses table
+	if err := ensureSQLiteColumn(db, "licenses", "is_trial", "INTEGER NOT NULL DEFAULT 0"); err != nil {
+		return err
+	}
+	if err := ensureSQLiteColumn(db, "licenses", "trial_started_at", "TIMESTAMP"); err != nil {
+		return err
+	}
+	if err := ensureSQLiteColumn(db, "licenses", "trial_device_fingerprint", "TEXT"); err != nil {
+		return err
+	}
+	// Create device_trials table to track devices that have used trial licenses
+	_, err = db.Exec(`CREATE TABLE IF NOT EXISTS device_trials (
+		device_fingerprint TEXT PRIMARY KEY,
+		license_id TEXT NOT NULL,
+		client_id TEXT NOT NULL,
+		email TEXT NOT NULL,
+		product_id TEXT,
+		trial_started_at TIMESTAMP NOT NULL,
+		trial_expires_at TIMESTAMP NOT NULL,
+		created_at TIMESTAMP NOT NULL,
+		FOREIGN KEY(license_id) REFERENCES licenses(id) ON DELETE CASCADE
+	);`)
+	if err != nil {
+		return fmt.Errorf("failed to create device_trials table: %w", err)
+	}
+	_, err = db.Exec(`CREATE INDEX IF NOT EXISTS idx_device_trials_license_id ON device_trials(license_id);`)
+	if err != nil {
+		return fmt.Errorf("failed to create device_trials index: %w", err)
+	}
 	return nil
 }
 
@@ -357,11 +386,11 @@ func scanLicenseRow(scanner rowScanner) (*License, error) {
 	var revokedAt, lastActivated sqliteNullTime
 	var revokeReason sql.NullString
 	var issuedAt, expiresAt sqliteTimeValue
-	var isRevoked, isActivated int
+	var isRevoked, isActivated, isTrial int
 	var checkMode sql.NullString
 	var checkInterval sql.NullInt64
-	var nextCheck, lastCheck sqliteNullTime
-	var entitlementsJSON sql.NullString
+	var nextCheck, lastCheck, trialStartedAt sqliteNullTime
+	var entitlementsJSON, trialDeviceFingerprint sql.NullString
 	if err := scanner.Scan(
 		&lic.ID,
 		&lic.ClientID,
@@ -384,11 +413,15 @@ func scanLicenseRow(scanner rowScanner) (*License, error) {
 		&nextCheck,
 		&lastCheck,
 		&entitlementsJSON,
+		&isTrial,
+		&trialStartedAt,
+		&trialDeviceFingerprint,
 	); err != nil {
 		return nil, err
 	}
 	lic.IsRevoked = isRevoked == 1
 	lic.IsActivated = isActivated == 1
+	lic.IsTrial = isTrial == 1
 	lic.IssuedAt = issuedAt.Time
 	lic.ExpiresAt = expiresAt.Time
 	if productID.Valid {
@@ -421,6 +454,12 @@ func scanLicenseRow(scanner rowScanner) (*License, error) {
 		if err := json.Unmarshal([]byte(entitlementsJSON.String), &entitlements); err == nil {
 			lic.Entitlements = &entitlements
 		}
+	}
+	if trialStartedAt.Valid {
+		lic.TrialStartedAt = trialStartedAt.Time
+	}
+	if trialDeviceFingerprint.Valid {
+		lic.TrialDeviceFingerprint = trialDeviceFingerprint.String
 	}
 	lic.Devices = make(map[string]*LicenseDevice)
 	return &lic, nil
@@ -544,8 +583,9 @@ func (s *SQLiteStorage) SaveLicense(ctx context.Context, license *License) error
 		query := `INSERT INTO licenses (
 			id, client_id, email, product_id, plan_id, plan_slug, license_key, license_key_norm, is_revoked, revoked_at,
 			revoke_reason, is_activated, issued_at, last_activated_at, expires_at, current_activations, max_devices,
-			check_mode, check_interval_seconds, next_check_at, last_check_at, entitlements)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+			check_mode, check_interval_seconds, next_check_at, last_check_at, entitlements,
+			is_trial, trial_started_at, trial_device_fingerprint)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 		_, err := tx.ExecContext(ctx, query,
 			license.ID,
 			license.ClientID,
@@ -569,6 +609,9 @@ func (s *SQLiteStorage) SaveLicense(ctx context.Context, license *License) error
 			nullTime(license.NextCheckAt),
 			nullTime(license.LastCheckAt),
 			entitlementsJSON,
+			boolToInt(license.IsTrial),
+			nullTime(license.TrialStartedAt),
+			nullString(license.TrialDeviceFingerprint),
 		)
 		if err != nil {
 			if isSQLiteUniqueErr(err) {
@@ -600,7 +643,8 @@ func (s *SQLiteStorage) UpdateLicense(ctx context.Context, license *License) err
 			client_id = ?, email = ?, product_id = ?, plan_id = ?, plan_slug = ?, license_key = ?, license_key_norm = ?,
 	            is_revoked = ?, revoked_at = ?, revoke_reason = ?, is_activated = ?, issued_at = ?,
 	            last_activated_at = ?, expires_at = ?, current_activations = ?, max_devices = ?,
-	            check_mode = ?, check_interval_seconds = ?, next_check_at = ?, last_check_at = ?, entitlements = ?
+	            check_mode = ?, check_interval_seconds = ?, next_check_at = ?, last_check_at = ?, entitlements = ?,
+	            is_trial = ?, trial_started_at = ?, trial_device_fingerprint = ?
 	            WHERE id = ?`
 		res, err := tx.ExecContext(ctx, query,
 			license.ClientID,
@@ -624,6 +668,9 @@ func (s *SQLiteStorage) UpdateLicense(ctx context.Context, license *License) err
 			nullTime(license.NextCheckAt),
 			nullTime(license.LastCheckAt),
 			entitlementsJSON,
+			boolToInt(license.IsTrial),
+			nullTime(license.TrialStartedAt),
+			nullString(license.TrialDeviceFingerprint),
 			license.ID,
 		)
 		if err != nil {
@@ -646,7 +693,8 @@ func (s *SQLiteStorage) UpdateLicense(ctx context.Context, license *License) err
 func (s *SQLiteStorage) GetLicense(ctx context.Context, licenseID string) (*License, error) {
 	query := `SELECT id, client_id, email, product_id, plan_id, plan_slug, license_key, is_revoked, revoked_at,
 		revoke_reason, is_activated, issued_at, last_activated_at, expires_at,
-		current_activations, max_devices, check_mode, check_interval_seconds, next_check_at, last_check_at, entitlements
+		current_activations, max_devices, check_mode, check_interval_seconds, next_check_at, last_check_at, entitlements,
+		is_trial, trial_started_at, trial_device_fingerprint
 		FROM licenses WHERE id = ?`
 	row := s.db.QueryRowContext(ctx, query, licenseID)
 	license, err := scanLicenseRow(row)
@@ -668,7 +716,8 @@ func (s *SQLiteStorage) GetLicense(ctx context.Context, licenseID string) (*Lice
 func (s *SQLiteStorage) GetLicenseByKey(ctx context.Context, licenseKey string) (*License, error) {
 	query := `SELECT id, client_id, email, product_id, plan_id, plan_slug, license_key, is_revoked, revoked_at,
 		revoke_reason, is_activated, issued_at, last_activated_at, expires_at,
-		current_activations, max_devices, check_mode, check_interval_seconds, next_check_at, last_check_at, entitlements
+		current_activations, max_devices, check_mode, check_interval_seconds, next_check_at, last_check_at, entitlements,
+		is_trial, trial_started_at, trial_device_fingerprint
 		FROM licenses WHERE license_key_norm = ?`
 	row := s.db.QueryRowContext(ctx, query, normalizeLicenseKey(licenseKey))
 	license, err := scanLicenseRow(row)
@@ -690,7 +739,8 @@ func (s *SQLiteStorage) GetLicenseByKey(ctx context.Context, licenseKey string) 
 func (s *SQLiteStorage) ListLicenses(ctx context.Context) ([]*License, error) {
 	query := `SELECT id, client_id, email, product_id, plan_id, plan_slug, license_key, is_revoked, revoked_at,
 		revoke_reason, is_activated, issued_at, last_activated_at, expires_at,
-		current_activations, max_devices, check_mode, check_interval_seconds, next_check_at, last_check_at, entitlements
+		current_activations, max_devices, check_mode, check_interval_seconds, next_check_at, last_check_at, entitlements,
+		is_trial, trial_started_at, trial_device_fingerprint
 		FROM licenses ORDER BY issued_at DESC`
 	rows, err := s.db.QueryContext(ctx, query)
 	if err != nil {
@@ -1110,4 +1160,111 @@ func isSQLiteUniqueErr(err error) bool {
 		return false
 	}
 	return strings.Contains(strings.ToLower(err.Error()), "unique constraint failed")
+}
+
+// ==================== Device Trial Methods ====================
+
+func (s *SQLiteStorage) SaveDeviceTrial(ctx context.Context, trial *DeviceTrial) error {
+	if trial == nil {
+		return fmt.Errorf("device trial is nil")
+	}
+	query := `INSERT INTO device_trials (device_fingerprint, license_id, client_id, email, product_id, trial_started_at, trial_expires_at, created_at)
+              VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+	_, err := s.db.ExecContext(ctx, query,
+		trial.DeviceFingerprint,
+		trial.LicenseID,
+		trial.ClientID,
+		trial.Email,
+		nullString(trial.ProductID),
+		trial.TrialStartedAt,
+		trial.TrialExpiresAt,
+		trial.CreatedAt,
+	)
+	if err != nil {
+		if isSQLiteUniqueErr(err) {
+			return errDeviceTrialExists
+		}
+		return err
+	}
+	return nil
+}
+
+func (s *SQLiteStorage) GetDeviceTrial(ctx context.Context, deviceFingerprint string) (*DeviceTrial, error) {
+	query := `SELECT device_fingerprint, license_id, client_id, email, product_id, trial_started_at, trial_expires_at, created_at
+              FROM device_trials WHERE device_fingerprint = ?`
+	row := s.db.QueryRowContext(ctx, query, deviceFingerprint)
+	var trial DeviceTrial
+	var productID sql.NullString
+	var trialStarted, trialExpires, createdAt sqliteTimeValue
+	if err := row.Scan(
+		&trial.DeviceFingerprint,
+		&trial.LicenseID,
+		&trial.ClientID,
+		&trial.Email,
+		&productID,
+		&trialStarted,
+		&trialExpires,
+		&createdAt,
+	); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, errDeviceTrialMissing
+		}
+		return nil, err
+	}
+	if productID.Valid {
+		trial.ProductID = productID.String
+	}
+	trial.TrialStartedAt = trialStarted.Time
+	trial.TrialExpiresAt = trialExpires.Time
+	trial.CreatedAt = createdAt.Time
+	return &trial, nil
+}
+
+func (s *SQLiteStorage) HasDeviceUsedTrial(ctx context.Context, deviceFingerprint string) (bool, error) {
+	query := `SELECT 1 FROM device_trials WHERE device_fingerprint = ? LIMIT 1`
+	row := s.db.QueryRowContext(ctx, query, deviceFingerprint)
+	var dummy int
+	if err := row.Scan(&dummy); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return false, nil
+		}
+		return false, err
+	}
+	return true, nil
+}
+
+func (s *SQLiteStorage) ListDeviceTrials(ctx context.Context) ([]*DeviceTrial, error) {
+	query := `SELECT device_fingerprint, license_id, client_id, email, product_id, trial_started_at, trial_expires_at, created_at
+              FROM device_trials ORDER BY created_at DESC`
+	rows, err := s.db.QueryContext(ctx, query)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var trials []*DeviceTrial
+	for rows.Next() {
+		var trial DeviceTrial
+		var productID sql.NullString
+		var trialStarted, trialExpires, createdAt sqliteTimeValue
+		if err := rows.Scan(
+			&trial.DeviceFingerprint,
+			&trial.LicenseID,
+			&trial.ClientID,
+			&trial.Email,
+			&productID,
+			&trialStarted,
+			&trialExpires,
+			&createdAt,
+		); err != nil {
+			return nil, err
+		}
+		if productID.Valid {
+			trial.ProductID = productID.String
+		}
+		trial.TrialStartedAt = trialStarted.Time
+		trial.TrialExpiresAt = trialExpires.Time
+		trial.CreatedAt = createdAt.Time
+		trials = append(trials, &trial)
+	}
+	return trials, rows.Err()
 }

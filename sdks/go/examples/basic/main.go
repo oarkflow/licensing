@@ -1,15 +1,20 @@
 // Example: Basic license activation and verification
 //
 // This example shows the minimal code needed to:
-// 1. Activate a license with credentials
-// 2. Verify the license is valid
-// 3. Access license data and check features
+// 1. Request a trial license (if eligible)
+// 2. Activate a license with credentials
+// 3. Verify the license is valid
+// 4. Handle trial expiration with subscription prompts
+// 5. Access license data and check features
 //
 // Usage:
 //    go run main.go --license-key "XXXX-XXXX-..." --email "user@example.com" --client-id "client-123"
 //
 // Or using a credentials file:
 //    go run main.go --license-file "/path/to/credentials.json"
+//
+// Or start a trial:
+//    go run main.go --trial --email "user@example.com"
 //
 // Credentials file format:
 //    {"email": "user@example.com", "client_id": "client-123", "license_key": "XXXX-XXXX-..."}
@@ -33,6 +38,9 @@ func main() {
 	email := flag.String("email", "", "Email for activation")
 	clientID := flag.String("client-id", "", "Client ID for activation")
 	licenseFile := flag.String("license-file", "", "Path to JSON file with license credentials")
+	startTrial := flag.Bool("trial", false, "Start a trial license")
+	productID := flag.String("product-id", "", "Product ID for trial (optional)")
+	subscriptionURL := flag.String("subscription-url", "https://example.com/subscribe", "URL to subscribe after trial")
 	flag.Parse()
 
 	fmt.Println("=== Go Licensing SDK - Basic Example ===")
@@ -63,6 +71,7 @@ func main() {
 		AppVersion:        "1.0.0",
 		HTTPTimeout:       15 * time.Second,
 		AllowInsecureHTTP: true, // Only for development!
+		ProductID:         "prod_demo_001",
 	})
 	if err != nil {
 		log.Fatalf("Failed to create client: %v", err)
@@ -74,30 +83,73 @@ func main() {
 	} else {
 		fmt.Println("📝 No local license found")
 
-		// Validate credentials
-		if credLicenseKey == "" || credEmail == "" || credClientID == "" {
-			fmt.Println()
-			fmt.Println("Usage: go run main.go --license-key KEY --email EMAIL --client-id ID")
-			fmt.Println("   or: go run main.go --license-file /path/to/credentials.json")
-			fmt.Println()
-			fmt.Println("Credentials file format:")
-			fmt.Println(`  {"email": "...", "client_id": "...", "license_key": "..."}`)
-			fmt.Println()
-			fmt.Println("To get credentials:")
-			fmt.Println("1. Start the license server: go run cmd/server/main.go")
-			fmt.Println("2. Create a client via API")
-			fmt.Println("3. Create a license via API")
-			fmt.Println("4. Use the license_key from the response")
-			os.Exit(1)
-		}
+		// Check if user wants to start a trial
+		if *startTrial {
+			if credEmail == "" {
+				fmt.Println("❌ Email is required for trial. Use --email flag.")
+				os.Exit(1)
+			}
 
-		// Step 2: Activate the license
-		fmt.Println("🔑 Activating license...")
-		err := client.Activate(credEmail, credClientID, credLicenseKey)
-		if err != nil {
-			log.Fatalf("❌ Activation failed: %v", err)
+			fmt.Println("🎁 Requesting trial license...")
+
+			// Check trial eligibility first
+			eligibility, err := client.CheckTrialEligibility(*productID)
+			if err != nil {
+				log.Fatalf("❌ Failed to check trial eligibility: %v", err)
+			}
+
+			if !eligibility.Eligible {
+				fmt.Printf("❌ Trial not available: %s\n", eligibility.Message)
+				if eligibility.HasUsedTrial {
+					fmt.Println()
+					fmt.Println("═══════════════════════════════════════════════════════════════")
+					fmt.Println("⚠️  This device has already used a trial.")
+					fmt.Println()
+					fmt.Printf("🔗 Subscribe now: %s\n", *subscriptionURL)
+					fmt.Println()
+					fmt.Println("Or enter your license credentials:")
+					fmt.Println("  go run main.go --license-key KEY --email EMAIL --client-id ID")
+					fmt.Println("═══════════════════════════════════════════════════════════════")
+				}
+				os.Exit(1)
+			}
+
+			// Request trial license
+			_, err = client.RequestTrial(credEmail, *productID, "", 14)
+			if err != nil {
+				log.Fatalf("❌ Trial activation failed: %v", err)
+			}
+			fmt.Println("✅ Trial license activated successfully!")
+		} else {
+			// Validate credentials for regular activation
+			if credLicenseKey == "" || credEmail == "" || credClientID == "" {
+				fmt.Println()
+				fmt.Println("Usage: go run main.go --license-key KEY --email EMAIL --client-id ID")
+				fmt.Println("   or: go run main.go --license-file /path/to/credentials.json")
+				fmt.Println("   or: go run main.go --trial --email EMAIL")
+				fmt.Println()
+				fmt.Println("Credentials file format:")
+				fmt.Println(`  {"email": "...", "client_id": "...", "license_key": "..."}`)
+				fmt.Println()
+				fmt.Println("To get credentials:")
+				fmt.Println("1. Start the license server: go run cmd/server/main.go")
+				fmt.Println("2. Create a client via API")
+				fmt.Println("3. Create a license via API")
+				fmt.Println("4. Use the license_key from the response")
+				fmt.Println()
+				fmt.Println("Or start a 14-day trial:")
+				fmt.Println("  go run main.go --trial --email user@example.com")
+				os.Exit(1)
+			}
+
+			// Step 2: Activate the license
+			fmt.Println("🔑 Activating license...")
+			err := client.Activate(credEmail, credClientID, credLicenseKey)
+			if err != nil {
+				log.Fatalf("❌ Activation failed: %v", err)
+			}
+			fmt.Println("✅ License activated successfully!")
 		}
-		fmt.Println("✅ License activated successfully!")
 	}
 
 	// Step 3: Verify the license and get license data
@@ -109,18 +161,54 @@ func main() {
 	}
 	fmt.Println("✅ License is valid!")
 
+	// Step 4: Check for trial status and handle expiration
+	if license.IsTrial {
+		trialInfo := license.GetTrialInfo()
+		fmt.Println()
+		fmt.Println("═══════════════════════════════════════════════════════════════")
+		fmt.Println("🎁 TRIAL LICENSE")
+		fmt.Println("═══════════════════════════════════════════════════════════════")
+
+		if trialInfo.IsExpired {
+			// Trial has expired - show subscription prompt
+			fmt.Println("⚠️  Your trial has expired!")
+			fmt.Println()
+			fmt.Printf("🔗 Subscribe now: %s\n", *subscriptionURL)
+			fmt.Println()
+			fmt.Println("Or enter your license credentials:")
+			fmt.Println("  go run main.go --license-key KEY --email EMAIL --client-id ID")
+			fmt.Println("═══════════════════════════════════════════════════════════════")
+			os.Exit(1)
+		}
+
+		// Trial is still active
+		fmt.Printf("📅 %s\n", trialInfo.Message)
+		if trialInfo.DaysRemaining <= 3 {
+			fmt.Println()
+			fmt.Println("⚠️  Your trial is ending soon!")
+			fmt.Printf("🔗 Subscribe to continue: %s\n", *subscriptionURL)
+		}
+		fmt.Println("═══════════════════════════════════════════════════════════════")
+	}
+
 	// Display license info
 	fmt.Println()
 	fmt.Println("=== License Information ===")
 	fmt.Printf("ID:          %s\n", license.ID)
 	fmt.Printf("Email:       %s\n", license.Email)
 	fmt.Printf("Plan:        %s\n", license.PlanSlug)
+	if license.IsTrial {
+		fmt.Printf("Type:        🎁 Trial\n")
+		fmt.Printf("Trial Ends:  %s\n", license.TrialExpiresAt.Format("2006-01-02 15:04:05"))
+	} else {
+		fmt.Printf("Type:        Licensed\n")
+	}
 	fmt.Printf("Issued:      %s\n", license.IssuedAt.Format("2006-01-02 15:04:05"))
 	fmt.Printf("Expires:     %s\n", license.ExpiresAt.Format("2006-01-02 15:04:05"))
 	fmt.Printf("Max Devices: %d\n", license.MaxDevices)
 	fmt.Printf("Activated:   %d device(s)\n", license.CurrentActivations)
 
-	// Step 4: Check features (if entitlements are configured)
+	// Step 5: Check features (if entitlements are configured)
 	fmt.Println()
 	fmt.Println("=== Feature Access ===")
 
@@ -152,7 +240,7 @@ func main() {
 		fmt.Println("to enable feature-based access control.")
 	}
 
-	// Step 5: Demonstrate feature checking
+	// Step 6: Demonstrate feature checking
 	fmt.Println()
 	fmt.Println("=== Feature Checks ===")
 
@@ -165,7 +253,7 @@ func main() {
 		}
 	}
 
-	// Step 6: Demonstrate scope checking
+	// Step 7: Demonstrate scope checking
 	fmt.Println()
 	fmt.Println("=== Scope Checks ===")
 

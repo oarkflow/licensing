@@ -666,6 +666,211 @@ func (lm *LicenseManager) GenerateLicenseWithOptions(ctx context.Context, client
 	return license, nil
 }
 
+// TrialLicenseRequest contains the parameters for generating a trial license.
+type TrialLicenseRequest struct {
+	Email             string
+	DeviceFingerprint string
+	ProductID         string
+	TrialDurationDays int
+	SubscriptionURL   string
+}
+
+// TrialLicenseResponse contains the result of a trial license request.
+type TrialLicenseResponse struct {
+	Success         bool      `json:"success"`
+	Message         string    `json:"message"`
+	License         *License  `json:"license,omitempty"`
+	AlreadyUsed     bool      `json:"already_used"`
+	SubscriptionURL string    `json:"subscription_url,omitempty"`
+	ExpiresAt       time.Time `json:"expires_at,omitempty"`
+}
+
+// DefaultTrialDuration is the default trial period.
+const DefaultTrialDuration = 14 * 24 * time.Hour // 14 days
+
+// GenerateTrialLicense creates a trial license for a device.
+// It checks if the device has already used a trial and prevents duplicate trials.
+// Trial licenses allow unlimited device sharing but only one trial per device fingerprint.
+func (lm *LicenseManager) GenerateTrialLicense(ctx context.Context, req *TrialLicenseRequest) (*TrialLicenseResponse, error) {
+	if req == nil {
+		return nil, fmt.Errorf("trial request is required")
+	}
+	email := strings.TrimSpace(req.Email)
+	if !emailRegex.MatchString(email) {
+		return nil, fmt.Errorf("invalid email address")
+	}
+	fingerprint := strings.TrimSpace(req.DeviceFingerprint)
+	if !fingerprintRegex.MatchString(fingerprint) {
+		return nil, fmt.Errorf("invalid device fingerprint format")
+	}
+
+	// Check if device has already used a trial
+	hasUsed, err := lm.storage.HasDeviceUsedTrial(ctx, fingerprint)
+	if err != nil {
+		return nil, fmt.Errorf("failed to check trial status: %w", err)
+	}
+	if hasUsed {
+		existingTrial, _ := lm.storage.GetDeviceTrial(ctx, fingerprint)
+		return &TrialLicenseResponse{
+			Success:         false,
+			Message:         "This device has already used a trial license. Please purchase a subscription.",
+			AlreadyUsed:     true,
+			SubscriptionURL: req.SubscriptionURL,
+			ExpiresAt:       existingTrial.TrialExpiresAt,
+		}, nil
+	}
+
+	// Get or create client
+	client, err := lm.storage.GetClientByEmail(ctx, email)
+	if err != nil {
+		// Create new client if doesn't exist
+		client, err = lm.CreateClient(ctx, email)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create client: %w", err)
+		}
+	}
+	if client.Status == ClientStatusBanned {
+		return &TrialLicenseResponse{
+			Success: false,
+			Message: "Client is banned",
+		}, nil
+	}
+
+	// Determine trial duration
+	duration := DefaultTrialDuration
+	if req.TrialDurationDays > 0 {
+		duration = time.Duration(req.TrialDurationDays) * 24 * time.Hour
+	}
+
+	now := time.Now()
+	expiresAt := now.Add(duration)
+
+	// Generate trial license key
+	licenseKey := lm.generateLicenseKey(email, client.ID)
+
+	// Compute full entitlements if product is specified
+	var entitlements *LicenseEntitlements
+	productID := strings.TrimSpace(req.ProductID)
+	if productID != "" {
+		// For trial, enable all features of the product
+		entitlements, err = lm.computeTrialEntitlements(ctx, productID)
+		if err != nil {
+			log.Printf("Warning: failed to compute trial entitlements: %v", err)
+		}
+	}
+
+	// Create trial license with unlimited sharing (MaxDevices = 0 means unlimited)
+	license := &License{
+		ID:                     uuid.New().String(),
+		ClientID:               client.ID,
+		Email:                  email,
+		ProductID:              productID,
+		PlanSlug:               "trial",
+		LicenseKey:             licenseKey,
+		IsRevoked:              false,
+		IsActivated:            false,
+		IssuedAt:               now,
+		ExpiresAt:              expiresAt,
+		MaxDevices:             0, // Unlimited device sharing during trial
+		Devices:                make(map[string]*LicenseDevice),
+		CurrentActivations:     0,
+		CheckMode:              LicenseCheckModeEachRun,
+		IsTrial:                true,
+		TrialStartedAt:         now,
+		TrialDeviceFingerprint: fingerprint,
+		Entitlements:           entitlements,
+	}
+	lm.applyLicenseCheckDefaults(license)
+
+	// Save the license
+	if err := lm.storage.SaveLicense(ctx, license); err != nil {
+		return nil, fmt.Errorf("failed to save trial license: %w", err)
+	}
+
+	// Register this device as having used a trial
+	deviceTrial := &DeviceTrial{
+		DeviceFingerprint: fingerprint,
+		LicenseID:         license.ID,
+		ClientID:          client.ID,
+		Email:             email,
+		ProductID:         productID,
+		TrialStartedAt:    now,
+		TrialExpiresAt:    expiresAt,
+		CreatedAt:         now,
+	}
+	if err := lm.storage.SaveDeviceTrial(ctx, deviceTrial); err != nil {
+		// If we fail to record the trial, we should revoke the license to maintain consistency
+		_ = lm.storage.UpdateLicense(ctx, &License{ID: license.ID, IsRevoked: true})
+		return nil, fmt.Errorf("failed to register trial: %w", err)
+	}
+
+	return &TrialLicenseResponse{
+		Success:         true,
+		Message:         fmt.Sprintf("Trial license activated. Expires on %s", expiresAt.Format("2006-01-02")),
+		License:         license,
+		SubscriptionURL: req.SubscriptionURL,
+		ExpiresAt:       expiresAt,
+	}, nil
+}
+
+// computeTrialEntitlements computes full feature entitlements for a trial license.
+// Trial licenses get access to all features of the product.
+func (lm *LicenseManager) computeTrialEntitlements(ctx context.Context, productID string) (*LicenseEntitlements, error) {
+	product, err := lm.storage.GetProduct(ctx, productID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get product: %w", err)
+	}
+
+	features, err := lm.storage.ListFeaturesByProduct(ctx, productID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list features: %w", err)
+	}
+
+	entitlements := &LicenseEntitlements{
+		ProductID:   productID,
+		ProductSlug: product.Slug,
+		PlanSlug:    "trial",
+		Features:    make(map[string]FeatureGrant),
+	}
+
+	for _, feature := range features {
+		scopes, err := lm.storage.ListFeatureScopes(ctx, feature.ID)
+		if err != nil {
+			continue
+		}
+
+		scopeGrants := make(map[string]ScopeGrant)
+		for _, scope := range scopes {
+			scopeGrants[scope.Slug] = ScopeGrant{
+				ScopeID:    scope.ID,
+				ScopeSlug:  scope.Slug,
+				Permission: ScopePermissionAllow, // Allow all for trial
+				Metadata:   scope.Metadata,
+			}
+		}
+
+		entitlements.Features[feature.Slug] = FeatureGrant{
+			FeatureID:   feature.ID,
+			FeatureSlug: feature.Slug,
+			Category:    feature.Category,
+			Enabled:     true, // All features enabled for trial
+			Scopes:      scopeGrants,
+		}
+	}
+
+	return entitlements, nil
+}
+
+// HasDeviceUsedTrial checks if a device has already used a trial license.
+func (lm *LicenseManager) HasDeviceUsedTrial(ctx context.Context, deviceFingerprint string) (bool, error) {
+	return lm.storage.HasDeviceUsedTrial(ctx, deviceFingerprint)
+}
+
+// GetDeviceTrial retrieves the trial information for a device.
+func (lm *LicenseManager) GetDeviceTrial(ctx context.Context, deviceFingerprint string) (*DeviceTrial, error) {
+	return lm.storage.GetDeviceTrial(ctx, deviceFingerprint)
+}
+
 func (lm *LicenseManager) RevokeLicense(ctx context.Context, licenseID, reason string) (*License, error) {
 	license, err := lm.storage.GetLicense(ctx, licenseID)
 	if err != nil {
@@ -812,6 +1017,33 @@ func (lm *LicenseManager) ActivateLicense(ctx context.Context, req *ActivationRe
 	license, err := lm.storage.GetLicenseByKey(ctx, req.LicenseKey)
 	if err != nil {
 		return &ActivationResponse{Success: false, Message: "Invalid license key"}, nil
+	}
+
+	// Validate product ID if provided in request
+	reqProductID := strings.TrimSpace(req.ProductID)
+	if reqProductID != "" {
+		licenseProductID := strings.TrimSpace(license.ProductID)
+		if licenseProductID == "" {
+			message := "License is not associated with any product"
+			lm.recordActivationAttempt(ctx, license, req, false, message)
+			return &ActivationResponse{Success: false, Message: message}, nil
+		}
+		// Check if reqProductID matches license's product ID or product slug
+		productMatch := false
+		if licenseProductID == reqProductID {
+			productMatch = true
+		} else {
+			// Try to match by slug
+			product, err := lm.storage.GetProduct(ctx, licenseProductID)
+			if err == nil && product != nil && strings.EqualFold(product.Slug, reqProductID) {
+				productMatch = true
+			}
+		}
+		if !productMatch {
+			message := "License is not valid for this product"
+			lm.recordActivationAttempt(ctx, license, req, false, message)
+			return &ActivationResponse{Success: false, Message: message}, nil
+		}
 	}
 
 	client, err := lm.storage.GetClient(ctx, license.ClientID)
@@ -966,6 +1198,34 @@ func (lm *LicenseManager) VerifyLicense(ctx context.Context, req *ActivationRequ
 	if err != nil {
 		return &ActivationResponse{Success: false, Message: "Invalid license key"}, nil
 	}
+
+	// Validate product ID if provided in request
+	reqProductID := strings.TrimSpace(req.ProductID)
+	if reqProductID != "" {
+		licenseProductID := strings.TrimSpace(license.ProductID)
+		if licenseProductID == "" {
+			message := "License is not associated with any product"
+			lm.recordActivationAttempt(ctx, license, req, false, message)
+			return &ActivationResponse{Success: false, Message: message}, nil
+		}
+		// Check if reqProductID matches license's product ID or product slug
+		productMatch := false
+		if licenseProductID == reqProductID {
+			productMatch = true
+		} else {
+			// Try to match by slug
+			product, err := lm.storage.GetProduct(ctx, licenseProductID)
+			if err == nil && product != nil && strings.EqualFold(product.Slug, reqProductID) {
+				productMatch = true
+			}
+		}
+		if !productMatch {
+			message := "License is not valid for this product"
+			lm.recordActivationAttempt(ctx, license, req, false, message)
+			return &ActivationResponse{Success: false, Message: message}, nil
+		}
+	}
+
 	identity, _, err := lm.resolveLicenseIdentity(license, req, false)
 	if err != nil {
 		message := err.Error()
@@ -1127,6 +1387,16 @@ func (lm *LicenseManager) buildLicensePayload(license *License, identity *Licens
 	}
 	if !license.LastCheckAt.IsZero() {
 		payload["last_check_at"] = license.LastCheckAt
+	}
+	// Add trial information
+	payload["is_trial"] = license.IsTrial
+	if license.IsTrial {
+		if !license.TrialStartedAt.IsZero() {
+			payload["trial_started_at"] = license.TrialStartedAt
+		}
+		if license.TrialDeviceFingerprint != "" {
+			payload["trial_device_fingerprint"] = license.TrialDeviceFingerprint
+		}
 	}
 	return payload
 }

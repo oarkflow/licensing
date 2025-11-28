@@ -8,6 +8,7 @@
 //
 //	cfg := licensing.Config{
 //	    ServerURL: "https://licensing.example.com",
+//	    ProductID: "my-product",  // Your product ID or slug (validates license belongs to this product)
 //	}
 //	client, err := licensing.NewClient(cfg)
 //	if err != nil {
@@ -69,6 +70,21 @@ type (
 
 	// CredentialsFile represents a JSON file containing license activation credentials.
 	CredentialsFile = client.CredentialsFile
+
+	// TrialRequest is sent to the licensing server to request a trial license.
+	TrialRequest = client.TrialRequest
+
+	// TrialCheckRequest is sent to check if a device is eligible for trial.
+	TrialCheckRequest = client.TrialCheckRequest
+
+	// TrialCheckResponse is returned when checking trial eligibility.
+	TrialCheckResponse = client.TrialCheckResponse
+
+	// TrialInfo contains information about the trial status and expiration.
+	TrialInfo = client.TrialInfo
+
+	// TrialStatus represents the current status of a trial license.
+	TrialStatus = client.TrialStatus
 )
 
 // Re-export constants.
@@ -93,6 +109,15 @@ const (
 
 	// ScopePermissionLimit indicates the scope action is allowed with limits.
 	ScopePermissionLimit = client.ScopePermissionLimit
+
+	// TrialStatusNotTrial indicates this is not a trial license.
+	TrialStatusNotTrial = client.TrialStatusNotTrial
+
+	// TrialStatusActive indicates the trial is currently active.
+	TrialStatusActive = client.TrialStatusActive
+
+	// TrialStatusExpired indicates the trial has expired.
+	TrialStatusExpired = client.TrialStatusExpired
 )
 
 // Re-export errors.

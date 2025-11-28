@@ -7,7 +7,12 @@ export {
     FeatureGrant,
     ScopeGrant,
     ScopePermission,
-    LicensingClientOptions
+    LicensingClientOptions,
+    TrialStatus,
+    TrialInfo,
+    TrialRequest,
+    TrialCheckRequest,
+    TrialCheckResponse
 } from "./types.js";
 export * from "./license.js";
 

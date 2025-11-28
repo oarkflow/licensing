@@ -189,4 +189,150 @@ final class License
         }
         return ['allowed' => true, 'limit' => $scope['limit'] ?? 0];
     }
+
+    // Trial-related methods
+
+    /**
+     * Trial status constants.
+     */
+    public const TRIAL_STATUS_NOT_TRIAL = 'not_trial';
+    public const TRIAL_STATUS_ACTIVE = 'active';
+    public const TRIAL_STATUS_EXPIRED = 'expired';
+
+    /**
+     * Get detailed information about the trial status of a license.
+     *
+     * @param array<string,mixed> $license The decrypted license data
+     * @param string|null $subscriptionUrl Optional URL to display when trial expires
+     * @return array{status:string, is_trial:bool, is_expired:bool, days_remaining:int, expires_at:string|null, message:string, subscription_url:string|null}
+     */
+    public static function getTrialInfo(array $license, ?string $subscriptionUrl = null): array
+    {
+        $info = [
+            'status' => self::TRIAL_STATUS_NOT_TRIAL,
+            'is_trial' => (bool) ($license['is_trial'] ?? false),
+            'is_expired' => false,
+            'days_remaining' => 0,
+            'expires_at' => null,
+            'message' => '',
+            'subscription_url' => $subscriptionUrl,
+        ];
+
+        if (!$info['is_trial']) {
+            $info['status'] = self::TRIAL_STATUS_NOT_TRIAL;
+            $info['message'] = 'This is a licensed version.';
+            return $info;
+        }
+
+        $expiresAtStr = $license['trial_expires_at'] ?? $license['expires_at'] ?? null;
+        if ($expiresAtStr === null) {
+            $info['message'] = 'Trial expiration date not available.';
+            return $info;
+        }
+
+        $info['expires_at'] = $expiresAtStr;
+        $expiresAt = strtotime($expiresAtStr);
+        $now = time();
+
+        if ($now > $expiresAt) {
+            $info['status'] = self::TRIAL_STATUS_EXPIRED;
+            $info['is_expired'] = true;
+            $info['days_remaining'] = 0;
+            $info['message'] = 'Your trial has expired. Please subscribe to continue using the application.';
+            return $info;
+        }
+
+        $remainingSeconds = $expiresAt - $now;
+        $info['days_remaining'] = (int) floor($remainingSeconds / 86400);
+        $info['status'] = self::TRIAL_STATUS_ACTIVE;
+        $info['is_expired'] = false;
+
+        if ($info['days_remaining'] <= 3) {
+            $info['message'] = sprintf(
+                'Your trial expires in %d day(s). Please subscribe to continue using the application.',
+                $info['days_remaining']
+            );
+        } else {
+            $info['message'] = sprintf('Trial active: %d days remaining.', $info['days_remaining']);
+        }
+
+        return $info;
+    }
+
+    /**
+     * Check if the license is a trial that has expired.
+     *
+     * @param array<string,mixed> $license The decrypted license data
+     * @return bool true if this is an expired trial license
+     */
+    public static function isTrialExpired(array $license): bool
+    {
+        if (!($license['is_trial'] ?? false)) {
+            return false;
+        }
+
+        $expiresAtStr = $license['trial_expires_at'] ?? $license['expires_at'] ?? null;
+        if ($expiresAtStr === null) {
+            return false;
+        }
+
+        return time() > strtotime($expiresAtStr);
+    }
+
+    /**
+     * Check if the license is an active (non-expired) trial.
+     *
+     * @param array<string,mixed> $license The decrypted license data
+     * @return bool true if this is an active trial license
+     */
+    public static function isTrialActive(array $license): bool
+    {
+        if (!($license['is_trial'] ?? false)) {
+            return false;
+        }
+
+        $expiresAtStr = $license['trial_expires_at'] ?? $license['expires_at'] ?? null;
+        if ($expiresAtStr === null) {
+            return false;
+        }
+
+        return time() < strtotime($expiresAtStr);
+    }
+
+    /**
+     * Get the number of days remaining in the trial.
+     *
+     * @param array<string,mixed> $license The decrypted license data
+     * @return int Number of days remaining, or 0 if not a trial or expired
+     */
+    public static function trialDaysRemaining(array $license): int
+    {
+        if (!($license['is_trial'] ?? false)) {
+            return 0;
+        }
+
+        $expiresAtStr = $license['trial_expires_at'] ?? $license['expires_at'] ?? null;
+        if ($expiresAtStr === null) {
+            return 0;
+        }
+
+        $expiresAt = strtotime($expiresAtStr);
+        $remainingSeconds = $expiresAt - time();
+        if ($remainingSeconds <= 0) {
+            return 0;
+        }
+
+        return (int) floor($remainingSeconds / 86400);
+    }
+
+    /**
+     * Check if the license is a trial license (regardless of status).
+     *
+     * @param array<string,mixed> $license The decrypted license data
+     * @return bool true if this is a trial license
+     */
+    public static function isTrial(array $license): bool
+    {
+        return (bool) ($license['is_trial'] ?? false);
+    }
 }

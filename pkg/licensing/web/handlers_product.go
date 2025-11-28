@@ -266,10 +266,25 @@ func (ws *WebServer) handleProductPlans(w http.ResponseWriter, r *http.Request, 
 			trialDays := parseInt(r.FormValue("trial_days"), 0)
 			displayOrder := parseInt(r.FormValue("display_order"), 0)
 			isActive := r.FormValue("is_active") == "on"
+			isTrial := r.FormValue("is_trial") == "on"
 
 			if name == "" || slug == "" {
 				ws.renderError(w, http.StatusBadRequest, "Name and slug are required")
 				return
+			}
+
+			// If this is a trial plan, check if product already has one
+			if isTrial {
+				existingTrialPlan, _ := ws.lm.Storage().GetTrialPlanForProduct(ctx, productID)
+				if existingTrialPlan != nil {
+					ws.renderError(w, http.StatusBadRequest, "This product already has a trial plan: "+existingTrialPlan.Name)
+					return
+				}
+				// Trial plans must have price of 0 and trial days > 0
+				price = 0
+				if trialDays <= 0 {
+					trialDays = 14 // Default to 14 days
+				}
 			}
 
 			if currency == "" {
@@ -290,6 +305,7 @@ func (ws *WebServer) handleProductPlans(w http.ResponseWriter, r *http.Request, 
 				Currency:     currency,
 				BillingCycle: billingCycle,
 				TrialDays:    trialDays,
+				IsTrial:      isTrial,
 				DisplayOrder: displayOrder,
 				IsActive:     isActive,
 				CreatedAt:    now,
@@ -299,6 +315,37 @@ func (ws *WebServer) handleProductPlans(w http.ResponseWriter, r *http.Request, 
 			if err := ws.lm.Storage().SavePlan(ctx, plan); err != nil {
 				ws.renderError(w, http.StatusBadRequest, err.Error())
 				return
+			}
+
+			// If this is a trial plan, automatically assign all product features with all scopes
+			if isTrial {
+				allFeatures, _ := ws.lm.Storage().ListFeaturesByProduct(ctx, productID)
+				for _, feature := range allFeatures {
+					// Create plan feature with all scopes enabled
+					pf := &licensing.PlanFeature{
+						ID:        uuid.New().String(),
+						PlanID:    plan.ID,
+						FeatureID: feature.ID,
+						Enabled:   true,
+						CreatedAt: now,
+						UpdatedAt: now,
+					}
+
+					// Get all scopes for this feature and add them as overrides with "allow" permission
+					scopes, _ := ws.lm.Storage().ListFeatureScopes(ctx, feature.ID)
+					if len(scopes) > 0 {
+						scopeOverrides := make(map[string]licensing.ScopeOverride)
+						for _, scope := range scopes {
+							scopeOverrides[scope.Slug] = licensing.ScopeOverride{
+								Permission: licensing.ScopePermissionAllow,
+								Limit:      scope.Limit,
+							}
+						}
+						pf.ScopeOverrides = scopeOverrides
+					}
+
+					ws.lm.Storage().SavePlanFeature(ctx, pf)
+				}
 			}
 
 			http.Redirect(w, r, "/products/"+productID, http.StatusSeeOther)
@@ -405,6 +452,24 @@ func (ws *WebServer) handlePlanEdit(w http.ResponseWriter, r *http.Request, prod
 		trialDays := parseInt(r.FormValue("trial_days"), 0)
 		displayOrder := parseInt(r.FormValue("display_order"), 0)
 		isActive := r.FormValue("is_active") == "on"
+		isTrial := r.FormValue("is_trial") == "on"
+
+		// If enabling trial on this plan, check if product already has a different trial plan
+		if isTrial && !plan.IsTrial {
+			existingTrialPlan, _ := ws.lm.Storage().GetTrialPlanForProduct(ctx, productID)
+			if existingTrialPlan != nil && existingTrialPlan.ID != plan.ID {
+				ws.renderError(w, http.StatusBadRequest, "This product already has a trial plan: "+existingTrialPlan.Name)
+				return
+			}
+		}
+
+		// If this is a trial plan, enforce price of 0 and trial days > 0
+		if isTrial {
+			price = 0
+			if trialDays <= 0 {
+				trialDays = 14
+			}
+		}
 
 		if name != "" {
 			plan.Name = name
@@ -420,7 +485,12 @@ func (ws *WebServer) handlePlanEdit(w http.ResponseWriter, r *http.Request, prod
 		if billingCycle != "" {
 			plan.BillingCycle = billingCycle
 		}
+		// Track if we're newly enabling trial mode (before updating the plan)
+		wasTrialBefore := plan.IsTrial
+		becomingTrial := isTrial && !wasTrialBefore
+
 		plan.TrialDays = trialDays
+		plan.IsTrial = isTrial
 		plan.DisplayOrder = displayOrder
 		plan.IsActive = isActive
 		plan.UpdatedAt = time.Now()
@@ -428,6 +498,51 @@ func (ws *WebServer) handlePlanEdit(w http.ResponseWriter, r *http.Request, prod
 		if err := ws.lm.Storage().UpdatePlan(ctx, plan); err != nil {
 			ws.renderError(w, http.StatusBadRequest, err.Error())
 			return
+		}
+
+		// If plan is becoming a trial plan, assign all features with all scopes
+		if becomingTrial {
+			allFeatures, _ := ws.lm.Storage().ListFeaturesByProduct(ctx, productID)
+			existingPlanFeatures, _ := ws.lm.Storage().ListPlanFeatures(ctx, plan.ID)
+
+			// Map existing plan features
+			existingFeatureMap := make(map[string]*licensing.PlanFeature)
+			for _, pf := range existingPlanFeatures {
+				existingFeatureMap[pf.FeatureID] = pf
+			}
+
+			now := time.Now()
+			for _, feature := range allFeatures {
+				// Get all scopes for this feature
+				scopes, _ := ws.lm.Storage().ListFeatureScopes(ctx, feature.ID)
+				scopeOverrides := make(map[string]licensing.ScopeOverride)
+				for _, scope := range scopes {
+					scopeOverrides[scope.Slug] = licensing.ScopeOverride{
+						Permission: licensing.ScopePermissionAllow,
+						Limit:      scope.Limit,
+					}
+				}
+
+				if existingPF, exists := existingFeatureMap[feature.ID]; exists {
+					// Update existing plan feature to enable all scopes
+					existingPF.Enabled = true
+					existingPF.ScopeOverrides = scopeOverrides
+					existingPF.UpdatedAt = now
+					ws.lm.Storage().UpdatePlanFeature(ctx, existingPF)
+				} else {
+					// Create new plan feature
+					pf := &licensing.PlanFeature{
+						ID:             uuid.New().String(),
+						PlanID:         plan.ID,
+						FeatureID:      feature.ID,
+						Enabled:        true,
+						ScopeOverrides: scopeOverrides,
+						CreatedAt:      now,
+						UpdatedAt:      now,
+					}
+					ws.lm.Storage().SavePlanFeature(ctx, pf)
+				}
+			}
 		}
 
 		http.Redirect(w, r, "/products/"+productID+"/plans/"+plan.ID, http.StatusSeeOther)

@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	"github.com/oarkflow/squealx"
 )
 
 // productRowScanner is a common interface for sql.Row and sql.Rows
@@ -14,10 +16,18 @@ type productRowScanner interface {
 	Scan(dest ...any) error
 }
 
-// ensureProductSchema creates the product-related tables in SQLite
-func ensureProductSchema(db interface {
+// dbExecutor interface for database operations needed by ensureProductSchema
+type dbExecutor interface {
 	Exec(string, ...interface{}) (sql.Result, error)
-}) error {
+	Query(string, ...any) (interface {
+		Next() bool
+		Scan(...any) error
+		Close() error
+	}, error)
+}
+
+// ensureProductSchema creates the product-related tables in SQLite
+func ensureProductSchema(db *squealx.DB) error {
 	stmts := []string{
 		`CREATE TABLE IF NOT EXISTS products (
 			id TEXT PRIMARY KEY,
@@ -26,6 +36,9 @@ func ensureProductSchema(db interface {
 			slug_lower TEXT NOT NULL UNIQUE,
 			description TEXT,
 			logo_url TEXT,
+			allow_trial INTEGER NOT NULL DEFAULT 0,
+			trial_interval INTEGER NOT NULL DEFAULT 7,
+			trial_interval_type TEXT NOT NULL DEFAULT 'days',
 			created_at TIMESTAMP NOT NULL,
 			updated_at TIMESTAMP NOT NULL
 		);`,
@@ -40,6 +53,7 @@ func ensureProductSchema(db interface {
 			currency TEXT NOT NULL DEFAULT 'USD',
 			billing_cycle TEXT NOT NULL DEFAULT 'monthly',
 			trial_days INTEGER NOT NULL DEFAULT 0,
+			is_trial INTEGER NOT NULL DEFAULT 0,
 			is_active INTEGER NOT NULL DEFAULT 1,
 			display_order INTEGER NOT NULL DEFAULT 0,
 			metadata TEXT,
@@ -83,17 +97,69 @@ func ensureProductSchema(db interface {
 			FOREIGN KEY(plan_id) REFERENCES plans(id) ON DELETE CASCADE,
 			FOREIGN KEY(feature_id) REFERENCES features(id) ON DELETE CASCADE
 		);`,
+		`CREATE TABLE IF NOT EXISTS subscriptions (
+			id TEXT PRIMARY KEY,
+			client_id TEXT NOT NULL,
+			product_id TEXT NOT NULL,
+			plan_id TEXT NOT NULL,
+			license_id TEXT,
+			status TEXT NOT NULL DEFAULT 'pending',
+			start_date TIMESTAMP NOT NULL,
+			end_date TIMESTAMP NOT NULL,
+			billing_cycle TEXT NOT NULL DEFAULT 'monthly',
+			next_billing_date TIMESTAMP,
+			cancelled_at TIMESTAMP,
+			cancel_reason TEXT,
+			created_at TIMESTAMP NOT NULL,
+			updated_at TIMESTAMP NOT NULL,
+			FOREIGN KEY(client_id) REFERENCES clients(id) ON DELETE CASCADE,
+			FOREIGN KEY(product_id) REFERENCES products(id) ON DELETE CASCADE,
+			FOREIGN KEY(plan_id) REFERENCES plans(id) ON DELETE CASCADE,
+			FOREIGN KEY(license_id) REFERENCES licenses(id) ON DELETE SET NULL
+		);`,
 		`CREATE INDEX IF NOT EXISTS idx_plans_product_id ON plans(product_id);`,
 		`CREATE INDEX IF NOT EXISTS idx_features_product_id ON features(product_id);`,
 		`CREATE INDEX IF NOT EXISTS idx_feature_scopes_feature_id ON feature_scopes(feature_id);`,
 		`CREATE INDEX IF NOT EXISTS idx_plan_features_plan_id ON plan_features(plan_id);`,
 		`CREATE INDEX IF NOT EXISTS idx_plan_features_feature_id ON plan_features(feature_id);`,
+		`CREATE INDEX IF NOT EXISTS idx_subscriptions_client_id ON subscriptions(client_id);`,
+		`CREATE INDEX IF NOT EXISTS idx_subscriptions_product_id ON subscriptions(product_id);`,
+		`CREATE INDEX IF NOT EXISTS idx_subscriptions_plan_id ON subscriptions(plan_id);`,
 	}
 	for _, stmt := range stmts {
 		if _, err := db.Exec(stmt); err != nil {
 			return fmt.Errorf("product schema migration failed: %w", err)
 		}
 	}
+
+	// Migration: add is_trial column to plans if it doesn't exist
+	rows, err := db.Query("PRAGMA table_info(plans);")
+	if err != nil {
+		return fmt.Errorf("failed to check plans table info: %w", err)
+	}
+	hasIsTrialColumn := false
+	for rows.Next() {
+		var cid int
+		var name, ctype string
+		var notnull, pk int
+		var dfltValue interface{}
+		if err := rows.Scan(&cid, &name, &ctype, &notnull, &dfltValue, &pk); err != nil {
+			rows.Close()
+			return fmt.Errorf("failed to scan table info: %w", err)
+		}
+		if name == "is_trial" {
+			hasIsTrialColumn = true
+			break
+		}
+	}
+	rows.Close()
+
+	if !hasIsTrialColumn {
+		if _, err := db.Exec(`ALTER TABLE plans ADD COLUMN is_trial INTEGER NOT NULL DEFAULT 0;`); err != nil {
+			return fmt.Errorf("failed to add is_trial column: %w", err)
+		}
+	}
+
 	return nil
 }
 
@@ -245,12 +311,17 @@ func (s *SQLiteStorage) SavePlan(ctx context.Context, plan *Plan) error {
 		return err
 	}
 
-	query := `INSERT INTO plans (id, product_id, name, slug, slug_key, description, price, currency, billing_cycle, trial_days, is_active, display_order, metadata, created_at, updated_at)
-			  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+	// If this is a trial plan, enforce price of 0
+	if plan.IsTrial {
+		plan.Price = 0
+	}
+
+	query := `INSERT INTO plans (id, product_id, name, slug, slug_key, description, price, currency, billing_cycle, trial_days, is_trial, is_active, display_order, metadata, created_at, updated_at)
+			  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 	_, err = s.db.ExecContext(ctx, query,
 		plan.ID, plan.ProductID, plan.Name, plan.Slug, slugKey,
 		plan.Description, plan.Price, plan.Currency, plan.BillingCycle,
-		plan.TrialDays, plan.IsActive, plan.DisplayOrder, string(metadataJSON),
+		plan.TrialDays, plan.IsTrial, plan.IsActive, plan.DisplayOrder, string(metadataJSON),
 		plan.CreatedAt, plan.UpdatedAt)
 	if err != nil {
 		if strings.Contains(err.Error(), "UNIQUE constraint failed") {
@@ -273,11 +344,16 @@ func (s *SQLiteStorage) UpdatePlan(ctx context.Context, plan *Plan) error {
 		return err
 	}
 
-	query := `UPDATE plans SET product_id=?, name=?, slug=?, slug_key=?, description=?, price=?, currency=?, billing_cycle=?, trial_days=?, is_active=?, display_order=?, metadata=?, updated_at=? WHERE id=?`
+	// If this is a trial plan, enforce price of 0
+	if plan.IsTrial {
+		plan.Price = 0
+	}
+
+	query := `UPDATE plans SET product_id=?, name=?, slug=?, slug_key=?, description=?, price=?, currency=?, billing_cycle=?, trial_days=?, is_trial=?, is_active=?, display_order=?, metadata=?, updated_at=? WHERE id=?`
 	result, err := s.db.ExecContext(ctx, query,
 		plan.ProductID, plan.Name, plan.Slug, slugKey,
 		plan.Description, plan.Price, plan.Currency, plan.BillingCycle,
-		plan.TrialDays, plan.IsActive, plan.DisplayOrder, string(metadataJSON),
+		plan.TrialDays, plan.IsTrial, plan.IsActive, plan.DisplayOrder, string(metadataJSON),
 		plan.UpdatedAt, plan.ID)
 	if err != nil {
 		if strings.Contains(err.Error(), "UNIQUE constraint failed") {
@@ -293,26 +369,26 @@ func (s *SQLiteStorage) UpdatePlan(ctx context.Context, plan *Plan) error {
 }
 
 func (s *SQLiteStorage) GetPlan(ctx context.Context, planID string) (*Plan, error) {
-	query := `SELECT id, product_id, name, slug, description, price, currency, billing_cycle, trial_days, is_active, display_order, metadata, created_at, updated_at FROM plans WHERE id=?`
+	query := `SELECT id, product_id, name, slug, description, price, currency, billing_cycle, trial_days, is_trial, is_active, display_order, metadata, created_at, updated_at FROM plans WHERE id=?`
 	row := s.db.QueryRowContext(ctx, query, planID)
 	return s.scanPlan(row)
 }
 
 func (s *SQLiteStorage) GetPlanBySlug(ctx context.Context, productID, slug string) (*Plan, error) {
 	slugKey := productID + ":" + strings.ToLower(slug)
-	query := `SELECT id, product_id, name, slug, description, price, currency, billing_cycle, trial_days, is_active, display_order, metadata, created_at, updated_at FROM plans WHERE slug_key=?`
+	query := `SELECT id, product_id, name, slug, description, price, currency, billing_cycle, trial_days, is_trial, is_active, display_order, metadata, created_at, updated_at FROM plans WHERE slug_key=?`
 	row := s.db.QueryRowContext(ctx, query, slugKey)
 	return s.scanPlan(row)
 }
 
 func (s *SQLiteStorage) FindPlanBySlug(ctx context.Context, slug string) (*Plan, error) {
-	query := `SELECT id, product_id, name, slug, description, price, currency, billing_cycle, trial_days, is_active, display_order, metadata, created_at, updated_at FROM plans WHERE LOWER(slug)=LOWER(?) LIMIT 1`
+	query := `SELECT id, product_id, name, slug, description, price, currency, billing_cycle, trial_days, is_trial, is_active, display_order, metadata, created_at, updated_at FROM plans WHERE LOWER(slug)=LOWER(?) LIMIT 1`
 	row := s.db.QueryRowContext(ctx, query, slug)
 	return s.scanPlan(row)
 }
 
 func (s *SQLiteStorage) ListPlansByProduct(ctx context.Context, productID string) ([]*Plan, error) {
-	query := `SELECT id, product_id, name, slug, description, price, currency, billing_cycle, trial_days, is_active, display_order, metadata, created_at, updated_at FROM plans WHERE product_id=? ORDER BY display_order, name`
+	query := `SELECT id, product_id, name, slug, description, price, currency, billing_cycle, trial_days, is_trial, is_active, display_order, metadata, created_at, updated_at FROM plans WHERE product_id=? ORDER BY display_order, name`
 	rows, err := s.db.QueryContext(ctx, query, productID)
 	if err != nil {
 		return nil, err
@@ -327,6 +403,12 @@ func (s *SQLiteStorage) ListPlansByProduct(ctx context.Context, productID string
 		plans = append(plans, plan)
 	}
 	return plans, rows.Err()
+}
+
+func (s *SQLiteStorage) GetTrialPlanForProduct(ctx context.Context, productID string) (*Plan, error) {
+	query := `SELECT id, product_id, name, slug, description, price, currency, billing_cycle, trial_days, is_trial, is_active, display_order, metadata, created_at, updated_at FROM plans WHERE product_id=? AND is_trial=1 LIMIT 1`
+	row := s.db.QueryRowContext(ctx, query, productID)
+	return s.scanPlan(row)
 }
 
 func (s *SQLiteStorage) DeletePlan(ctx context.Context, planID string) error {
@@ -348,7 +430,7 @@ func (s *SQLiteStorage) scanPlan(scanner productRowScanner) (*Plan, error) {
 	var metadataJSON sql.NullString
 	var createdAt, updatedAt sqliteTimeValue
 	err := scanner.Scan(&plan.ID, &plan.ProductID, &plan.Name, &plan.Slug, &description,
-		&plan.Price, &plan.Currency, &plan.BillingCycle, &plan.TrialDays,
+		&plan.Price, &plan.Currency, &plan.BillingCycle, &plan.TrialDays, &plan.IsTrial,
 		&plan.IsActive, &plan.DisplayOrder, &metadataJSON,
 		&createdAt, &updatedAt)
 	if err == sql.ErrNoRows {
@@ -372,7 +454,7 @@ func (s *SQLiteStorage) scanPlanRow(scanner productRowScanner) (*Plan, error) {
 	var metadataJSON sql.NullString
 	var createdAt, updatedAt sqliteTimeValue
 	err := scanner.Scan(&plan.ID, &plan.ProductID, &plan.Name, &plan.Slug, &description,
-		&plan.Price, &plan.Currency, &plan.BillingCycle, &plan.TrialDays,
+		&plan.Price, &plan.Currency, &plan.BillingCycle, &plan.TrialDays, &plan.IsTrial,
 		&plan.IsActive, &plan.DisplayOrder, &metadataJSON,
 		&createdAt, &updatedAt)
 	if err != nil {
@@ -868,4 +950,156 @@ func (s *SQLiteStorage) ComputeLicenseEntitlements(ctx context.Context, productI
 	}
 
 	return entitlements, nil
+}
+
+// ==================== Subscription Storage Methods ====================
+
+var errSubscriptionMissing = fmt.Errorf("subscription not found")
+var errSubscriptionExists = fmt.Errorf("subscription already exists")
+
+func (s *SQLiteStorage) SaveSubscription(ctx context.Context, sub *Subscription) error {
+	if sub == nil {
+		return fmt.Errorf("subscription is nil")
+	}
+	now := time.Now()
+	if sub.CreatedAt.IsZero() {
+		sub.CreatedAt = now
+	}
+	sub.UpdatedAt = now
+
+	query := `INSERT INTO subscriptions (id, client_id, product_id, plan_id, license_id, status, start_date, end_date, billing_cycle, next_billing_date, cancelled_at, cancel_reason, created_at, updated_at)
+			  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+	_, err := s.db.ExecContext(ctx, query,
+		sub.ID, sub.ClientID, sub.ProductID, sub.PlanID, sub.LicenseID,
+		sub.Status, sub.StartDate, sub.EndDate, sub.BillingCycle,
+		sub.NextBillingDate, sub.CancelledAt, sub.CancelReason,
+		sub.CreatedAt, sub.UpdatedAt)
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
+func (s *SQLiteStorage) UpdateSubscription(ctx context.Context, sub *Subscription) error {
+	if sub == nil {
+		return fmt.Errorf("subscription is nil")
+	}
+	sub.UpdatedAt = time.Now()
+
+	query := `UPDATE subscriptions SET client_id=?, product_id=?, plan_id=?, license_id=?, status=?, start_date=?, end_date=?, billing_cycle=?, next_billing_date=?, cancelled_at=?, cancel_reason=?, updated_at=? WHERE id=?`
+	result, err := s.db.ExecContext(ctx, query,
+		sub.ClientID, sub.ProductID, sub.PlanID, sub.LicenseID,
+		sub.Status, sub.StartDate, sub.EndDate, sub.BillingCycle,
+		sub.NextBillingDate, sub.CancelledAt, sub.CancelReason,
+		sub.UpdatedAt, sub.ID)
+	if err != nil {
+		return err
+	}
+	rowsAffected, _ := result.RowsAffected()
+	if rowsAffected == 0 {
+		return errSubscriptionMissing
+	}
+	return nil
+}
+
+func (s *SQLiteStorage) GetSubscription(ctx context.Context, subID string) (*Subscription, error) {
+	query := `SELECT id, client_id, product_id, plan_id, license_id, status, start_date, end_date, billing_cycle, next_billing_date, cancelled_at, cancel_reason, created_at, updated_at FROM subscriptions WHERE id=?`
+	row := s.db.QueryRowContext(ctx, query, subID)
+	return s.scanSubscription(row)
+}
+
+func (s *SQLiteStorage) ListSubscriptions(ctx context.Context) ([]*Subscription, error) {
+	query := `SELECT id, client_id, product_id, plan_id, license_id, status, start_date, end_date, billing_cycle, next_billing_date, cancelled_at, cancel_reason, created_at, updated_at FROM subscriptions ORDER BY created_at DESC`
+	rows, err := s.db.QueryContext(ctx, query)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	subs := make([]*Subscription, 0)
+	for rows.Next() {
+		sub, err := s.scanSubscriptionRow(rows)
+		if err != nil {
+			return nil, err
+		}
+		subs = append(subs, sub)
+	}
+	return subs, rows.Err()
+}
+
+func (s *SQLiteStorage) ListSubscriptionsByClient(ctx context.Context, clientID string) ([]*Subscription, error) {
+	query := `SELECT id, client_id, product_id, plan_id, license_id, status, start_date, end_date, billing_cycle, next_billing_date, cancelled_at, cancel_reason, created_at, updated_at FROM subscriptions WHERE client_id=? ORDER BY created_at DESC`
+	rows, err := s.db.QueryContext(ctx, query, clientID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	subs := make([]*Subscription, 0)
+	for rows.Next() {
+		sub, err := s.scanSubscriptionRow(rows)
+		if err != nil {
+			return nil, err
+		}
+		subs = append(subs, sub)
+	}
+	return subs, rows.Err()
+}
+
+func (s *SQLiteStorage) DeleteSubscription(ctx context.Context, subID string) error {
+	query := `DELETE FROM subscriptions WHERE id=?`
+	result, err := s.db.ExecContext(ctx, query, subID)
+	if err != nil {
+		return err
+	}
+	rowsAffected, _ := result.RowsAffected()
+	if rowsAffected == 0 {
+		return errSubscriptionMissing
+	}
+	return nil
+}
+
+func (s *SQLiteStorage) scanSubscription(scanner productRowScanner) (*Subscription, error) {
+	sub := &Subscription{}
+	var licenseID, cancelReason sql.NullString
+	var startDate, endDate, nextBillingDate, cancelledAt, createdAt, updatedAt sqliteTimeValue
+	err := scanner.Scan(&sub.ID, &sub.ClientID, &sub.ProductID, &sub.PlanID, &licenseID,
+		&sub.Status, &startDate, &endDate, &sub.BillingCycle,
+		&nextBillingDate, &cancelledAt, &cancelReason,
+		&createdAt, &updatedAt)
+	if err == sql.ErrNoRows {
+		return nil, errSubscriptionMissing
+	}
+	if err != nil {
+		return nil, err
+	}
+	sub.LicenseID = licenseID.String
+	sub.StartDate = startDate.Time
+	sub.EndDate = endDate.Time
+	sub.NextBillingDate = nextBillingDate.Time
+	sub.CancelledAt = cancelledAt.Time
+	sub.CancelReason = cancelReason.String
+	sub.CreatedAt = createdAt.Time
+	sub.UpdatedAt = updatedAt.Time
+	return sub, nil
+}
+
+func (s *SQLiteStorage) scanSubscriptionRow(scanner productRowScanner) (*Subscription, error) {
+	sub := &Subscription{}
+	var licenseID, cancelReason sql.NullString
+	var startDate, endDate, nextBillingDate, cancelledAt, createdAt, updatedAt sqliteTimeValue
+	err := scanner.Scan(&sub.ID, &sub.ClientID, &sub.ProductID, &sub.PlanID, &licenseID,
+		&sub.Status, &startDate, &endDate, &sub.BillingCycle,
+		&nextBillingDate, &cancelledAt, &cancelReason,
+		&createdAt, &updatedAt)
+	if err != nil {
+		return nil, err
+	}
+	sub.LicenseID = licenseID.String
+	sub.StartDate = startDate.Time
+	sub.EndDate = endDate.Time
+	sub.NextBillingDate = nextBillingDate.Time
+	sub.CancelledAt = cancelledAt.Time
+	sub.CancelReason = cancelReason.String
+	sub.CreatedAt = createdAt.Time
+	sub.UpdatedAt = updatedAt.Time
+	return sub, nil
 }

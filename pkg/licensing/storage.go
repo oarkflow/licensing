@@ -51,6 +51,7 @@ type Storage interface {
 	GetPlanBySlug(ctx context.Context, productID, slug string) (*Plan, error)
 	FindPlanBySlug(ctx context.Context, slug string) (*Plan, error) // Search across all products
 	ListPlansByProduct(ctx context.Context, productID string) ([]*Plan, error)
+	GetTrialPlanForProduct(ctx context.Context, productID string) (*Plan, error) // Get the trial plan for a product (only one allowed)
 	DeletePlan(ctx context.Context, planID string) error
 
 	// Feature management
@@ -77,6 +78,20 @@ type Storage interface {
 
 	// Entitlement computation
 	ComputeLicenseEntitlements(ctx context.Context, productID, planID string) (*LicenseEntitlements, error)
+
+	// Trial registry - tracks device fingerprints that have used trial licenses
+	SaveDeviceTrial(ctx context.Context, trial *DeviceTrial) error
+	GetDeviceTrial(ctx context.Context, deviceFingerprint string) (*DeviceTrial, error)
+	HasDeviceUsedTrial(ctx context.Context, deviceFingerprint string) (bool, error)
+	ListDeviceTrials(ctx context.Context) ([]*DeviceTrial, error)
+
+	// Subscription management
+	SaveSubscription(ctx context.Context, sub *Subscription) error
+	UpdateSubscription(ctx context.Context, sub *Subscription) error
+	GetSubscription(ctx context.Context, subID string) (*Subscription, error)
+	ListSubscriptions(ctx context.Context) ([]*Subscription, error)
+	ListSubscriptionsByClient(ctx context.Context, clientID string) ([]*Subscription, error)
+	DeleteSubscription(ctx context.Context, subID string) error
 }
 
 var (
@@ -98,7 +113,22 @@ var (
 	errFeatureScopeMissing = errors.New("feature scope not found")
 	errPlanFeatureExists   = errors.New("plan feature already exists")
 	errPlanFeatureMissing  = errors.New("plan feature not found")
+	errDeviceTrialExists   = errors.New("device has already used trial")
+	errDeviceTrialMissing  = errors.New("device trial not found")
 )
+
+// DeviceTrial tracks devices that have used a trial license.
+// This prevents the same device from getting multiple trial licenses.
+type DeviceTrial struct {
+	DeviceFingerprint string    `json:"device_fingerprint"`
+	LicenseID         string    `json:"license_id"`
+	ClientID          string    `json:"client_id"`
+	Email             string    `json:"email"`
+	ProductID         string    `json:"product_id,omitempty"`
+	TrialStartedAt    time.Time `json:"trial_started_at"`
+	TrialExpiresAt    time.Time `json:"trial_expires_at"`
+	CreatedAt         time.Time `json:"created_at"`
+}
 
 type AdminUser struct {
 	ID           string    `json:"id"`
@@ -157,6 +187,8 @@ type InMemoryStorage struct {
 	featuresBySlug map[string]string // key: "productID:slug"
 	featureScopes  map[string]*FeatureScope
 	planFeatures   map[string]*PlanFeature // key: "planID:featureID"
+	// Trial registry
+	deviceTrials map[string]*DeviceTrial // key: device fingerprint
 }
 
 func NewInMemoryStorage() *InMemoryStorage {
@@ -179,6 +211,7 @@ func NewInMemoryStorage() *InMemoryStorage {
 		featuresBySlug: make(map[string]string),
 		featureScopes:  make(map[string]*FeatureScope),
 		planFeatures:   make(map[string]*PlanFeature),
+		deviceTrials:   make(map[string]*DeviceTrial),
 	}
 }
 
@@ -506,6 +539,81 @@ func (s *InMemoryStorage) ListAPIKeysByUser(_ context.Context, userID string) ([
 	return keys, nil
 }
 
+// DeviceTrial methods for InMemoryStorage
+
+func cloneDeviceTrial(trial *DeviceTrial) *DeviceTrial {
+	if trial == nil {
+		return nil
+	}
+	clone := *trial
+	return &clone
+}
+
+func (s *InMemoryStorage) SaveDeviceTrial(_ context.Context, trial *DeviceTrial) error {
+	if trial == nil {
+		return fmt.Errorf("device trial is nil")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, exists := s.deviceTrials[trial.DeviceFingerprint]; exists {
+		return errDeviceTrialExists
+	}
+	s.deviceTrials[trial.DeviceFingerprint] = cloneDeviceTrial(trial)
+	return nil
+}
+
+func (s *InMemoryStorage) GetDeviceTrial(_ context.Context, deviceFingerprint string) (*DeviceTrial, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	trial, exists := s.deviceTrials[deviceFingerprint]
+	if !exists {
+		return nil, errDeviceTrialMissing
+	}
+	return cloneDeviceTrial(trial), nil
+}
+
+func (s *InMemoryStorage) HasDeviceUsedTrial(_ context.Context, deviceFingerprint string) (bool, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	_, exists := s.deviceTrials[deviceFingerprint]
+	return exists, nil
+}
+
+func (s *InMemoryStorage) ListDeviceTrials(_ context.Context) ([]*DeviceTrial, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	trials := make([]*DeviceTrial, 0, len(s.deviceTrials))
+	for _, trial := range s.deviceTrials {
+		trials = append(trials, cloneDeviceTrial(trial))
+	}
+	return trials, nil
+}
+
+// Subscription methods for InMemoryStorage - not fully implemented for in-memory
+func (s *InMemoryStorage) SaveSubscription(_ context.Context, _ *Subscription) error {
+	return fmt.Errorf("subscriptions not supported in in-memory storage")
+}
+
+func (s *InMemoryStorage) UpdateSubscription(_ context.Context, _ *Subscription) error {
+	return fmt.Errorf("subscriptions not supported in in-memory storage")
+}
+
+func (s *InMemoryStorage) GetSubscription(_ context.Context, _ string) (*Subscription, error) {
+	return nil, fmt.Errorf("subscriptions not supported in in-memory storage")
+}
+
+func (s *InMemoryStorage) ListSubscriptions(_ context.Context) ([]*Subscription, error) {
+	return []*Subscription{}, nil
+}
+
+func (s *InMemoryStorage) ListSubscriptionsByClient(_ context.Context, _ string) ([]*Subscription, error) {
+	return []*Subscription{}, nil
+}
+
+func (s *InMemoryStorage) DeleteSubscription(_ context.Context, _ string) error {
+	return fmt.Errorf("subscriptions not supported in in-memory storage")
+}
+
 func (s *InMemoryStorage) snapshot() *storageSnapshot {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -726,6 +834,52 @@ func (ps *PersistentStorage) ListAPIKeysByUser(ctx context.Context, userID strin
 	return ps.backend.ListAPIKeysByUser(ctx, userID)
 }
 
+// DeviceTrial methods for PersistentStorage
+
+func (ps *PersistentStorage) SaveDeviceTrial(ctx context.Context, trial *DeviceTrial) error {
+	if err := ps.backend.SaveDeviceTrial(ctx, trial); err != nil {
+		return err
+	}
+	return ps.persist()
+}
+
+func (ps *PersistentStorage) GetDeviceTrial(ctx context.Context, deviceFingerprint string) (*DeviceTrial, error) {
+	return ps.backend.GetDeviceTrial(ctx, deviceFingerprint)
+}
+
+func (ps *PersistentStorage) HasDeviceUsedTrial(ctx context.Context, deviceFingerprint string) (bool, error) {
+	return ps.backend.HasDeviceUsedTrial(ctx, deviceFingerprint)
+}
+
+func (ps *PersistentStorage) ListDeviceTrials(ctx context.Context) ([]*DeviceTrial, error) {
+	return ps.backend.ListDeviceTrials(ctx)
+}
+
+// Subscription methods - forward to backend
+func (ps *PersistentStorage) SaveSubscription(ctx context.Context, sub *Subscription) error {
+	return ps.backend.SaveSubscription(ctx, sub)
+}
+
+func (ps *PersistentStorage) UpdateSubscription(ctx context.Context, sub *Subscription) error {
+	return ps.backend.UpdateSubscription(ctx, sub)
+}
+
+func (ps *PersistentStorage) GetSubscription(ctx context.Context, subID string) (*Subscription, error) {
+	return ps.backend.GetSubscription(ctx, subID)
+}
+
+func (ps *PersistentStorage) ListSubscriptions(ctx context.Context) ([]*Subscription, error) {
+	return ps.backend.ListSubscriptions(ctx)
+}
+
+func (ps *PersistentStorage) ListSubscriptionsByClient(ctx context.Context, clientID string) ([]*Subscription, error) {
+	return ps.backend.ListSubscriptionsByClient(ctx, clientID)
+}
+
+func (ps *PersistentStorage) DeleteSubscription(ctx context.Context, subID string) error {
+	return ps.backend.DeleteSubscription(ctx, subID)
+}
+
 func (ps *PersistentStorage) persist() error {
 	snapshot := ps.backend.snapshot()
 	data, err := json.MarshalIndent(snapshot, "", "  ")
@@ -761,7 +915,12 @@ func BuildStorageFromEnv() (Storage, string, error) {
 	case "", "sqlite", "sql", "sqlite3":
 		path := strings.TrimSpace(os.Getenv("LICENSE_SERVER_STORAGE_SQLITE_PATH"))
 		if path == "" {
-			path = filepath.Join("data", "licensing.db")
+			// Default to ~/.licensing/data/licensing.db
+			homeDir, err := os.UserHomeDir()
+			if err != nil {
+				return nil, "", fmt.Errorf("failed to get home directory: %w", err)
+			}
+			path = filepath.Join(homeDir, ".licensing", "data", "licensing.db")
 		} else {
 			path = filepath.Clean(path)
 		}
@@ -775,7 +934,12 @@ func BuildStorageFromEnv() (Storage, string, error) {
 	case "file", "disk", "persistent":
 		path := strings.TrimSpace(os.Getenv("LICENSE_SERVER_STORAGE_FILE"))
 		if path == "" {
-			path = filepath.Join("data", "licensing-state.json")
+			// Default to ~/.licensing/data/licensing-state.json
+			homeDir, err := os.UserHomeDir()
+			if err != nil {
+				return nil, "", fmt.Errorf("failed to get home directory: %w", err)
+			}
+			path = filepath.Join(homeDir, ".licensing", "data", "licensing-state.json")
 		} else {
 			path = filepath.Clean(path)
 		}

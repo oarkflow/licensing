@@ -100,13 +100,28 @@
                         </div>
                     </div>
 
-                    <div>
+                    <div class="sm:col-span-2">
+                        <div class="relative flex items-start">
+                            <div class="flex h-6 items-center">
+                                <input id="is_trial" name="is_trial" type="checkbox" onchange="toggleTrialFields()"
+                                    class="h-4 w-4 rounded border-gray-300 text-primary-600 focus:ring-primary-600">
+                            </div>
+                            <div class="ml-3 text-sm leading-6">
+                                <label for="is_trial" class="font-medium text-gray-900">Trial Plan</label>
+                                <p class="text-gray-500">Mark this as the trial plan for the product (only one per
+                                    product, price will be $0)</p>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div id="trial_days_field" class="hidden">
                         <label for="trial_days" class="block text-sm font-medium leading-6 text-gray-900">Trial
-                            Days</label>
+                            Days *</label>
                         <div class="mt-2">
-                            <input type="number" name="trial_days" id="trial_days" min="0" placeholder="14"
+                            <input type="number" name="trial_days" id="trial_days" min="1" value="14" placeholder="14"
                                 class="block w-full rounded-md border-0 py-1.5 text-gray-900 shadow-sm ring-1 ring-inset ring-gray-300 placeholder:text-gray-400 focus:ring-2 focus:ring-inset focus:ring-primary-600 sm:text-sm sm:leading-6 px-3">
                         </div>
+                        <p class="mt-1 text-sm text-gray-500">Number of days for the trial period</p>
                     </div>
 
                     <div class="sm:col-span-2">
@@ -150,5 +165,22 @@
         const slug = this.value.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
         document.getElementById('slug').value = slug;
     });
+
+    function toggleTrialFields() {
+        const isTrial = document.getElementById('is_trial').checked;
+        const trialDaysField = document.getElementById('trial_days_field');
+        const priceField = document.getElementById('price');
+
+        if (isTrial) {
+            trialDaysField.classList.remove('hidden');
+            priceField.value = '0';
+            priceField.readOnly = true;
+            priceField.classList.add('bg-gray-100');
+        } else {
+            trialDaysField.classList.add('hidden');
+            priceField.readOnly = false;
+            priceField.classList.remove('bg-gray-100');
+        }
+    }
 </script>
 {{end}}

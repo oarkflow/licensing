@@ -71,6 +71,7 @@ type Config struct {
 	ServerURL         string
 	AppName           string
 	AppVersion        string
+	ProductID         string // Product ID or slug to validate license against
 	HTTPTimeout       time.Duration
 	CACertPath        string
 	AllowInsecureHTTP bool
@@ -82,6 +83,7 @@ type Client struct {
 	configDir        string
 	licensePath      string
 	checksumPath     string
+	productID        string
 	publicKey        *rsa.PublicKey
 	httpClient       *http.Client
 	sessionKey       []byte
@@ -95,6 +97,7 @@ type ActivationRequest struct {
 	ClientID          string `json:"client_id,omitempty"`
 	LicenseKey        string `json:"license_key"`
 	DeviceFingerprint string `json:"device_fingerprint"`
+	ProductID         string `json:"product_id,omitempty"` // Product ID or slug to validate license against
 }
 
 // ActivationResponse is returned by the licensing server.
@@ -146,6 +149,116 @@ type LicenseData struct {
 	NextCheckAt        time.Time            `json:"next_check_at"`
 	LastCheckAt        time.Time            `json:"last_check_at"`
 	Entitlements       *LicenseEntitlements `json:"entitlements,omitempty"`
+
+	// Trial-related fields
+	IsTrial        bool      `json:"is_trial"`
+	TrialStartedAt time.Time `json:"trial_started_at,omitempty"`
+	TrialExpiresAt time.Time `json:"trial_expires_at,omitempty"`
+}
+
+// TrialStatus represents the current status of a trial license.
+type TrialStatus int
+
+const (
+	// TrialStatusNotTrial indicates this is not a trial license.
+	TrialStatusNotTrial TrialStatus = iota
+	// TrialStatusActive indicates the trial is currently active.
+	TrialStatusActive
+	// TrialStatusExpired indicates the trial has expired.
+	TrialStatusExpired
+)
+
+// TrialInfo contains information about the trial status and expiration.
+type TrialInfo struct {
+	Status          TrialStatus
+	IsTrial         bool
+	IsExpired       bool
+	DaysRemaining   int
+	ExpiresAt       time.Time
+	Message         string
+	SubscriptionURL string
+}
+
+// GetTrialInfo returns detailed information about the trial status.
+func (ld *LicenseData) GetTrialInfo() TrialInfo {
+	info := TrialInfo{
+		IsTrial:   ld.IsTrial,
+		ExpiresAt: ld.TrialExpiresAt,
+	}
+
+	if !ld.IsTrial {
+		info.Status = TrialStatusNotTrial
+		info.Message = "This is a licensed version."
+		return info
+	}
+
+	now := time.Now()
+	expiresAt := ld.TrialExpiresAt
+	if expiresAt.IsZero() {
+		expiresAt = ld.ExpiresAt
+	}
+
+	if now.After(expiresAt) {
+		info.Status = TrialStatusExpired
+		info.IsExpired = true
+		info.DaysRemaining = 0
+		info.Message = "Your trial has expired. Please subscribe to continue using the application."
+		return info
+	}
+
+	remaining := expiresAt.Sub(now)
+	info.DaysRemaining = int(remaining.Hours() / 24)
+	info.Status = TrialStatusActive
+	info.IsExpired = false
+
+	if info.DaysRemaining <= 3 {
+		info.Message = fmt.Sprintf("Your trial expires in %d day(s). Please subscribe to continue using the application.", info.DaysRemaining)
+	} else {
+		info.Message = fmt.Sprintf("Trial active: %d days remaining.", info.DaysRemaining)
+	}
+
+	return info
+}
+
+// IsTrialExpired returns true if this is a trial license that has expired.
+func (ld *LicenseData) IsTrialExpired() bool {
+	if !ld.IsTrial {
+		return false
+	}
+	expiresAt := ld.TrialExpiresAt
+	if expiresAt.IsZero() {
+		expiresAt = ld.ExpiresAt
+	}
+	return time.Now().After(expiresAt)
+}
+
+// IsTrialActive returns true if this is an active (non-expired) trial license.
+func (ld *LicenseData) IsTrialActive() bool {
+	if !ld.IsTrial {
+		return false
+	}
+	expiresAt := ld.TrialExpiresAt
+	if expiresAt.IsZero() {
+		expiresAt = ld.ExpiresAt
+	}
+	return time.Now().Before(expiresAt)
+}
+
+// TrialDaysRemaining returns the number of days remaining in the trial.
+// Returns 0 if not a trial or if expired.
+func (ld *LicenseData) TrialDaysRemaining() int {
+	if !ld.IsTrial {
+		return 0
+	}
+	expiresAt := ld.TrialExpiresAt
+	if expiresAt.IsZero() {
+		expiresAt = ld.ExpiresAt
+	}
+	remaining := time.Until(expiresAt)
+	if remaining <= 0 {
+		return 0
+	}
+	return int(remaining.Hours() / 24)
 }
 
 // ScopePermission defines the permission level for a scope.
@@ -249,6 +362,30 @@ type CredentialsFile struct {
 	LicenseKey string `json:"license_key"`
 }
 
+// TrialRequest is sent to the licensing server to request a trial license.
+type TrialRequest struct {
+	Email             string `json:"email"`
+	DeviceFingerprint string `json:"device_fingerprint"`
+	ProductID         string `json:"product_id,omitempty"`
+	PlanID            string `json:"plan_id,omitempty"`
+	TrialDays         int    `json:"trial_days,omitempty"`
+}
+
+// TrialCheckRequest is sent to check if a device is eligible for trial.
+type TrialCheckRequest struct {
+	DeviceFingerprint string `json:"device_fingerprint"`
+	ProductID         string `json:"product_id,omitempty"`
+}
+
+// TrialCheckResponse is returned when checking trial eligibility.
+type TrialCheckResponse struct {
+	Eligible        bool      `json:"eligible"`
+	HasUsedTrial    bool      `json:"has_used_trial"`
+	TrialExpiresAt  time.Time `json:"trial_expires_at,omitempty"`
+	Message         string    `json:"message"`
+	SubscriptionURL string    `json:"subscription_url,omitempty"`
+}
+
 // LoadCredentialsFile loads license activation credentials from a JSON file.
 // The file should contain: {"email": "...", "client_id": "...", "license_key": "..."}
 func LoadCredentialsFile(path string) (*CredentialsFile, error) {
@@ -292,6 +429,7 @@ func New(cfg Config) (*Client, error) {
 		configDir:    normalized.ConfigDir,
 		licensePath:  filepath.Join(normalized.ConfigDir, normalized.LicenseFile),
 		checksumPath: filepath.Join(normalized.ConfigDir, normalized.LicenseFile+checksumFileSuffix),
+		productID:    strings.TrimSpace(normalized.ProductID),
 		httpClient:   httpClient,
 	}
 
@@ -454,6 +592,7 @@ func (lc *Client) Activate(email, clientID, licenseKey string) error {
 		ClientID:          clientID,
 		LicenseKey:        licenseKey,
 		DeviceFingerprint: fingerprint,
+		ProductID:         lc.productID,
 	}
 
 	reqBody, err := json.Marshal(activationReq)
@@ -722,6 +861,7 @@ func (lc *Client) refreshLicenseFromServer(ctx context.Context, stored *StoredLi
 		LicenseKey:        licenseData.LicenseKey,
 		DeviceFingerprint: stored.DeviceFingerprint,
 		ClientID:          strings.TrimSpace(licenseData.ClientID),
+		ProductID:         lc.productID,
 	}
 	body, err := json.Marshal(verificationReq)
 	if err != nil {
@@ -919,6 +1059,169 @@ func (lc *Client) Verify() (*LicenseData, error) {
 	}
 
 	return licenseData, nil
+}
+
+// CheckTrialEligibility checks if this device is eligible for a trial license.
+func (lc *Client) CheckTrialEligibility(productID string) (*TrialCheckResponse, error) {
+	fingerprint, err := lc.generateDeviceFingerprint()
+	if err != nil {
+		return nil, fmt.Errorf("failed to generate fingerprint: %w", err)
+	}
+
+	checkReq := TrialCheckRequest{
+		DeviceFingerprint: fingerprint,
+		ProductID:         productID,
+	}
+
+	reqBody, err := json.Marshal(checkReq)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal trial check request: %w", err)
+	}
+
+	req, err := http.NewRequest(http.MethodPost, lc.apiURL("/api/trial/check"), bytes.NewBuffer(reqBody))
+	if err != nil {
+		return nil, fmt.Errorf("failed to build request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("User-Agent", lc.userAgent())
+	req.Header.Set(headerFingerprint, fingerprint)
+
+	resp, err := lc.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %v", ErrServerUnavailable, err)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if err != nil {
+		return nil, fmt.Errorf("failed to read response: %w", err)
+	}
+
+	if resp.StatusCode < http.StatusOK || resp.StatusCode >= 300 {
+		var errPayload map[string]string
+		if json.Unmarshal(body, &errPayload) == nil {
+			if msg := errPayload["error"]; msg != "" {
+				return nil, fmt.Errorf("trial check failed: %s", msg)
+			}
+		}
+		return nil, fmt.Errorf("trial check failed: %s", resp.Status)
+	}
+
+	var checkResp TrialCheckResponse
+	if err := json.Unmarshal(body, &checkResp); err != nil {
+		return nil, fmt.Errorf("failed to decode trial check response: %w", err)
+	}
+
+	return &checkResp, nil
+}
+
+// RequestTrial requests a trial license for the current device.
+// This will fail if the device has already used a trial.
+func (lc *Client) RequestTrial(email, productID, planID string, trialDays int) (*LicenseData, error) {
+	fmt.Println("\n🔐 Starting trial activation...")
+	email = strings.TrimSpace(email)
+
+	fmt.Println("🔍 Generating device fingerprint...")
+	fingerprint, err := lc.generateDeviceFingerprint()
+	if err != nil {
+		return nil, fmt.Errorf("failed to generate fingerprint: %w", err)
+	}
+	fmt.Printf("   Device ID: %s...\n", truncateFingerprint(fingerprint))
+
+	// Check eligibility first
+	fmt.Println("📋 Checking trial eligibility...")
+	eligibility, err := lc.CheckTrialEligibility(productID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to check trial eligibility: %w", err)
+	}
+
+	if !eligibility.Eligible {
+		return nil, fmt.Errorf("trial not available: %s", eligibility.Message)
+	}
+
+	trialReq := TrialRequest{
+		Email:             email,
+		DeviceFingerprint: fingerprint,
+		ProductID:         productID,
+		PlanID:            planID,
+		TrialDays:         trialDays,
+	}
+
+	reqBody, err := json.Marshal(trialReq)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal trial request: %w", err)
+	}
+
+	fmt.Println("📡 Contacting license server for trial...")
+	req, err := http.NewRequest(http.MethodPost, lc.apiURL("/api/trial"), bytes.NewBuffer(reqBody))
+	if err != nil {
+		return nil, fmt.Errorf("failed to build request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("User-Agent", lc.userAgent())
+	req.Header.Set(headerFingerprint, fingerprint)
+
+	resp, err := lc.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to contact license server: %w", err)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 2<<20))
+	if err != nil {
+		return nil, fmt.Errorf("failed to read server response: %w", err)
+	}
+
+	if resp.StatusCode < http.StatusOK || resp.StatusCode >= 300 {
+		var errPayload map[string]string
+		if json.Unmarshal(body, &errPayload) == nil {
+			if msg := errPayload["error"]; msg != "" {
+				return nil, fmt.Errorf("trial activation failed: %s", msg)
+			}
+		}
+		return nil, fmt.Errorf("trial activation failed: %s", resp.Status)
+	}
+
+	var activationResp ActivationResponse
+	if err := json.Unmarshal(body, &activationResp); err != nil {
+		return nil, fmt.Errorf("failed to decode response: %w", err)
+	}
+
+	if !activationResp.Success {
+		return nil, fmt.Errorf("trial activation failed: %s", activationResp.Message)
+	}
+	if activationResp.EncryptedLicense == "" || activationResp.Nonce == "" || activationResp.Signature == "" || activationResp.PublicKey == "" {
+		return nil, fmt.Errorf("trial payload missing cryptographic material")
+	}
+
+	fmt.Println("✓ Trial license validated by server")
+
+	fmt.Println("🔑 Parsing server public key...")
+	fmt.Println("✍️  Verifying signature...")
+	storedLicense, err := lc.buildStoredLicenseFromResponse(&activationResp, fingerprint)
+	if err != nil {
+		return nil, err
+	}
+	fmt.Println("✓ Signature verified")
+
+	fmt.Println("💾 Saving trial license file...")
+	if err := lc.writeLicenseFile(storedLicense); err != nil {
+		return nil, err
+	}
+	licenseData, err := lc.decryptLicense(storedLicense)
+	if err != nil {
+		return nil, err
+	}
+
+	fmt.Printf("✓ Trial license saved to: %s\n", lc.licensePath)
+	fmt.Printf("✓ Trial expires: %s\n", licenseData.TrialExpiresAt.Format("2006-01-02"))
+	return licenseData, nil
+}
+
+// GetDeviceFingerprint returns the current device's fingerprint.
+// This can be used to display to users or for debugging purposes.
+func (lc *Client) GetDeviceFingerprint() (string, error) {
+	return lc.generateDeviceFingerprint()
 }
 
 func (lc *Client) decryptLicense(stored *StoredLicense) (*LicenseData, error) {

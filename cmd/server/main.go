@@ -161,7 +161,7 @@ func createDemoData(ctx context.Context, lm *licensing.LicenseManager) error {
 
 	storage := lm.Storage()
 
-	// ==================== Create Product ====================
+	// ==================== Create Products ====================
 	product := &licensing.Product{
 		ID:          "prod_demo_001",
 		Name:        "Demo Application",
@@ -174,6 +174,21 @@ func createDemoData(ctx context.Context, lm *licensing.LicenseManager) error {
 		log.Printf("↺ Product already exists or error: %v", err)
 	} else {
 		log.Printf("   ✓ Created product: %s", product.Name)
+	}
+
+	// Create Secretr Application product
+	secretrProduct := &licensing.Product{
+		ID:          "prod_secretr_001",
+		Name:        "Secretr Application",
+		Slug:        "secretr",
+		Description: "Secure secrets management application",
+		CreatedAt:   time.Now(),
+		UpdatedAt:   time.Now(),
+	}
+	if err := storage.SaveProduct(ctx, secretrProduct); err != nil {
+		log.Printf("↺ Secretr product already exists or error: %v", err)
+	} else {
+		log.Printf("   ✓ Created product: %s", secretrProduct.Name)
 	}
 
 	// ==================== Create Features ====================
@@ -534,8 +549,12 @@ func createDemoData(ctx context.Context, lm *licensing.LicenseManager) error {
 			log.Printf("↺ Demo client already exists: %s (ID: %s)", client.Email, client.ID)
 		}
 
-		// Create license with basic plan slug
-		license, err := lm.GenerateLicense(ctx, client.ID, u.duration, u.max, u.planSlug, mode, interval)
+		// Create license with product and plan IDs
+		opts := &licensing.GenerateLicenseOptions{
+			ProductID: product.ID,
+			PlanID:    u.planID,
+		}
+		license, err := lm.GenerateLicenseWithOptions(ctx, client.ID, u.duration, u.max, u.planSlug, mode, interval, opts)
 		if err != nil {
 			log.Printf("⚠️ Failed to create demo license for %s: %v", client.Email, err)
 			continue

@@ -20,30 +20,33 @@ type Client struct {
 }
 
 type License struct {
-	ID                 string                      `json:"id"`
-	ClientID           string                      `json:"client_id"`
-	Email              string                      `json:"email"`
-	ProductID          string                      `json:"product_id,omitempty"`
-	PlanSlug           string                      `json:"plan_slug"`
-	PlanID             string                      `json:"plan_id,omitempty"`
-	LicenseKey         string                      `json:"license_key"`
-	IsRevoked          bool                        `json:"is_revoked"`
-	RevokedAt          time.Time                   `json:"revoked_at,omitempty"`
-	RevokeReason       string                      `json:"revoke_reason,omitempty"`
-	IsActivated        bool                        `json:"is_activated"`
-	IssuedAt           time.Time                   `json:"issued_at"`
-	LastActivatedAt    time.Time                   `json:"last_activated_at,omitempty"`
-	ExpiresAt          time.Time                   `json:"expires_at"`
-	CurrentActivations int                         `json:"current_activations"`
-	MaxDevices         int                         `json:"max_devices"`
-	DeviceCount        int                         `json:"device_count"`
-	Devices            map[string]*LicenseDevice   `json:"devices"`
-	AuthorizedUsers    map[string]*LicenseIdentity `json:"authorized_users,omitempty"`
-	CheckMode          LicenseCheckMode            `json:"check_mode,omitempty"`
-	CheckIntervalSecs  int64                       `json:"check_interval_seconds,omitempty"`
-	NextCheckAt        time.Time                   `json:"next_check_at,omitempty"`
-	LastCheckAt        time.Time                   `json:"last_check_at,omitempty"`
-	Entitlements       *LicenseEntitlements        `json:"entitlements,omitempty"`
+	ID                     string                      `json:"id"`
+	ClientID               string                      `json:"client_id"`
+	Email                  string                      `json:"email"`
+	ProductID              string                      `json:"product_id,omitempty"`
+	PlanSlug               string                      `json:"plan_slug"`
+	PlanID                 string                      `json:"plan_id,omitempty"`
+	LicenseKey             string                      `json:"license_key"`
+	IsRevoked              bool                        `json:"is_revoked"`
+	RevokedAt              time.Time                   `json:"revoked_at,omitempty"`
+	RevokeReason           string                      `json:"revoke_reason,omitempty"`
+	IsActivated            bool                        `json:"is_activated"`
+	IssuedAt               time.Time                   `json:"issued_at"`
+	LastActivatedAt        time.Time                   `json:"last_activated_at,omitempty"`
+	ExpiresAt              time.Time                   `json:"expires_at"`
+	CurrentActivations     int                         `json:"current_activations"`
+	MaxDevices             int                         `json:"max_devices"`
+	DeviceCount            int                         `json:"device_count"`
+	Devices                map[string]*LicenseDevice   `json:"devices"`
+	AuthorizedUsers        map[string]*LicenseIdentity `json:"authorized_users,omitempty"`
+	CheckMode              LicenseCheckMode            `json:"check_mode,omitempty"`
+	CheckIntervalSecs      int64                       `json:"check_interval_seconds,omitempty"`
+	NextCheckAt            time.Time                   `json:"next_check_at,omitempty"`
+	LastCheckAt            time.Time                   `json:"last_check_at,omitempty"`
+	Entitlements           *LicenseEntitlements        `json:"entitlements,omitempty"`
+	IsTrial                bool                        `json:"is_trial"`
+	TrialStartedAt         time.Time                   `json:"trial_started_at,omitempty"`
+	TrialDeviceFingerprint string                      `json:"trial_device_fingerprint,omitempty"`
 }
 
 type LicenseCheckMode string
@@ -99,6 +102,7 @@ type ActivationRequest struct {
 	ClientID          string `json:"client_id,omitempty"`
 	LicenseKey        string `json:"license_key"`
 	DeviceFingerprint string `json:"device_fingerprint"`
+	ProductID         string `json:"product_id,omitempty"` // Product ID or slug to validate license against
 	IPAddress         string `json:"-"`
 	UserAgent         string `json:"-"`
 }
@@ -279,4 +283,12 @@ type createAdminUserRequest struct {
 
 type createAPIKeyRequest struct {
 	UserID string `json:"user_id"`
+}
+
+type trialLicenseAPIRequest struct {
+	Email             string `json:"email"`
+	DeviceFingerprint string `json:"device_fingerprint"`
+	ProductID         string `json:"product_id,omitempty"`
+	TrialDurationDays int    `json:"trial_duration_days,omitempty"`
+	SubscriptionURL   string `json:"subscription_url,omitempty"`
 }

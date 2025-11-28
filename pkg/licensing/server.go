@@ -370,6 +370,315 @@ func (s *Server) handleVerify(w http.ResponseWriter, r *http.Request) {
 	s.respondClientJSON(w, http.StatusOK, resp, transportKey)
 }
 
+func (s *Server) handleTrial(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		s.respondClientError(w, http.StatusMethodNotAllowed, "Method not allowed", nil)
+		return
+	}
+	if !s.enforceClientRateLimit(w, r) {
+		return
+	}
+
+	var req trialLicenseAPIRequest
+	if !s.decodeJSONBody(w, r, &req, maxActivationPayloadBytes) {
+		return
+	}
+
+	trialReq := &TrialLicenseRequest{
+		Email:             req.Email,
+		DeviceFingerprint: req.DeviceFingerprint,
+		ProductID:         req.ProductID,
+		TrialDurationDays: req.TrialDurationDays,
+		SubscriptionURL:   req.SubscriptionURL,
+	}
+
+	resp, err := s.lm.GenerateTrialLicense(r.Context(), trialReq)
+	if err != nil {
+		s.respondError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	if !resp.Success {
+		status := http.StatusOK
+		if resp.AlreadyUsed {
+			status = http.StatusConflict
+		}
+		s.respondJSON(w, status, resp)
+		return
+	}
+
+	s.respondJSON(w, http.StatusCreated, resp)
+}
+
+func (s *Server) handleTrialCheck(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet && r.Method != http.MethodPost {
+		s.respondError(w, http.StatusMethodNotAllowed, "Method not allowed")
+		return
+	}
+	if !s.enforceRateLimit(w, r) {
+		return
+	}
+
+	var fingerprint string
+	if r.Method == http.MethodGet {
+		fingerprint = strings.TrimSpace(r.URL.Query().Get("device_fingerprint"))
+	} else {
+		var req struct {
+			DeviceFingerprint string `json:"device_fingerprint"`
+		}
+		if !s.decodeJSONBody(w, r, &req, maxActivationPayloadBytes) {
+			return
+		}
+		fingerprint = strings.TrimSpace(req.DeviceFingerprint)
+	}
+
+	if fingerprint == "" {
+		s.respondError(w, http.StatusBadRequest, "device_fingerprint is required")
+		return
+	}
+
+	hasUsed, err := s.lm.HasDeviceUsedTrial(r.Context(), fingerprint)
+	if err != nil {
+		s.respondError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	resp := map[string]interface{}{
+		"device_fingerprint": fingerprint,
+		"trial_used":         hasUsed,
+		"eligible_for_trial": !hasUsed,
+	}
+
+	if hasUsed {
+		trial, err := s.lm.GetDeviceTrial(r.Context(), fingerprint)
+		if err == nil {
+			resp["trial_started_at"] = trial.TrialStartedAt
+			resp["trial_expires_at"] = trial.TrialExpiresAt
+			resp["trial_expired"] = time.Now().After(trial.TrialExpiresAt)
+		}
+	}
+
+	s.respondJSON(w, http.StatusOK, resp)
+}
+
+// SubscribeRequest represents a subscription creation request.
+type SubscribeRequest struct {
+	Email        string `json:"email"`
+	ProductID    string `json:"product_id"`
+	PlanID       string `json:"plan_id"`
+	StartDate    string `json:"start_date,omitempty"`    // ISO 8601 format, defaults to now
+	DurationDays int    `json:"duration_days,omitempty"` // Overrides billing cycle if set
+	MaxDevices   int    `json:"max_devices,omitempty"`   // Defaults to 1
+	SendEmail    bool   `json:"send_email,omitempty"`    // Send welcome email to customer
+}
+
+func (s *Server) handleSubscribe(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		s.respondError(w, http.StatusMethodNotAllowed, "Method not allowed")
+		return
+	}
+	if !s.enforceRateLimit(w, r) {
+		return
+	}
+	if !s.authorizeAdmin(w, r) {
+		return
+	}
+
+	var req SubscribeRequest
+	if !s.decodeJSONBody(w, r, &req, maxAdminPayloadBytes) {
+		return
+	}
+
+	email := strings.TrimSpace(req.Email)
+	productID := strings.TrimSpace(req.ProductID)
+	planID := strings.TrimSpace(req.PlanID)
+
+	if email == "" || productID == "" || planID == "" {
+		s.respondError(w, http.StatusBadRequest, "email, product_id, and plan_id are required")
+		return
+	}
+
+	ctx := r.Context()
+
+	// Verify product exists
+	product, err := s.lm.Storage().GetProduct(ctx, productID)
+	if err != nil {
+		s.respondError(w, http.StatusBadRequest, "product not found")
+		return
+	}
+
+	// Verify plan exists and belongs to product
+	plan, err := s.lm.Storage().GetPlan(ctx, planID)
+	if err != nil {
+		s.respondError(w, http.StatusBadRequest, "plan not found")
+		return
+	}
+	if plan.ProductID != productID {
+		s.respondError(w, http.StatusBadRequest, "plan does not belong to the specified product")
+		return
+	}
+
+	// Get or create client
+	client, err := s.lm.GetClientByEmail(ctx, email)
+	if err != nil {
+		// Create new client
+		client, err = s.lm.CreateClient(ctx, email)
+		if err != nil {
+			s.respondError(w, http.StatusInternalServerError, fmt.Sprintf("failed to create client: %v", err))
+			return
+		}
+	}
+
+	// Parse start date
+	startDate := time.Now()
+	if req.StartDate != "" {
+		parsed, err := time.Parse(time.RFC3339, req.StartDate)
+		if err != nil {
+			parsed, err = time.Parse("2006-01-02", req.StartDate)
+			if err != nil {
+				s.respondError(w, http.StatusBadRequest, "invalid start_date format, use ISO 8601 (YYYY-MM-DD or YYYY-MM-DDTHH:MM:SSZ)")
+				return
+			}
+		}
+		startDate = parsed
+	}
+
+	// Calculate end date based on billing cycle or custom duration
+	var endDate time.Time
+	var nextBillingDate time.Time
+	billingCycle := plan.BillingCycle
+	if req.DurationDays > 0 {
+		endDate = startDate.AddDate(0, 0, req.DurationDays)
+	} else {
+		switch billingCycle {
+		case "monthly":
+			endDate = startDate.AddDate(0, 1, 0)
+			nextBillingDate = endDate
+		case "yearly":
+			endDate = startDate.AddDate(1, 0, 0)
+			nextBillingDate = endDate
+		case "lifetime":
+			endDate = startDate.AddDate(100, 0, 0) // 100 years
+		default:
+			endDate = startDate.AddDate(1, 0, 0) // Default to yearly
+			nextBillingDate = endDate
+		}
+	}
+
+	maxDevices := req.MaxDevices
+	if maxDevices <= 0 {
+		maxDevices = 1
+	}
+
+	// Create subscription record
+	now := time.Now()
+	subscription := &Subscription{
+		ID:              uuid.New().String(),
+		ClientID:        client.ID,
+		ProductID:       productID,
+		PlanID:          planID,
+		Status:          SubscriptionStatusActive,
+		StartDate:       startDate,
+		EndDate:         endDate,
+		BillingCycle:    billingCycle,
+		NextBillingDate: nextBillingDate,
+		CreatedAt:       now,
+		UpdatedAt:       now,
+	}
+
+	// Generate license for the subscription
+	duration := endDate.Sub(startDate)
+	mode, interval := s.lm.DefaultCheckPolicy()
+	opts := &GenerateLicenseOptions{
+		ProductID: productID,
+		PlanID:    planID,
+	}
+
+	license, err := s.lm.GenerateLicenseWithOptions(ctx, client.ID, duration, maxDevices, plan.Slug, mode, interval, opts)
+	if err != nil {
+		s.respondError(w, http.StatusInternalServerError, fmt.Sprintf("failed to generate license: %v", err))
+		return
+	}
+
+	subscription.LicenseID = license.ID
+
+	// Save subscription
+	if err := s.lm.Storage().SaveSubscription(ctx, subscription); err != nil {
+		s.respondError(w, http.StatusInternalServerError, fmt.Sprintf("failed to save subscription: %v", err))
+		return
+	}
+
+	// Build response
+	resp := map[string]interface{}{
+		"success":      true,
+		"message":      "Subscription created successfully",
+		"subscription": subscription,
+		"license": map[string]interface{}{
+			"id":          license.ID,
+			"license_key": license.LicenseKey,
+			"plan_slug":   license.PlanSlug,
+			"expires_at":  license.ExpiresAt,
+			"max_devices": license.MaxDevices,
+		},
+		"client": map[string]interface{}{
+			"id":    client.ID,
+			"email": client.Email,
+		},
+		"product": map[string]interface{}{
+			"id":   product.ID,
+			"name": product.Name,
+			"slug": product.Slug,
+		},
+		"plan": map[string]interface{}{
+			"id":            plan.ID,
+			"name":          plan.Name,
+			"slug":          plan.Slug,
+			"billing_cycle": plan.BillingCycle,
+		},
+	}
+
+	// TODO: Send welcome email if requested
+	if req.SendEmail {
+		resp["email_sent"] = false
+		resp["email_message"] = "Email sending not yet implemented"
+	}
+
+	s.respondJSON(w, http.StatusCreated, resp)
+}
+
+func (s *Server) handleSubscriptions(w http.ResponseWriter, r *http.Request) {
+	if !s.enforceRateLimit(w, r) {
+		return
+	}
+	if !s.authorizeAdmin(w, r) {
+		return
+	}
+
+	ctx := r.Context()
+
+	switch r.Method {
+	case http.MethodGet:
+		clientID := strings.TrimSpace(r.URL.Query().Get("client_id"))
+		var subs []*Subscription
+		var err error
+		if clientID != "" {
+			subs, err = s.lm.Storage().ListSubscriptionsByClient(ctx, clientID)
+		} else {
+			subs, err = s.lm.Storage().ListSubscriptions(ctx)
+		}
+		if err != nil {
+			s.respondError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		if subs == nil {
+			subs = []*Subscription{}
+		}
+		s.respondJSON(w, http.StatusOK, subs)
+	default:
+		s.respondError(w, http.StatusMethodNotAllowed, "Method not allowed")
+	}
+}
+
 func (s *Server) handleLicenses(w http.ResponseWriter, r *http.Request) {
 	if !s.enforceRateLimit(w, r) {
 		return
@@ -714,6 +1023,10 @@ func (s *Server) Start() error {
 	mux.HandleFunc("/api/activate", s.handleActivate)
 	mux.HandleFunc("/api/licenses", s.handleLicenses)
 	mux.HandleFunc("/api/verify", s.handleVerify)
+	mux.HandleFunc("/api/trial", s.handleTrial)
+	mux.HandleFunc("/api/trial/check", s.handleTrialCheck)
+	mux.HandleFunc("/api/subscribe", s.handleSubscribe)
+	mux.HandleFunc("/api/subscriptions", s.handleSubscriptions)
 	mux.HandleFunc("/api/licenses/", s.handleLicenseActions)
 	mux.HandleFunc("/api/clients", s.handleClients)
 	mux.HandleFunc("/api/clients/", s.handleClientActions)

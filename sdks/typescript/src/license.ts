@@ -1,7 +1,7 @@
 import { promises as fs } from "node:fs";
 import { createPublicKey } from "node:crypto";
 import { deriveTransportKey, decryptAesGcm, verifySignature } from "./crypto.js";
-import { LicenseData, FeatureGrant, ScopeGrant, CredentialsFile } from "./types.js";
+import { LicenseData, FeatureGrant, ScopeGrant, CredentialsFile, TrialStatus, TrialInfo } from "./types.js";
 
 export interface StoredLicenseFile {
     encrypted_data: string;
@@ -148,4 +148,101 @@ export function canPerform(license: LicenseData, featureSlug: string, scopeSlug:
         return { allowed: false, limit: 0 };
     }
     return { allowed: true, limit: scope.limit ?? 0 };
+}
+
+// Trial-related helper functions
+
+/**
+ * Get detailed information about the trial status of a license.
+ * @param license - The license data to check.
+ * @param subscriptionUrl - Optional URL to display when trial expires.
+ * @returns TrialInfo object with status, expiration info, and messages.
+ */
+export function getTrialInfo(license: LicenseData, subscriptionUrl?: string): TrialInfo {
+    const info: TrialInfo = {
+        status: TrialStatus.NotTrial,
+        isTrial: license.is_trial,
+        isExpired: false,
+        daysRemaining: 0,
+        message: '',
+        subscriptionUrl
+    };
+
+    if (!license.is_trial) {
+        info.status = TrialStatus.NotTrial;
+        info.message = 'This is a licensed version.';
+        return info;
+    }
+
+    const now = new Date();
+    const expiresAtStr = license.trial_expires_at ?? license.expires_at;
+    const expiresAt = new Date(expiresAtStr);
+    info.expiresAt = expiresAt;
+
+    if (now > expiresAt) {
+        info.status = TrialStatus.Expired;
+        info.isExpired = true;
+        info.daysRemaining = 0;
+        info.message = 'Your trial has expired. Please subscribe to continue using the application.';
+        return info;
+    }
+
+    const remainingMs = expiresAt.getTime() - now.getTime();
+    info.daysRemaining = Math.floor(remainingMs / (1000 * 60 * 60 * 24));
+    info.status = TrialStatus.Active;
+    info.isExpired = false;
+
+    if (info.daysRemaining <= 3) {
+        info.message = `Your trial expires in ${info.daysRemaining} day(s). Please subscribe to continue using the application.`;
+    } else {
+        info.message = `Trial active: ${info.daysRemaining} days remaining.`;
+    }
+
+    return info;
+}
+
+/**
+ * Check if the license is a trial that has expired.
+ * @param license - The license data to check.
+ * @returns true if this is an expired trial license.
+ */
+export function isTrialExpired(license: LicenseData): boolean {
+    if (!license.is_trial) {
+        return false;
+    }
+    const expiresAtStr = license.trial_expires_at ?? license.expires_at;
+    const expiresAt = new Date(expiresAtStr);
+    return new Date() > expiresAt;
+}
+
+/**
+ * Check if the license is an active (non-expired) trial.
+ * @param license - The license data to check.
+ * @returns true if this is an active trial license.
+ */
+export function isTrialActive(license: LicenseData): boolean {
+    if (!license.is_trial) {
+        return false;
+    }
+    const expiresAtStr = license.trial_expires_at ?? license.expires_at;
+    const expiresAt = new Date(expiresAtStr);
+    return new Date() < expiresAt;
+}
+
+/**
+ * Get the number of days remaining in the trial.
+ * @param license - The license data to check.
+ * @returns Number of days remaining, or 0 if not a trial or expired.
+ */
+export function trialDaysRemaining(license: LicenseData): number {
+    if (!license.is_trial) {
+        return 0;
+    }
+    const expiresAtStr = license.trial_expires_at ?? license.expires_at;
+    const expiresAt = new Date(expiresAtStr);
+    const remainingMs = expiresAt.getTime() - new Date().getTime();
+    if (remainingMs <= 0) {
+        return 0;
+    }
+    return Math.floor(remainingMs / (1000 * 60 * 60 * 24));
 }

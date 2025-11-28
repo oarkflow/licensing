@@ -186,6 +186,17 @@ func (s *InMemoryStorage) ListPlansByProduct(_ context.Context, productID string
 	return plans, nil
 }
 
+func (s *InMemoryStorage) GetTrialPlanForProduct(_ context.Context, productID string) (*Plan, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	for _, p := range s.plans {
+		if p.ProductID == productID && p.IsTrial {
+			return clonePlan(p), nil
+		}
+	}
+	return nil, errPlanMissing
+}
+
 func (s *InMemoryStorage) DeletePlan(_ context.Context, planID string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()

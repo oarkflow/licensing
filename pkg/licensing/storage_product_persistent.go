@@ -71,6 +71,10 @@ func (ps *PersistentStorage) ListPlansByProduct(ctx context.Context, productID s
 	return ps.backend.ListPlansByProduct(ctx, productID)
 }
 
+func (ps *PersistentStorage) GetTrialPlanForProduct(ctx context.Context, productID string) (*Plan, error) {
+	return ps.backend.GetTrialPlanForProduct(ctx, productID)
+}
+
 func (ps *PersistentStorage) DeletePlan(ctx context.Context, planID string) error {
 	if err := ps.backend.DeletePlan(ctx, planID); err != nil {
 		return err

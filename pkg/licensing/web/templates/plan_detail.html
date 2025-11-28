@@ -49,6 +49,11 @@
                 <span
                     class="inline-flex items-center rounded-full bg-gray-100 px-2.5 py-0.5 text-xs font-medium text-gray-600">Inactive</span>
                 {{end}}
+                {{if $plan.IsTrial}}
+                <span
+                    class="inline-flex items-center rounded-full bg-blue-100 px-2.5 py-0.5 text-xs font-medium text-blue-800">Trial
+                    Plan</span>
+                {{end}}
             </div>
         </div>
         <div class="mt-4 flex md:ml-4 md:mt-0 gap-3">

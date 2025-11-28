@@ -85,4 +85,61 @@ export interface LicenseData {
     next_check_at: string;
     last_check_at: string;
     entitlements?: LicenseEntitlements;
+
+    // Trial-related fields
+    is_trial: boolean;
+    trial_started_at?: string;
+    trial_expires_at?: string;
+}
+
+/**
+ * Represents the current status of a trial license.
+ */
+export enum TrialStatus {
+    NotTrial = 'not_trial',
+    Active = 'active',
+    Expired = 'expired'
+}
+
+/**
+ * Contains information about the trial status and expiration.
+ */
+export interface TrialInfo {
+    status: TrialStatus;
+    isTrial: boolean;
+    isExpired: boolean;
+    daysRemaining: number;
+    expiresAt?: Date;
+    message: string;
+    subscriptionUrl?: string;
+}
+
+/**
+ * Request payload for starting a trial.
+ */
+export interface TrialRequest {
+    email: string;
+    device_fingerprint: string;
+    product_id?: string;
+    plan_id?: string;
+    trial_days?: number;
+}
+
+/**
+ * Request payload for checking trial eligibility.
+ */
+export interface TrialCheckRequest {
+    device_fingerprint: string;
+    product_id?: string;
+}
+
+/**
+ * Response when checking trial eligibility.
+ */
+export interface TrialCheckResponse {
+    eligible: boolean;
+    has_used_trial: boolean;
+    trial_expires_at?: string;
+    message: string;
+    subscription_url?: string;
 }
