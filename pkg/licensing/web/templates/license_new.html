@@ -148,15 +148,36 @@
     </form>
 </div>
 
+<!-- Product Plans Data (hidden, used by JavaScript) -->
+<div id="product-plans-data" style="display:none;">{{range $pid, $plans := .Data.ProductPlans}}<div
+        data-product-id="{{$pid}}">{{range $plans}}<span data-id="{{.ID}}" data-name="{{.Name}}" data-slug="{{.Slug}}"
+            data-price="{{.Price}}" data-currency="{{.Currency}}" data-billing="{{.BillingCycle}}"></span>{{end}}</div>
+    {{end}}</div>
+
 <script>
-    // Store all plans by product ID for filtering
-    const productPlans = {
-        { {range $productID, $plans := .Data.ProductPlans } } "{{$productID}}": [
-        {{ range $plans }}{ id: "{{.ID}}", name: "{{.Name}}", slug: "{{.Slug}}", price: {{.Price }}, currency: "{{.Currency}}", billingCycle: "{{.BillingCycle}}" },
-        {{ end }}
-    ],
-        {{ end }}
-    };
+    // Parse plans from hidden data elements
+    function getProductPlans() {
+        const container = document.getElementById('product-plans-data');
+        const productPlans = {};
+        container.querySelectorAll('[data-product-id]').forEach(div => {
+            const productId = div.dataset.productId;
+            const plans = [];
+            div.querySelectorAll('span').forEach(span => {
+                plans.push({
+                    id: span.dataset.id,
+                    name: span.dataset.name,
+                    slug: span.dataset.slug,
+                    price: parseInt(span.dataset.price, 10),
+                    currency: span.dataset.currency,
+                    billingCycle: span.dataset.billing
+                });
+            });
+            productPlans[productId] = plans;
+        });
+        return productPlans;
+    }
+
+    const productPlans = getProductPlans();
 
     function updatePlans() {
         const productSelect = document.getElementById('product_id');
