@@ -71,7 +71,7 @@ func main() {
 		AppVersion:        "1.0.0",
 		HTTPTimeout:       15 * time.Second,
 		AllowInsecureHTTP: true, // Only for development!
-		ProductID:         "prod_demo_001",
+		ProductID:         "secretr",
 	})
 	if err != nil {
 		log.Fatalf("Failed to create client: %v", err)
