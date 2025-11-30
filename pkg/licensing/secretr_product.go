@@ -670,7 +670,7 @@ var secretrFeatureCatalog = []secretrFeatureDefinition{
 		Slug:        "p2p-sharing",
 		Category:    "sharing",
 		Description: "LAN-based encrypted sharing flows for secrets/files.",
-		CLIActions:  []string{"share", "p2p-share", "p2p"},
+		CLIActions:  []string{"p2p-share", "p2p"},
 		GUIActions:  []string{"p2p_share", "p2p_discover", "p2p_receive"},
 	},
 	{
@@ -721,7 +721,7 @@ var secretrFeatureCatalog = []secretrFeatureDefinition{
 		Slug:        "access-control",
 		Category:    "security",
 		Description: "Fine-grained, ACL-based shared secret governance.",
-		CLIActions:  []string{"enable-share-prompts"},
+		CLIActions:  []string{"share", "share grant", "share revoke", "share list", "enable-share-prompts"},
 	},
 	{
 		ID:           "feat_api-health",
@@ -737,7 +737,7 @@ var secretrFeatureCatalog = []secretrFeatureDefinition{
 		Slug:        "http-api-server",
 		Category:    "server",
 		Description: "Enable JSON API, rate limits, and service mode.",
-		CLIActions:  []string{"server", "kds"},
+		CLIActions:  []string{"server", "kds", "server-config"},
 	},
 	{
 		ID:          "feat_share-link-generation",
@@ -745,7 +745,7 @@ var secretrFeatureCatalog = []secretrFeatureDefinition{
 		Slug:        "share-link-generation",
 		Category:    "sharing",
 		Description: "Create time-bound share links for external partners.",
-		CLIActions:  []string{"share-link"},
+		CLIActions:  []string{"share link", "share link create", "share link list", "share link revoke", "share link redeem"},
 		GUIActions:  []string{"share_link"},
 	},
 	{
@@ -754,6 +754,7 @@ var secretrFeatureCatalog = []secretrFeatureDefinition{
 		Slug:        "share-request-approval",
 		Category:    "sharing",
 		Description: "Handle approvals within the admin experience.",
+		CLIActions:  []string{"share request", "share approve", "share deny", "share requests", "share notifications"},
 		GUIActions:  []string{"share_requests", "share_approvals"},
 	},
 	{
