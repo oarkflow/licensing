@@ -277,6 +277,15 @@ func (ws *WebServer) GetSession(sessionID string) *Session {
 	return session
 }
 
+// ValidateSession implements the licensing.SessionValidator interface
+func (ws *WebServer) ValidateSession(sessionID string) (userID string, username string, ok bool) {
+	session := ws.GetSession(sessionID)
+	if session == nil {
+		return "", "", false
+	}
+	return session.UserID, session.Username, true
+}
+
 func (ws *WebServer) hasAdminUser(ctx context.Context) bool {
 	users, err := ws.lm.ListAdminUsers(ctx)
 	if err != nil {
@@ -317,6 +326,16 @@ func (ws *WebServer) Handler() http.Handler {
 	// Static files
 	staticSub, _ := fs.Sub(staticFS, "static")
 	mux.Handle("/static/", http.StripPrefix("/static/", http.FileServer(http.FS(staticSub))))
+
+	// JSON API Auth endpoints for React frontend
+	mux.HandleFunc("/api/auth/login", ws.handleAPILogin)
+	mux.HandleFunc("/api/auth/logout", ws.handleAPILogout)
+	mux.HandleFunc("/api/auth/session", ws.handleAPISession)
+	mux.HandleFunc("/api/auth/setup", ws.handleAPISetup)
+	mux.HandleFunc("/api/auth/setup-required", ws.handleAPISetupRequired)
+
+	// JSON API endpoints that use session auth
+	mux.HandleFunc("/api/dashboard/stats", ws.requireAPIAuth(ws.handleAPIDashboardStats))
 
 	// Initial setup (before any admin exists)
 	mux.HandleFunc("/setup", ws.handleSetup)
@@ -703,4 +722,307 @@ func constantTimeCompare(a, b string) bool {
 	aHash := sha256.Sum256([]byte(a))
 	bHash := sha256.Sum256([]byte(b))
 	return subtle.ConstantTimeCompare(aHash[:], bHash[:]) == 1
+}
+
+// ==================== JSON API Handlers for React Frontend ====================
+
+// respondJSON writes a JSON response
+func (ws *WebServer) respondJSON(w http.ResponseWriter, status int, payload interface{}) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	if err := json.NewEncoder(w).Encode(payload); err != nil {
+		log.Printf("Failed to write JSON response: %v", err)
+	}
+}
+
+// respondAPIError writes a JSON error response
+func (ws *WebServer) respondAPIError(w http.ResponseWriter, status int, message string) {
+	ws.respondJSON(w, status, map[string]string{"error": message})
+}
+
+// requireAPIAuth is middleware for JSON API endpoints requiring authentication
+func (ws *WebServer) requireAPIAuth(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		cookie, err := r.Cookie("session_id")
+		if err != nil || cookie.Value == "" {
+			ws.respondAPIError(w, http.StatusUnauthorized, "Authentication required")
+			return
+		}
+
+		session := ws.GetSession(cookie.Value)
+		if session == nil {
+			http.SetCookie(w, &http.Cookie{
+				Name:     "session_id",
+				Value:    "",
+				Path:     "/",
+				MaxAge:   -1,
+				HttpOnly: true,
+				SameSite: http.SameSiteStrictMode,
+			})
+			ws.respondAPIError(w, http.StatusUnauthorized, "Session expired")
+			return
+		}
+
+		ctx := context.WithValue(r.Context(), "session", session)
+		next(w, r.WithContext(ctx))
+	}
+}
+
+// handleAPILogin handles JSON login requests
+func (ws *WebServer) handleAPILogin(w http.ResponseWriter, r *http.Request) {
+	if r.Method == http.MethodOptions {
+		w.WriteHeader(http.StatusOK)
+		return
+	}
+
+	if r.Method != http.MethodPost {
+		ws.respondAPIError(w, http.StatusMethodNotAllowed, "Method not allowed")
+		return
+	}
+
+	if !ws.hasAdminUser(r.Context()) {
+		ws.respondAPIError(w, http.StatusNotFound, "No admin users configured, setup required")
+		return
+	}
+
+	var req struct {
+		Username string `json:"username"`
+		Password string `json:"password"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		ws.respondAPIError(w, http.StatusBadRequest, "Invalid request body")
+		return
+	}
+
+	if req.Username == "" || req.Password == "" {
+		ws.respondAPIError(w, http.StatusBadRequest, "Username and password are required")
+		return
+	}
+
+	user, err := ws.lm.AuthenticateAdmin(r.Context(), req.Username, req.Password)
+	if err != nil {
+		ws.respondAPIError(w, http.StatusUnauthorized, "Invalid username or password")
+		return
+	}
+
+	session := ws.CreateSession(user.ID, user.Username)
+	http.SetCookie(w, &http.Cookie{
+		Name:     "session_id",
+		Value:    session.ID,
+		Path:     "/",
+		MaxAge:   int(ws.sessionMaxAge.Seconds()),
+		HttpOnly: true,
+		SameSite: http.SameSiteLaxMode, // Use Lax for cross-origin requests from frontend
+		Secure:   r.TLS != nil,
+	})
+
+	ws.respondJSON(w, http.StatusOK, map[string]interface{}{
+		"id":       user.ID,
+		"username": user.Username,
+	})
+}
+
+// handleAPILogout handles JSON logout requests
+func (ws *WebServer) handleAPILogout(w http.ResponseWriter, r *http.Request) {
+	if r.Method == http.MethodOptions {
+		w.WriteHeader(http.StatusOK)
+		return
+	}
+
+	if r.Method != http.MethodPost {
+		ws.respondAPIError(w, http.StatusMethodNotAllowed, "Method not allowed")
+		return
+	}
+
+	cookie, err := r.Cookie("session_id")
+	if err == nil && cookie.Value != "" {
+		ws.DeleteSession(cookie.Value)
+	}
+
+	http.SetCookie(w, &http.Cookie{
+		Name:     "session_id",
+		Value:    "",
+		Path:     "/",
+		MaxAge:   -1,
+		HttpOnly: true,
+		SameSite: http.SameSiteLaxMode,
+	})
+
+	ws.respondJSON(w, http.StatusOK, map[string]string{"message": "Logged out successfully"})
+}
+
+// handleAPISession returns the current session info
+func (ws *WebServer) handleAPISession(w http.ResponseWriter, r *http.Request) {
+	if r.Method == http.MethodOptions {
+		w.WriteHeader(http.StatusOK)
+		return
+	}
+
+	if r.Method != http.MethodGet {
+		ws.respondAPIError(w, http.StatusMethodNotAllowed, "Method not allowed")
+		return
+	}
+
+	cookie, err := r.Cookie("session_id")
+	if err != nil || cookie.Value == "" {
+		ws.respondAPIError(w, http.StatusUnauthorized, "Not authenticated")
+		return
+	}
+
+	session := ws.GetSession(cookie.Value)
+	if session == nil {
+		ws.respondAPIError(w, http.StatusUnauthorized, "Session expired")
+		return
+	}
+
+	ws.respondJSON(w, http.StatusOK, map[string]interface{}{
+		"id":       session.UserID,
+		"username": session.Username,
+	})
+}
+
+// handleAPISetupRequired checks if initial setup is required
+func (ws *WebServer) handleAPISetupRequired(w http.ResponseWriter, r *http.Request) {
+	if r.Method == http.MethodOptions {
+		w.WriteHeader(http.StatusOK)
+		return
+	}
+
+	if r.Method != http.MethodGet {
+		ws.respondAPIError(w, http.StatusMethodNotAllowed, "Method not allowed")
+		return
+	}
+
+	required := !ws.hasAdminUser(r.Context())
+	ws.respondJSON(w, http.StatusOK, map[string]bool{"required": required})
+}
+
+// handleAPISetup handles initial admin setup via JSON
+func (ws *WebServer) handleAPISetup(w http.ResponseWriter, r *http.Request) {
+	if r.Method == http.MethodOptions {
+		w.WriteHeader(http.StatusOK)
+		return
+	}
+
+	if r.Method != http.MethodPost {
+		ws.respondAPIError(w, http.StatusMethodNotAllowed, "Method not allowed")
+		return
+	}
+
+	ctx := r.Context()
+	if ws.hasAdminUser(ctx) {
+		ws.respondAPIError(w, http.StatusBadRequest, "Setup already completed")
+		return
+	}
+
+	var req struct {
+		Username        string `json:"username"`
+		Password        string `json:"password"`
+		ConfirmPassword string `json:"confirm_password"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		ws.respondAPIError(w, http.StatusBadRequest, "Invalid request body")
+		return
+	}
+
+	if req.Username == "" || req.Password == "" {
+		ws.respondAPIError(w, http.StatusBadRequest, "Username and password are required")
+		return
+	}
+
+	if req.ConfirmPassword != "" && req.Password != req.ConfirmPassword {
+		ws.respondAPIError(w, http.StatusBadRequest, "Passwords do not match")
+		return
+	}
+
+	user, err := ws.lm.CreateAdminUser(ctx, req.Username, req.Password)
+	if err != nil {
+		ws.respondAPIError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	// Create API key for the user
+	_, _, err = ws.lm.GenerateAPIKey(ctx, user.ID)
+	if err != nil {
+		log.Printf("Warning: failed to create API key during setup: %v", err)
+	}
+
+	session := ws.CreateSession(user.ID, user.Username)
+	http.SetCookie(w, &http.Cookie{
+		Name:     "session_id",
+		Value:    session.ID,
+		Path:     "/",
+		MaxAge:   int(ws.sessionMaxAge.Seconds()),
+		HttpOnly: true,
+		SameSite: http.SameSiteLaxMode,
+		Secure:   r.TLS != nil,
+	})
+
+	ws.respondJSON(w, http.StatusCreated, map[string]interface{}{
+		"id":       user.ID,
+		"username": user.Username,
+	})
+}
+
+// handleAPIDashboardStats returns dashboard statistics as JSON
+func (ws *WebServer) handleAPIDashboardStats(w http.ResponseWriter, r *http.Request) {
+	if r.Method == http.MethodOptions {
+		w.WriteHeader(http.StatusOK)
+		return
+	}
+
+	if r.Method != http.MethodGet {
+		ws.respondAPIError(w, http.StatusMethodNotAllowed, "Method not allowed")
+		return
+	}
+
+	ctx := r.Context()
+
+	licenses, _ := ws.lm.ListLicenses(ctx)
+	clients, _ := ws.lm.ListClients(ctx)
+	products, _ := ws.lm.Storage().ListProducts(ctx)
+	users, _ := ws.lm.ListAdminUsers(ctx)
+
+	activeLicenses := 0
+	revokedLicenses := 0
+	expiredLicenses := 0
+	now := time.Now()
+
+	for _, lic := range licenses {
+		if lic.IsRevoked {
+			revokedLicenses++
+		} else if lic.ExpiresAt.Before(now) {
+			expiredLicenses++
+		} else {
+			activeLicenses++
+		}
+	}
+
+	activeClients := 0
+	bannedClients := 0
+	for _, client := range clients {
+		if client.Status == licensing.ClientStatusBanned {
+			bannedClients++
+		} else {
+			activeClients++
+		}
+	}
+
+	recentLicenses := licenses
+	if len(recentLicenses) > 5 {
+		recentLicenses = recentLicenses[:5]
+	}
+
+	ws.respondJSON(w, http.StatusOK, map[string]interface{}{
+		"total_licenses":   len(licenses),
+		"active_licenses":  activeLicenses,
+		"revoked_licenses": revokedLicenses,
+		"expired_licenses": expiredLicenses,
+		"total_clients":    len(clients),
+		"active_clients":   activeClients,
+		"banned_clients":   bannedClients,
+		"total_products":   len(products),
+		"total_admins":     len(users),
+		"recent_licenses":  recentLicenses,
+	})
 }

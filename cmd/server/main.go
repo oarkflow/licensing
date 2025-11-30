@@ -110,6 +110,7 @@ func main() {
 		log.Fatalf("Failed to initialize web UI: %v", err)
 	}
 	server.SetWebHandler(webServer.Handler())
+	server.SetSessionValidator(webServer) // Enable session-based auth for API endpoints
 	log.Printf("🖥️  Web Admin UI available at %s", *httpServer)
 
 	// Start HTTP server

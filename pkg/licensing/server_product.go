@@ -679,7 +679,43 @@ func (s *Server) handlePlanFeatures(w http.ResponseWriter, r *http.Request, plan
 			if planFeatures == nil {
 				planFeatures = []*PlanFeature{}
 			}
-			s.respondJSON(w, http.StatusOK, planFeatures)
+			// Enrich plan features with full feature details
+			type enrichedPlanFeature struct {
+				ID             string                   `json:"id"`
+				PlanID         string                   `json:"plan_id"`
+				FeatureID      string                   `json:"feature_id"`
+				Enabled        bool                     `json:"enabled"`
+				Limit          int                      `json:"limit,omitempty"`
+				ScopeOverrides map[string]ScopeOverride `json:"scope_overrides,omitempty"`
+				CreatedAt      time.Time                `json:"created_at"`
+				UpdatedAt      time.Time                `json:"updated_at"`
+				Feature        *Feature                 `json:"feature,omitempty"`
+				Scopes         []*FeatureScope          `json:"scopes,omitempty"`
+			}
+			enriched := make([]enrichedPlanFeature, 0, len(planFeatures))
+			for _, pf := range planFeatures {
+				epf := enrichedPlanFeature{
+					ID:             pf.ID,
+					PlanID:         pf.PlanID,
+					FeatureID:      pf.FeatureID,
+					Enabled:        pf.Enabled,
+					ScopeOverrides: pf.ScopeOverrides,
+					CreatedAt:      pf.CreatedAt,
+					UpdatedAt:      pf.UpdatedAt,
+				}
+				// Fetch feature details
+				feature, err := s.lm.storage.GetFeature(r.Context(), pf.FeatureID)
+				if err == nil {
+					epf.Feature = feature
+					// Fetch scopes for the feature
+					scopes, err := s.lm.storage.ListFeatureScopes(r.Context(), pf.FeatureID)
+					if err == nil {
+						epf.Scopes = scopes
+					}
+				}
+				enriched = append(enriched, epf)
+			}
+			s.respondJSON(w, http.StatusOK, enriched)
 
 		case http.MethodPost:
 			var req createPlanFeatureRequest

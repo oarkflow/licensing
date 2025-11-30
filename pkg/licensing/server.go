@@ -29,7 +29,13 @@ type Server struct {
 	tlsKeyPath         string
 	clientCAPath       string
 	allowInsecureHTTP  bool
-	webHandler         http.Handler // Optional web UI handler
+	webHandler         http.Handler     // Optional web UI handler
+	sessionValidator   SessionValidator // Optional session validator for cookie-based auth
+}
+
+// SessionValidator validates session cookies for authentication
+type SessionValidator interface {
+	ValidateSession(sessionID string) (userID string, username string, ok bool)
 }
 
 type adminUserResponse struct {
@@ -110,6 +116,11 @@ func (s *Server) SetWebHandler(h http.Handler) {
 	s.webHandler = h
 }
 
+// SetSessionValidator sets an optional session validator for cookie-based authentication
+func (s *Server) SetSessionValidator(v SessionValidator) {
+	s.sessionValidator = v
+}
+
 func clientIP(r *http.Request) string {
 	if forwarded := r.Header.Get("X-Forwarded-For"); forwarded != "" {
 		parts := strings.Split(forwarded, ",")
@@ -147,22 +158,32 @@ func (s *Server) enforceClientRateLimit(w http.ResponseWriter, r *http.Request) 
 }
 
 func (s *Server) authorizeAdmin(w http.ResponseWriter, r *http.Request) bool {
+	// First try API key authentication
 	providedKey := strings.TrimSpace(r.Header.Get("X-API-Key"))
-	if providedKey == "" {
-		s.respondError(w, http.StatusUnauthorized, "Unauthorized")
-		return false
+	if providedKey != "" {
+		if len(s.legacyAPIKeyHashes) > 0 {
+			providedHash := sha256.Sum256([]byte(providedKey))
+			for _, allowed := range s.legacyAPIKeyHashes {
+				if subtle.ConstantTimeCompare(providedHash[:], allowed) == 1 {
+					return true
+				}
+			}
+		}
+		if _, err := s.lm.ValidateAPIKey(r.Context(), providedKey); err == nil {
+			return true
+		}
 	}
-	if len(s.legacyAPIKeyHashes) > 0 {
-		providedHash := sha256.Sum256([]byte(providedKey))
-		for _, allowed := range s.legacyAPIKeyHashes {
-			if subtle.ConstantTimeCompare(providedHash[:], allowed) == 1 {
+
+	// Then try session-based authentication (if validator is available)
+	if s.sessionValidator != nil {
+		cookie, err := r.Cookie("session_id")
+		if err == nil && cookie.Value != "" {
+			if _, _, ok := s.sessionValidator.ValidateSession(cookie.Value); ok {
 				return true
 			}
 		}
 	}
-	if _, err := s.lm.ValidateAPIKey(r.Context(), providedKey); err == nil {
-		return true
-	}
+
 	s.respondError(w, http.StatusUnauthorized, "Unauthorized")
 	return false
 }
@@ -893,16 +914,14 @@ func (s *Server) handleClientActions(w http.ResponseWriter, r *http.Request) {
 	}
 	tail := strings.Trim(strings.TrimPrefix(r.URL.Path, "/api/clients/"), "/")
 	parts := strings.Split(tail, "/")
-	if len(parts) < 2 || len(parts) > 2 {
+
+	if len(parts) == 0 || parts[0] == "" {
 		http.NotFound(w, r)
 		return
 	}
+
 	clientID := parts[0]
-	action := parts[1]
-	if clientID == "" {
-		http.NotFound(w, r)
-		return
-	}
+
 	if !s.enforceRateLimit(w, r) {
 		return
 	}
@@ -910,7 +929,46 @@ func (s *Server) handleClientActions(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Handle /api/clients/{id} - get single client
+	if len(parts) == 1 {
+		if r.Method != http.MethodGet {
+			s.respondError(w, http.StatusMethodNotAllowed, "Method not allowed")
+			return
+		}
+		client, err := s.lm.GetClient(r.Context(), clientID)
+		if err != nil {
+			s.respondError(w, http.StatusNotFound, "Client not found")
+			return
+		}
+		s.respondJSON(w, http.StatusOK, client)
+		return
+	}
+
+	// Handle /api/clients/{id}/{action}
+	action := parts[1]
+
 	switch action {
+	case "licenses":
+		if r.Method != http.MethodGet {
+			s.respondError(w, http.StatusMethodNotAllowed, "Method not allowed")
+			return
+		}
+		allLicenses, err := s.lm.ListLicenses(r.Context())
+		if err != nil {
+			s.respondError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		// Filter licenses by client ID
+		var licenses []*License
+		for _, lic := range allLicenses {
+			if lic.ClientID == clientID {
+				licenses = append(licenses, lic)
+			}
+		}
+		if licenses == nil {
+			licenses = []*License{}
+		}
+		s.respondJSON(w, http.StatusOK, licenses)
 	case "ban":
 		if r.Method != http.MethodPost {
 			s.respondError(w, http.StatusMethodNotAllowed, "Method not allowed")
@@ -951,22 +1009,38 @@ func (s *Server) handleLicenseActions(w http.ResponseWriter, r *http.Request) {
 	}
 	tail := strings.Trim(strings.TrimPrefix(r.URL.Path, "/api/licenses/"), "/")
 	parts := strings.Split(tail, "/")
-	if len(parts) < 2 || len(parts) > 2 {
+
+	if len(parts) == 0 || parts[0] == "" {
 		http.NotFound(w, r)
 		return
 	}
+
 	licenseID := parts[0]
-	action := parts[1]
-	if licenseID == "" {
-		http.NotFound(w, r)
-		return
-	}
+
 	if !s.enforceRateLimit(w, r) {
 		return
 	}
 	if !s.authorizeAdmin(w, r) {
 		return
 	}
+
+	// Handle /api/licenses/{id} - get single license
+	if len(parts) == 1 {
+		if r.Method != http.MethodGet {
+			s.respondError(w, http.StatusMethodNotAllowed, "Method not allowed")
+			return
+		}
+		license, err := s.lm.storage.GetLicense(r.Context(), licenseID)
+		if err != nil {
+			s.respondError(w, http.StatusNotFound, "License not found")
+			return
+		}
+		s.respondJSON(w, http.StatusOK, license)
+		return
+	}
+
+	// Handle /api/licenses/{id}/{action}
+	action := parts[1]
 
 	switch action {
 	case "revoke":
