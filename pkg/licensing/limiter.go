@@ -6,10 +6,11 @@ import (
 )
 
 type RateLimiter struct {
-	mu          sync.Mutex
-	requests    map[string]*clientRequestWindow
-	maxRequests int
-	window      time.Duration
+	mu           sync.Mutex
+	requests     map[string]*clientRequestWindow
+	maxRequests  int
+	adminMaxReqs int // Higher limit for admin sessions
+	window       time.Duration
 }
 
 type clientRequestWindow struct {
@@ -25,13 +26,23 @@ func NewRateLimiter(maxRequests int, window time.Duration) *RateLimiter {
 		window = time.Minute
 	}
 	return &RateLimiter{
-		requests:    make(map[string]*clientRequestWindow),
-		maxRequests: maxRequests,
-		window:      window,
+		requests:     make(map[string]*clientRequestWindow),
+		maxRequests:  maxRequests,
+		adminMaxReqs: maxRequests * 10, // Admin UI gets 10x the limit
+		window:       window,
 	}
 }
 
 func (rl *RateLimiter) Allow(key string) bool {
+	return rl.AllowWithLimit(key, rl.maxRequests)
+}
+
+// AllowAdmin allows requests with higher limits for authenticated admin sessions
+func (rl *RateLimiter) AllowAdmin(key string) bool {
+	return rl.AllowWithLimit(key, rl.adminMaxReqs)
+}
+
+func (rl *RateLimiter) AllowWithLimit(key string, limit int) bool {
 	rl.mu.Lock()
 	defer rl.mu.Unlock()
 
@@ -42,7 +53,7 @@ func (rl *RateLimiter) Allow(key string) bool {
 		return true
 	}
 
-	if window.count >= rl.maxRequests {
+	if window.count >= limit {
 		return false
 	}
 

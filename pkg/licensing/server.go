@@ -138,6 +138,35 @@ func (s *Server) enforceRateLimit(w http.ResponseWriter, r *http.Request) bool {
 		return true
 	}
 	ip := clientIP(r)
+
+	// Check if this is an authenticated admin session - use higher limits
+	if s.sessionValidator != nil {
+		cookie, err := r.Cookie("session_id")
+		if err == nil && cookie.Value != "" {
+			if _, _, ok := s.sessionValidator.ValidateSession(cookie.Value); ok {
+				// Admin session gets higher rate limits
+				if !s.rateLimiter.AllowAdmin(ip) {
+					s.respondError(w, http.StatusTooManyRequests, "Too many requests")
+					return false
+				}
+				return true
+			}
+		}
+	}
+
+	// Also check API key for higher limits
+	providedKey := strings.TrimSpace(r.Header.Get("X-API-Key"))
+	if providedKey != "" {
+		if _, err := s.lm.ValidateAPIKey(r.Context(), providedKey); err == nil {
+			if !s.rateLimiter.AllowAdmin(ip) {
+				s.respondError(w, http.StatusTooManyRequests, "Too many requests")
+				return false
+			}
+			return true
+		}
+	}
+
+	// Regular rate limit for unauthenticated requests
 	if !s.rateLimiter.Allow(ip) {
 		s.respondError(w, http.StatusTooManyRequests, "Too many requests")
 		return false
