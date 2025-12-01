@@ -45,21 +45,23 @@ const (
 
 // Plan represents a pricing/feature tier for a product.
 type Plan struct {
-	ID           string            `json:"id"`
-	ProductID    string            `json:"product_id"`
-	Name         string            `json:"name"`
-	Slug         string            `json:"slug"`
-	Description  string            `json:"description,omitempty"`
-	Price        int64             `json:"price"`         // Price in cents
-	Currency     string            `json:"currency"`      // ISO 4217 currency code (e.g., USD)
-	BillingCycle string            `json:"billing_cycle"` // monthly, yearly, lifetime, one-time
-	TrialDays    int               `json:"trial_days,omitempty"`
-	IsTrial      bool              `json:"is_trial"` // If true, this is the trial plan for the product (only one per product)
-	IsActive     bool              `json:"is_active"`
-	DisplayOrder int               `json:"display_order,omitempty"`
-	Metadata     map[string]string `json:"metadata,omitempty"`
-	CreatedAt    time.Time         `json:"created_at"`
-	UpdatedAt    time.Time         `json:"updated_at"`
+	ID             string            `json:"id"`
+	ProductID      string            `json:"product_id"`
+	Name           string            `json:"name"`
+	Slug           string            `json:"slug"`
+	Description    string            `json:"description,omitempty"`
+	Price          int64             `json:"price"`            // Price per device in cents (for per-device pricing)
+	MinDevices     int               `json:"min_devices"`      // Minimum number of devices required
+	PricePerDevice int64             `json:"price_per_device"` // Price per device per billing cycle in cents
+	Currency       string            `json:"currency"`         // ISO 4217 currency code (e.g., USD)
+	BillingCycle   string            `json:"billing_cycle"`    // monthly, yearly, lifetime, one-time
+	TrialDays      int               `json:"trial_days,omitempty"`
+	IsTrial        bool              `json:"is_trial"` // If true, this is the trial plan for the product (only one per product)
+	IsActive       bool              `json:"is_active"`
+	DisplayOrder   int               `json:"display_order,omitempty"`
+	Metadata       map[string]string `json:"metadata,omitempty"`
+	CreatedAt      time.Time         `json:"created_at"`
+	UpdatedAt      time.Time         `json:"updated_at"`
 }
 
 // TrialDuration returns the trial duration as time.Duration.

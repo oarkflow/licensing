@@ -25,29 +25,33 @@ type updateProductRequest struct {
 }
 
 type createPlanRequest struct {
-	Name         string            `json:"name"`
-	Slug         string            `json:"slug"`
-	Description  string            `json:"description,omitempty"`
-	Price        int64             `json:"price"`
-	Currency     string            `json:"currency"`
-	BillingCycle string            `json:"billing_cycle"`
-	TrialDays    int               `json:"trial_days,omitempty"`
-	IsActive     bool              `json:"is_active"`
-	DisplayOrder int               `json:"display_order,omitempty"`
-	Metadata     map[string]string `json:"metadata,omitempty"`
+	Name           string            `json:"name"`
+	Slug           string            `json:"slug"`
+	Description    string            `json:"description,omitempty"`
+	Price          int64             `json:"price"`
+	MinDevices     int               `json:"min_devices"`
+	PricePerDevice int64             `json:"price_per_device"`
+	Currency       string            `json:"currency"`
+	BillingCycle   string            `json:"billing_cycle"`
+	TrialDays      int               `json:"trial_days,omitempty"`
+	IsActive       bool              `json:"is_active"`
+	DisplayOrder   int               `json:"display_order,omitempty"`
+	Metadata       map[string]string `json:"metadata,omitempty"`
 }
 
 type updatePlanRequest struct {
-	Name         string            `json:"name,omitempty"`
-	Slug         string            `json:"slug,omitempty"`
-	Description  string            `json:"description,omitempty"`
-	Price        *int64            `json:"price,omitempty"`
-	Currency     string            `json:"currency,omitempty"`
-	BillingCycle string            `json:"billing_cycle,omitempty"`
-	TrialDays    *int              `json:"trial_days,omitempty"`
-	IsActive     *bool             `json:"is_active,omitempty"`
-	DisplayOrder *int              `json:"display_order,omitempty"`
-	Metadata     map[string]string `json:"metadata,omitempty"`
+	Name           string            `json:"name,omitempty"`
+	Slug           string            `json:"slug,omitempty"`
+	Description    string            `json:"description,omitempty"`
+	Price          *int64            `json:"price,omitempty"`
+	MinDevices     *int              `json:"min_devices,omitempty"`
+	PricePerDevice *int64            `json:"price_per_device,omitempty"`
+	Currency       string            `json:"currency,omitempty"`
+	BillingCycle   string            `json:"billing_cycle,omitempty"`
+	TrialDays      *int              `json:"trial_days,omitempty"`
+	IsActive       *bool             `json:"is_active,omitempty"`
+	DisplayOrder   *int              `json:"display_order,omitempty"`
+	Metadata       map[string]string `json:"metadata,omitempty"`
 }
 
 type createFeatureRequest struct {
@@ -284,22 +288,34 @@ func (s *Server) handleProductPlans(w http.ResponseWriter, r *http.Request, prod
 			if billingCycle == "" {
 				billingCycle = "monthly"
 			}
+			// Default min_devices to 1 if not specified
+			minDevices := req.MinDevices
+			if minDevices < 1 {
+				minDevices = 1
+			}
+			// If price_per_device is not set, use price as price_per_device
+			pricePerDevice := req.PricePerDevice
+			if pricePerDevice == 0 && req.Price > 0 {
+				pricePerDevice = req.Price
+			}
 			now := time.Now()
 			plan := &Plan{
-				ID:           uuid.New().String(),
-				ProductID:    productID,
-				Name:         name,
-				Slug:         slug,
-				Description:  strings.TrimSpace(req.Description),
-				Price:        req.Price,
-				Currency:     currency,
-				BillingCycle: billingCycle,
-				TrialDays:    req.TrialDays,
-				IsActive:     req.IsActive,
-				DisplayOrder: req.DisplayOrder,
-				Metadata:     req.Metadata,
-				CreatedAt:    now,
-				UpdatedAt:    now,
+				ID:             uuid.New().String(),
+				ProductID:      productID,
+				Name:           name,
+				Slug:           slug,
+				Description:    strings.TrimSpace(req.Description),
+				Price:          req.Price,
+				MinDevices:     minDevices,
+				PricePerDevice: pricePerDevice,
+				Currency:       currency,
+				BillingCycle:   billingCycle,
+				TrialDays:      req.TrialDays,
+				IsActive:       req.IsActive,
+				DisplayOrder:   req.DisplayOrder,
+				Metadata:       req.Metadata,
+				CreatedAt:      now,
+				UpdatedAt:      now,
 			}
 			if err := s.lm.storage.SavePlan(r.Context(), plan); err != nil {
 				if strings.Contains(err.Error(), "already exists") {
@@ -362,6 +378,12 @@ func (s *Server) handleProductPlans(w http.ResponseWriter, r *http.Request, prod
 		}
 		if req.Price != nil {
 			plan.Price = *req.Price
+		}
+		if req.MinDevices != nil {
+			plan.MinDevices = *req.MinDevices
+		}
+		if req.PricePerDevice != nil {
+			plan.PricePerDevice = *req.PricePerDevice
 		}
 		if currency := strings.TrimSpace(req.Currency); currency != "" {
 			plan.Currency = currency

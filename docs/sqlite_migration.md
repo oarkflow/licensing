@@ -138,3 +138,109 @@ VACUUM;
 ## 4. Rollback Plan
 
 If anything fails, stop the server, restore the backup created in step 1, and investigate before retrying.
+
+## 5. Email Delivery Schema (2025.11+)
+
+The email dispatch service introduced in the November 2025 builds stores its own providers, templates, routes, message queue, and delivery events. Fresh databases pick these up automatically because the server runs the new schema bootstrap on startup. Locked-down environments that require an explicit change window can apply the statements below to create the tables and supporting indexes ahead of time.
+
+```sql
+BEGIN TRANSACTION;
+
+CREATE TABLE IF NOT EXISTS email_providers (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    slug TEXT NOT NULL,
+    slug_lower TEXT NOT NULL UNIQUE,
+    type TEXT NOT NULL,
+    config TEXT NOT NULL,
+    priority INTEGER NOT NULL DEFAULT 100,
+    max_retries INTEGER NOT NULL DEFAULT 3,
+    retry_base_ms INTEGER NOT NULL DEFAULT 1000,
+    retry_max_ms INTEGER NOT NULL DEFAULT 60000,
+    retry_jitter_pct REAL NOT NULL DEFAULT 0.25,
+    is_default INTEGER NOT NULL DEFAULT 0,
+    enabled INTEGER NOT NULL DEFAULT 1,
+    success_count INTEGER NOT NULL DEFAULT 0,
+    failure_count INTEGER NOT NULL DEFAULT 0,
+    metadata TEXT,
+    created_at TIMESTAMP NOT NULL,
+    updated_at TIMESTAMP NOT NULL
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_email_providers_slug ON email_providers(slug_lower);
+
+CREATE TABLE IF NOT EXISTS email_templates (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    slug TEXT NOT NULL,
+    slug_lower TEXT NOT NULL UNIQUE,
+    category TEXT NOT NULL,
+    subject TEXT NOT NULL,
+    html_body TEXT,
+    text_body TEXT,
+    description TEXT,
+    metadata TEXT,
+    default_provider_id TEXT REFERENCES email_providers(id),
+    max_retries_override INTEGER,
+    created_at TIMESTAMP NOT NULL,
+    updated_at TIMESTAMP NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_email_templates_category ON email_templates(category);
+
+CREATE TABLE IF NOT EXISTS email_template_routes (
+    id TEXT PRIMARY KEY,
+    template_id TEXT REFERENCES email_templates(id) ON DELETE CASCADE,
+    category TEXT,
+    provider_id TEXT NOT NULL REFERENCES email_providers(id),
+    priority INTEGER NOT NULL,
+    retry_limit_override INTEGER,
+    enabled INTEGER NOT NULL DEFAULT 1,
+    created_at TIMESTAMP NOT NULL,
+    updated_at TIMESTAMP NOT NULL,
+    CHECK (template_id IS NOT NULL OR category IS NOT NULL)
+);
+CREATE INDEX IF NOT EXISTS idx_email_template_routes_template ON email_template_routes(template_id);
+CREATE INDEX IF NOT EXISTS idx_email_template_routes_category ON email_template_routes(category);
+
+CREATE TABLE IF NOT EXISTS email_messages (
+    id TEXT PRIMARY KEY,
+    template_id TEXT REFERENCES email_templates(id),
+    provider_id TEXT REFERENCES email_providers(id),
+    to_address TEXT NOT NULL,
+    cc TEXT,
+    bcc TEXT,
+    subject TEXT NOT NULL,
+    rendered_html TEXT,
+    rendered_text TEXT,
+    variables TEXT,
+    metadata TEXT,
+    status TEXT NOT NULL,
+    retry_count INTEGER NOT NULL DEFAULT 0,
+    failover_count INTEGER NOT NULL DEFAULT 0,
+    max_retries INTEGER NOT NULL DEFAULT 0,
+    last_error TEXT,
+    next_attempt_at TIMESTAMP,
+    last_attempt_at TIMESTAMP,
+    created_at TIMESTAMP NOT NULL,
+    updated_at TIMESTAMP NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_email_messages_status_next_attempt ON email_messages(status, next_attempt_at);
+CREATE INDEX IF NOT EXISTS idx_email_messages_template ON email_messages(template_id);
+
+CREATE TABLE IF NOT EXISTS email_events (
+    id TEXT PRIMARY KEY,
+    message_id TEXT NOT NULL REFERENCES email_messages(id) ON DELETE CASCADE,
+    provider_id TEXT NOT NULL REFERENCES email_providers(id),
+    event_type TEXT NOT NULL,
+    payload TEXT,
+    created_at TIMESTAMP NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_email_events_message_id ON email_events(message_id);
+
+COMMIT;
+```
+
+Backfill guidance:
+
+- Seed at least one provider row after the migration (for example, a SendGrid API key or a debug console adapter) and mark it `is_default = 1` so new templates can inherit it automatically.
+- Define templates and optional routes through the admin API or by inserting directly into `email_templates` / `email_template_routes` so your worker has content to render.
+- Restart the licensing server to ensure the email queue worker can pick up pending messages once the schema exists.

@@ -148,6 +148,91 @@ func ensureSQLiteSchema(db *squealx.DB) error {
 		`CREATE INDEX IF NOT EXISTS idx_activation_records_license_id ON activation_records(license_id);`,
 		`CREATE INDEX IF NOT EXISTS idx_activation_records_client_id ON activation_records(client_id);`,
 		`CREATE INDEX IF NOT EXISTS idx_license_authorized_users_license_id ON license_authorized_users(license_id);`,
+		`CREATE TABLE IF NOT EXISTS email_providers (
+			id TEXT PRIMARY KEY,
+			name TEXT NOT NULL,
+			slug TEXT NOT NULL,
+			slug_lower TEXT NOT NULL UNIQUE,
+			type TEXT NOT NULL,
+			config TEXT NOT NULL,
+			priority INTEGER NOT NULL DEFAULT 100,
+			max_retries INTEGER NOT NULL DEFAULT 3,
+			retry_base_ms INTEGER NOT NULL DEFAULT 1000,
+			retry_max_ms INTEGER NOT NULL DEFAULT 60000,
+			retry_jitter_pct REAL NOT NULL DEFAULT 0.25,
+			is_default INTEGER NOT NULL DEFAULT 0,
+			enabled INTEGER NOT NULL DEFAULT 1,
+			success_count INTEGER NOT NULL DEFAULT 0,
+			failure_count INTEGER NOT NULL DEFAULT 0,
+			metadata TEXT,
+			created_at TIMESTAMP NOT NULL,
+			updated_at TIMESTAMP NOT NULL
+		);`,
+		`CREATE UNIQUE INDEX IF NOT EXISTS idx_email_providers_slug ON email_providers(slug_lower);`,
+		`CREATE TABLE IF NOT EXISTS email_templates (
+			id TEXT PRIMARY KEY,
+			name TEXT NOT NULL,
+			slug TEXT NOT NULL,
+			slug_lower TEXT NOT NULL UNIQUE,
+			category TEXT NOT NULL,
+			subject TEXT NOT NULL,
+			html_body TEXT,
+			text_body TEXT,
+			description TEXT,
+			metadata TEXT,
+			default_provider_id TEXT REFERENCES email_providers(id),
+			max_retries_override INTEGER,
+			created_at TIMESTAMP NOT NULL,
+			updated_at TIMESTAMP NOT NULL
+		);`,
+		`CREATE INDEX IF NOT EXISTS idx_email_templates_category ON email_templates(category);`,
+		`CREATE TABLE IF NOT EXISTS email_template_routes (
+			id TEXT PRIMARY KEY,
+			template_id TEXT REFERENCES email_templates(id) ON DELETE CASCADE,
+			category TEXT,
+			provider_id TEXT NOT NULL REFERENCES email_providers(id),
+			priority INTEGER NOT NULL,
+			retry_limit_override INTEGER,
+			enabled INTEGER NOT NULL DEFAULT 1,
+			created_at TIMESTAMP NOT NULL,
+			updated_at TIMESTAMP NOT NULL,
+			CHECK (template_id IS NOT NULL OR category IS NOT NULL)
+		);`,
+		`CREATE INDEX IF NOT EXISTS idx_email_template_routes_template ON email_template_routes(template_id);`,
+		`CREATE INDEX IF NOT EXISTS idx_email_template_routes_category ON email_template_routes(category);`,
+		`CREATE TABLE IF NOT EXISTS email_messages (
+			id TEXT PRIMARY KEY,
+			template_id TEXT REFERENCES email_templates(id),
+			provider_id TEXT REFERENCES email_providers(id),
+			to_address TEXT NOT NULL,
+			cc TEXT,
+			bcc TEXT,
+			subject TEXT NOT NULL,
+			rendered_html TEXT,
+			rendered_text TEXT,
+			variables TEXT,
+			metadata TEXT,
+			status TEXT NOT NULL,
+			retry_count INTEGER NOT NULL DEFAULT 0,
+			failover_count INTEGER NOT NULL DEFAULT 0,
+			max_retries INTEGER NOT NULL DEFAULT 0,
+			last_error TEXT,
+			next_attempt_at TIMESTAMP,
+			last_attempt_at TIMESTAMP,
+			created_at TIMESTAMP NOT NULL,
+			updated_at TIMESTAMP NOT NULL
+		);`,
+		`CREATE INDEX IF NOT EXISTS idx_email_messages_status_next_attempt ON email_messages(status, next_attempt_at);`,
+		`CREATE INDEX IF NOT EXISTS idx_email_messages_template ON email_messages(template_id);`,
+		`CREATE TABLE IF NOT EXISTS email_events (
+			id TEXT PRIMARY KEY,
+			message_id TEXT NOT NULL REFERENCES email_messages(id) ON DELETE CASCADE,
+			provider_id TEXT NOT NULL REFERENCES email_providers(id),
+			event_type TEXT NOT NULL,
+			payload TEXT,
+			created_at TIMESTAMP NOT NULL
+		);`,
+		`CREATE INDEX IF NOT EXISTS idx_email_events_message_id ON email_events(message_id);`,
 	}
 	for _, stmt := range stmts {
 		if _, err := db.Exec(stmt); err != nil {
@@ -337,6 +422,10 @@ func boolToInt(b bool) int {
 		return 1
 	}
 	return 0
+}
+
+func intToBool(v int) bool {
+	return v != 0
 }
 
 func nullTime(t time.Time) any {

@@ -7,9 +7,12 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"time"
+
+	email "github.com/oarkflow/licensing/pkg/email"
 )
 
 type Storage interface {
@@ -92,29 +95,62 @@ type Storage interface {
 	ListSubscriptions(ctx context.Context) ([]*Subscription, error)
 	ListSubscriptionsByClient(ctx context.Context, clientID string) ([]*Subscription, error)
 	DeleteSubscription(ctx context.Context, subID string) error
+
+	// Email providers/templates/messages
+	SaveEmailProvider(ctx context.Context, provider *email.EmailProvider) error
+	UpdateEmailProvider(ctx context.Context, provider *email.EmailProvider) error
+	ListEmailProviders(ctx context.Context, includeDisabled bool) ([]*email.EmailProvider, error)
+	GetEmailProvider(ctx context.Context, providerID string) (*email.EmailProvider, error)
+	DeleteEmailProvider(ctx context.Context, providerID string) error
+
+	SaveEmailTemplate(ctx context.Context, tpl *email.EmailTemplate) error
+	UpdateEmailTemplate(ctx context.Context, tpl *email.EmailTemplate) error
+	ListEmailTemplates(ctx context.Context) ([]*email.EmailTemplate, error)
+	GetEmailTemplate(ctx context.Context, templateID string) (*email.EmailTemplate, error)
+	GetEmailTemplateBySlug(ctx context.Context, slug string) (*email.EmailTemplate, error)
+	DeleteEmailTemplate(ctx context.Context, templateID string) error
+
+	SaveEmailTemplateRoute(ctx context.Context, route *email.EmailTemplateRoute) error
+	ListEmailTemplateRoutes(ctx context.Context, templateID, category string) ([]*email.EmailTemplateRoute, error)
+	DeleteEmailTemplateRoute(ctx context.Context, routeID string) error
+
+	EnqueueEmail(ctx context.Context, msg *email.EmailMessage) error
+	UpdateEmailMessage(ctx context.Context, msg *email.EmailMessage) error
+	GetEmailMessage(ctx context.Context, messageID string) (*email.EmailMessage, error)
+	LeaseNextEmail(ctx context.Context, dueBefore time.Time) (*email.EmailMessage, error)
+	AppendEmailEvent(ctx context.Context, event *email.EmailEvent) error
+	ListEmailEvents(ctx context.Context, messageID string) ([]*email.EmailEvent, error)
 }
 
 var (
-	errClientExists        = errors.New("client already exists")
-	errClientMissing       = errors.New("client not found")
-	errLicenseExists       = errors.New("license already exists")
-	errLicenseMissing      = errors.New("license not found")
-	errUserExists          = errors.New("user already exists")
-	errUserMissing         = errors.New("user not found")
-	errAPIKeyExists        = errors.New("api key already exists")
-	errAPIKeyMissing       = errors.New("api key not found")
-	errProductExists       = errors.New("product already exists")
-	errProductMissing      = errors.New("product not found")
-	errPlanExists          = errors.New("plan already exists")
-	errPlanMissing         = errors.New("plan not found")
-	errFeatureExists       = errors.New("feature already exists")
-	errFeatureMissing      = errors.New("feature not found")
-	errFeatureScopeExists  = errors.New("feature scope already exists")
-	errFeatureScopeMissing = errors.New("feature scope not found")
-	errPlanFeatureExists   = errors.New("plan feature already exists")
-	errPlanFeatureMissing  = errors.New("plan feature not found")
-	errDeviceTrialExists   = errors.New("device has already used trial")
-	errDeviceTrialMissing  = errors.New("device trial not found")
+	errClientExists            = errors.New("client already exists")
+	errClientMissing           = errors.New("client not found")
+	errLicenseExists           = errors.New("license already exists")
+	errLicenseMissing          = errors.New("license not found")
+	errUserExists              = errors.New("user already exists")
+	errUserMissing             = errors.New("user not found")
+	errAPIKeyExists            = errors.New("api key already exists")
+	errAPIKeyMissing           = errors.New("api key not found")
+	errProductExists           = errors.New("product already exists")
+	errProductMissing          = errors.New("product not found")
+	errPlanExists              = errors.New("plan already exists")
+	errPlanMissing             = errors.New("plan not found")
+	errFeatureExists           = errors.New("feature already exists")
+	errFeatureMissing          = errors.New("feature not found")
+	errFeatureScopeExists      = errors.New("feature scope already exists")
+	errFeatureScopeMissing     = errors.New("feature scope not found")
+	errPlanFeatureExists       = errors.New("plan feature already exists")
+	errPlanFeatureMissing      = errors.New("plan feature not found")
+	errDeviceTrialExists       = errors.New("device has already used trial")
+	errDeviceTrialMissing      = errors.New("device trial not found")
+	errEmailProviderExists     = errors.New("email provider already exists")
+	errEmailProviderMissing    = errors.New("email provider not found")
+	errEmailTemplateExists     = errors.New("email template already exists")
+	errEmailTemplateMissing    = errors.New("email template not found")
+	errEmailRouteExists        = errors.New("email route already exists")
+	errEmailRouteMissing       = errors.New("email route not found")
+	errEmailMessageMissing     = errors.New("email message not found")
+	errEmailStorageUnsupported = errors.New("email storage is not supported by this backend")
 )
 
 // DeviceTrial tracks devices that have used a trial license.
@@ -189,38 +225,58 @@ type InMemoryStorage struct {
 	planFeatures   map[string]*PlanFeature // key: "planID:featureID"
 	// Trial registry
 	deviceTrials map[string]*DeviceTrial // key: device fingerprint
+	// Email management
+	emailProviders       map[string]*email.EmailProvider
+	emailProvidersBySlug map[string]string
+	emailTemplates       map[string]*email.EmailTemplate
+	emailTemplatesBySlug map[string]string
+	emailRoutes          map[string]*email.EmailTemplateRoute
+	emailMessages        map[string]*email.EmailMessage
+	emailEvents          map[string][]*email.EmailEvent
 }
 
 func NewInMemoryStorage() *InMemoryStorage {
 	return &InMemoryStorage{
-		clients:        make(map[string]*Client),
-		clientsByEmail: make(map[string]string),
-		licenses:       make(map[string]*License),
-		licensesByKey:  make(map[string]string),
-		activations:    make(map[string][]*ActivationRecord),
-		adminUsers:     make(map[string]*AdminUser),
-		adminByName:    make(map[string]string),
-		apiKeys:        make(map[string]*APIKeyRecord),
-		apiKeysByHash:  make(map[string]string),
-		apiKeysByUser:  make(map[string]map[string]struct{}),
-		products:       make(map[string]*Product),
-		productsBySlug: make(map[string]string),
-		plans:          make(map[string]*Plan),
-		plansBySlug:    make(map[string]string),
-		features:       make(map[string]*Feature),
-		featuresBySlug: make(map[string]string),
-		featureScopes:  make(map[string]*FeatureScope),
-		planFeatures:   make(map[string]*PlanFeature),
-		deviceTrials:   make(map[string]*DeviceTrial),
+		clients:              make(map[string]*Client),
+		clientsByEmail:       make(map[string]string),
+		licenses:             make(map[string]*License),
+		licensesByKey:        make(map[string]string),
+		activations:          make(map[string][]*ActivationRecord),
+		adminUsers:           make(map[string]*AdminUser),
+		adminByName:          make(map[string]string),
+		apiKeys:              make(map[string]*APIKeyRecord),
+		apiKeysByHash:        make(map[string]string),
+		apiKeysByUser:        make(map[string]map[string]struct{}),
+		products:             make(map[string]*Product),
+		productsBySlug:       make(map[string]string),
+		plans:                make(map[string]*Plan),
+		plansBySlug:          make(map[string]string),
+		features:             make(map[string]*Feature),
+		featuresBySlug:       make(map[string]string),
+		featureScopes:        make(map[string]*FeatureScope),
+		planFeatures:         make(map[string]*PlanFeature),
+		deviceTrials:         make(map[string]*DeviceTrial),
+		emailProviders:       make(map[string]*email.EmailProvider),
+		emailProvidersBySlug: make(map[string]string),
+		emailTemplates:       make(map[string]*email.EmailTemplate),
+		emailTemplatesBySlug: make(map[string]string),
+		emailRoutes:          make(map[string]*email.EmailTemplateRoute),
+		emailMessages:        make(map[string]*email.EmailMessage),
+		emailEvents:          make(map[string][]*email.EmailEvent),
 	}
 }
 
 type storageSnapshot struct {
-	Clients     map[string]*Client             `json:"clients"`
-	Licenses    map[string]*License            `json:"licenses"`
-	Activations map[string][]*ActivationRecord `json:"activations"`
-	AdminUsers  map[string]*AdminUser          `json:"admin_users"`
-	APIKeys     map[string]*APIKeyRecord       `json:"api_keys"`
+	Clients        map[string]*Client                   `json:"clients"`
+	Licenses       map[string]*License                  `json:"licenses"`
+	Activations    map[string][]*ActivationRecord       `json:"activations"`
+	AdminUsers     map[string]*AdminUser                `json:"admin_users"`
+	APIKeys        map[string]*APIKeyRecord             `json:"api_keys"`
+	EmailProviders map[string]*email.EmailProvider      `json:"email_providers,omitempty"`
+	EmailTemplates map[string]*email.EmailTemplate      `json:"email_templates,omitempty"`
+	EmailRoutes    map[string]*email.EmailTemplateRoute `json:"email_routes,omitempty"`
+	EmailMessages  map[string]*email.EmailMessage       `json:"email_messages,omitempty"`
+	EmailEvents    map[string][]*email.EmailEvent       `json:"email_events,omitempty"`
 }
 
 func (s *InMemoryStorage) SaveClient(_ context.Context, client *Client) error {
@@ -539,6 +595,334 @@ func (s *InMemoryStorage) ListAPIKeysByUser(_ context.Context, userID string) ([
 	return keys, nil
 }
 
+// ==================== Email Provider/Template Methods ====================
+
+func normalizeSlug(slug string) string {
+	return strings.ToLower(strings.TrimSpace(slug))
+}
+
+func (s *InMemoryStorage) SaveEmailProvider(_ context.Context, provider *email.EmailProvider) error {
+	if provider == nil {
+		return fmt.Errorf("email provider is nil")
+	}
+	slug := normalizeSlug(provider.Slug)
+	if slug == "" {
+		return fmt.Errorf("email provider slug is required")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, exists := s.emailProviders[provider.ID]; exists {
+		return errEmailProviderExists
+	}
+	if _, exists := s.emailProvidersBySlug[slug]; exists {
+		return errEmailProviderExists
+	}
+	s.emailProviders[provider.ID] = provider.Clone()
+	s.emailProvidersBySlug[slug] = provider.ID
+	return nil
+}
+
+func (s *InMemoryStorage) UpdateEmailProvider(_ context.Context, provider *email.EmailProvider) error {
+	if provider == nil {
+		return fmt.Errorf("email provider is nil")
+	}
+	slug := normalizeSlug(provider.Slug)
+	if slug == "" {
+		return fmt.Errorf("email provider slug is required")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	current, exists := s.emailProviders[provider.ID]
+	if !exists {
+		return errEmailProviderMissing
+	}
+	oldSlug := normalizeSlug(current.Slug)
+	if slug != oldSlug {
+		if mappedID, taken := s.emailProvidersBySlug[slug]; taken && mappedID != provider.ID {
+			return errEmailProviderExists
+		}
+		delete(s.emailProvidersBySlug, oldSlug)
+		s.emailProvidersBySlug[slug] = provider.ID
+	}
+	s.emailProviders[provider.ID] = provider.Clone()
+	return nil
+}
+
+func (s *InMemoryStorage) ListEmailProviders(_ context.Context, includeDisabled bool) ([]*email.EmailProvider, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	providers := make([]*email.EmailProvider, 0, len(s.emailProviders))
+	for _, provider := range s.emailProviders {
+		if !includeDisabled && !provider.Enabled {
+			continue
+		}
+		providers = append(providers, provider.Clone())
+	}
+	sort.Slice(providers, func(i, j int) bool {
+		if providers[i].Priority == providers[j].Priority {
+			return providers[i].Name < providers[j].Name
+		}
+		return providers[i].Priority < providers[j].Priority
+	})
+	return providers, nil
+}
+
+func (s *InMemoryStorage) GetEmailProvider(_ context.Context, providerID string) (*email.EmailProvider, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	provider, ok := s.emailProviders[providerID]
+	if !ok {
+		return nil, errEmailProviderMissing
+	}
+	return provider.Clone(), nil
+}
+
+func (s *InMemoryStorage) DeleteEmailProvider(_ context.Context, providerID string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	provider, ok := s.emailProviders[providerID]
+	if !ok {
+		return errEmailProviderMissing
+	}
+	slug := normalizeSlug(provider.Slug)
+	delete(s.emailProviders, providerID)
+	delete(s.emailProvidersBySlug, slug)
+	return nil
+}
+
+func (s *InMemoryStorage) SaveEmailTemplate(_ context.Context, tpl *email.EmailTemplate) error {
+	if tpl == nil {
+		return fmt.Errorf("email template is nil")
+	}
+	slug := normalizeSlug(tpl.Slug)
+	if slug == "" {
+		return fmt.Errorf("email template slug is required")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, exists := s.emailTemplates[tpl.ID]; exists {
+		return errEmailTemplateExists
+	}
+	if _, exists := s.emailTemplatesBySlug[slug]; exists {
+		return errEmailTemplateExists
+	}
+	s.emailTemplates[tpl.ID] = tpl.Clone()
+	s.emailTemplatesBySlug[slug] = tpl.ID
+	return nil
+}
+
+func (s *InMemoryStorage) UpdateEmailTemplate(_ context.Context, tpl *email.EmailTemplate) error {
+	if tpl == nil {
+		return fmt.Errorf("email template is nil")
+	}
+	slug := normalizeSlug(tpl.Slug)
+	if slug == "" {
+		return fmt.Errorf("email template slug is required")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	current, exists := s.emailTemplates[tpl.ID]
+	if !exists {
+		return errEmailTemplateMissing
+	}
+	oldSlug := normalizeSlug(current.Slug)
+	if slug != oldSlug {
+		if mappedID, taken := s.emailTemplatesBySlug[slug]; taken && mappedID != tpl.ID {
+			return errEmailTemplateExists
+		}
+		delete(s.emailTemplatesBySlug, oldSlug)
+		s.emailTemplatesBySlug[slug] = tpl.ID
+	}
+	s.emailTemplates[tpl.ID] = tpl.Clone()
+	return nil
+}
+
+func (s *InMemoryStorage) ListEmailTemplates(_ context.Context) ([]*email.EmailTemplate, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	templates := make([]*email.EmailTemplate, 0, len(s.emailTemplates))
+	for _, tpl := range s.emailTemplates {
+		templates = append(templates, tpl.Clone())
+	}
+	sort.Slice(templates, func(i, j int) bool {
+		if templates[i].Category == templates[j].Category {
+			return templates[i].Name < templates[j].Name
+		}
+		return templates[i].Category < templates[j].Category
+	})
+	return templates, nil
+}
+
+func (s *InMemoryStorage) GetEmailTemplate(_ context.Context, templateID string) (*email.EmailTemplate, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	tpl, ok := s.emailTemplates[templateID]
+	if !ok {
+		return nil, errEmailTemplateMissing
+	}
+	return tpl.Clone(), nil
+}
+
+func (s *InMemoryStorage) GetEmailTemplateBySlug(_ context.Context, slug string) (*email.EmailTemplate, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	id, ok := s.emailTemplatesBySlug[normalizeSlug(slug)]
+	if !ok {
+		return nil, errEmailTemplateMissing
+	}
+	return s.emailTemplates[id].Clone(), nil
+}
+
+func (s *InMemoryStorage) DeleteEmailTemplate(_ context.Context, templateID string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	tpl, ok := s.emailTemplates[templateID]
+	if !ok {
+		return errEmailTemplateMissing
+	}
+	slug := normalizeSlug(tpl.Slug)
+	delete(s.emailTemplates, templateID)
+	delete(s.emailTemplatesBySlug, slug)
+	return nil
+}
+
+func (s *InMemoryStorage) SaveEmailTemplateRoute(_ context.Context, route *email.EmailTemplateRoute) error {
+	if route == nil {
+		return fmt.Errorf("email route is nil")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, exists := s.emailRoutes[route.ID]; exists {
+		return errEmailRouteExists
+	}
+	s.emailRoutes[route.ID] = route.Clone()
+	return nil
+}
+
+func (s *InMemoryStorage) ListEmailTemplateRoutes(_ context.Context, templateID, category string) ([]*email.EmailTemplateRoute, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	routes := make([]*email.EmailTemplateRoute, 0, len(s.emailRoutes))
+	for _, route := range s.emailRoutes {
+		if templateID != "" && route.TemplateID != templateID {
+			continue
+		}
+		if templateID == "" && category != "" && !strings.EqualFold(route.Category, category) {
+			continue
+		}
+		routes = append(routes, route.Clone())
+	}
+	sort.Slice(routes, func(i, j int) bool {
+		if routes[i].Priority == routes[j].Priority {
+			return routes[i].CreatedAt.Before(routes[j].CreatedAt)
+		}
+		return routes[i].Priority < routes[j].Priority
+	})
+	return routes, nil
+}
+
+func (s *InMemoryStorage) DeleteEmailTemplateRoute(_ context.Context, routeID string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, ok := s.emailRoutes[routeID]; !ok {
+		return errEmailRouteMissing
+	}
+	delete(s.emailRoutes, routeID)
+	return nil
+}
+
+func (s *InMemoryStorage) EnqueueEmail(_ context.Context, msg *email.EmailMessage) error {
+	if msg == nil {
+		return fmt.Errorf("email message is nil")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, exists := s.emailMessages[msg.ID]; exists {
+		return fmt.Errorf("email message already exists")
+	}
+	s.emailMessages[msg.ID] = msg.Clone()
+	return nil
+}
+
+func (s *InMemoryStorage) UpdateEmailMessage(_ context.Context, msg *email.EmailMessage) error {
+	if msg == nil {
+		return fmt.Errorf("email message is nil")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, exists := s.emailMessages[msg.ID]; !exists {
+		return errEmailMessageMissing
+	}
+	s.emailMessages[msg.ID] = msg.Clone()
+	return nil
+}
+
+func (s *InMemoryStorage) GetEmailMessage(_ context.Context, messageID string) (*email.EmailMessage, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	msg, ok := s.emailMessages[messageID]
+	if !ok {
+		return nil, errEmailMessageMissing
+	}
+	return msg.Clone(), nil
+}
+
+func (s *InMemoryStorage) LeaseNextEmail(_ context.Context, dueBefore time.Time) (*email.EmailMessage, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var (
+		selected   *email.EmailMessage
+		selectedID string
+	)
+	for id, msg := range s.emailMessages {
+		if msg.Status != email.MessageStatusQueued && msg.Status != email.MessageStatusRetrying {
+			continue
+		}
+		if msg.NextAttemptAt.After(dueBefore) {
+			continue
+		}
+		if selected == nil || msg.NextAttemptAt.Before(selected.NextAttemptAt) {
+			selected = msg
+			selectedID = id
+		}
+	}
+	if selected == nil {
+		return nil, nil
+	}
+	now := time.Now().UTC()
+	claimed := selected.Clone()
+	claimed.Status = email.MessageStatusSending
+	claimed.LastAttemptAt = now
+	claimed.UpdatedAt = now
+	s.emailMessages[selectedID] = claimed
+	return claimed.Clone(), nil
+}
+
+func (s *InMemoryStorage) AppendEmailEvent(_ context.Context, event *email.EmailEvent) error {
+	if event == nil {
+		return fmt.Errorf("email event is nil")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	clone := event.Clone()
+	s.emailEvents[event.MessageID] = append(s.emailEvents[event.MessageID], clone)
+	return nil
+}
+
+func (s *InMemoryStorage) ListEmailEvents(_ context.Context, messageID string) ([]*email.EmailEvent, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	events := s.emailEvents[messageID]
+	result := make([]*email.EmailEvent, 0, len(events))
+	for _, evt := range events {
+		result = append(result, evt.Clone())
+	}
+	sort.Slice(result, func(i, j int) bool {
+		return result[i].CreatedAt.Before(result[j].CreatedAt)
+	})
+	return result, nil
+}
+
 // DeviceTrial methods for InMemoryStorage
 
 func cloneDeviceTrial(trial *DeviceTrial) *DeviceTrial {
@@ -618,11 +1002,16 @@ func (s *InMemoryStorage) snapshot() *storageSnapshot {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	snapshot := &storageSnapshot{
-		Clients:     make(map[string]*Client, len(s.clients)),
-		Licenses:    make(map[string]*License, len(s.licenses)),
-		Activations: make(map[string][]*ActivationRecord, len(s.activations)),
-		AdminUsers:  make(map[string]*AdminUser, len(s.adminUsers)),
-		APIKeys:     make(map[string]*APIKeyRecord, len(s.apiKeys)),
+		Clients:        make(map[string]*Client, len(s.clients)),
+		Licenses:       make(map[string]*License, len(s.licenses)),
+		Activations:    make(map[string][]*ActivationRecord, len(s.activations)),
+		AdminUsers:     make(map[string]*AdminUser, len(s.adminUsers)),
+		APIKeys:        make(map[string]*APIKeyRecord, len(s.apiKeys)),
+		EmailProviders: make(map[string]*email.EmailProvider, len(s.emailProviders)),
+		EmailTemplates: make(map[string]*email.EmailTemplate, len(s.emailTemplates)),
+		EmailRoutes:    make(map[string]*email.EmailTemplateRoute, len(s.emailRoutes)),
+		EmailMessages:  make(map[string]*email.EmailMessage, len(s.emailMessages)),
+		EmailEvents:    make(map[string][]*email.EmailEvent, len(s.emailEvents)),
 	}
 	for id, client := range s.clients {
 		snapshot.Clients[id] = cloneClient(client)
@@ -642,6 +1031,25 @@ func (s *InMemoryStorage) snapshot() *storageSnapshot {
 	}
 	for id, key := range s.apiKeys {
 		snapshot.APIKeys[id] = cloneAPIKeyRecord(key)
+	}
+	for id, provider := range s.emailProviders {
+		snapshot.EmailProviders[id] = provider.Clone()
+	}
+	for id, tpl := range s.emailTemplates {
+		snapshot.EmailTemplates[id] = tpl.Clone()
+	}
+	for id, route := range s.emailRoutes {
+		snapshot.EmailRoutes[id] = route.Clone()
+	}
+	for id, msg := range s.emailMessages {
+		snapshot.EmailMessages[id] = msg.Clone()
+	}
+	for id, events := range s.emailEvents {
+		copies := make([]*email.EmailEvent, 0, len(events))
+		for _, evt := range events {
+			copies = append(copies, evt.Clone())
+		}
+		snapshot.EmailEvents[id] = copies
 	}
 	return snapshot
 }
@@ -692,6 +1100,36 @@ func (s *InMemoryStorage) loadSnapshot(snapshot *storageSnapshot) {
 			s.apiKeysByUser[cloned.UserID] = make(map[string]struct{})
 		}
 		s.apiKeysByUser[cloned.UserID][id] = struct{}{}
+	}
+	s.emailProviders = make(map[string]*email.EmailProvider, len(snapshot.EmailProviders))
+	s.emailProvidersBySlug = make(map[string]string, len(snapshot.EmailProviders))
+	for id, provider := range snapshot.EmailProviders {
+		cloned := provider.Clone()
+		s.emailProviders[id] = cloned
+		s.emailProvidersBySlug[strings.ToLower(strings.TrimSpace(cloned.Slug))] = id
+	}
+	s.emailTemplates = make(map[string]*email.EmailTemplate, len(snapshot.EmailTemplates))
+	s.emailTemplatesBySlug = make(map[string]string, len(snapshot.EmailTemplates))
+	for id, tpl := range snapshot.EmailTemplates {
+		cloned := tpl.Clone()
+		s.emailTemplates[id] = cloned
+		s.emailTemplatesBySlug[strings.ToLower(strings.TrimSpace(cloned.Slug))] = id
+	}
+	s.emailRoutes = make(map[string]*email.EmailTemplateRoute, len(snapshot.EmailRoutes))
+	for id, route := range snapshot.EmailRoutes {
+		s.emailRoutes[id] = route.Clone()
+	}
+	s.emailMessages = make(map[string]*email.EmailMessage, len(snapshot.EmailMessages))
+	for id, msg := range snapshot.EmailMessages {
+		s.emailMessages[id] = msg.Clone()
+	}
+	s.emailEvents = make(map[string][]*email.EmailEvent, len(snapshot.EmailEvents))
+	for id, events := range snapshot.EmailEvents {
+		copies := make([]*email.EmailEvent, 0, len(events))
+		for _, evt := range events {
+			copies = append(copies, evt.Clone())
+		}
+		s.emailEvents[id] = copies
 	}
 }
 
@@ -878,6 +1316,128 @@ func (ps *PersistentStorage) ListSubscriptionsByClient(ctx context.Context, clie
 
 func (ps *PersistentStorage) DeleteSubscription(ctx context.Context, subID string) error {
 	return ps.backend.DeleteSubscription(ctx, subID)
+}
+
+// Email provider/template/message methods - proxy to backend and persist
+
+func (ps *PersistentStorage) SaveEmailProvider(ctx context.Context, provider *email.EmailProvider) error {
+	if err := ps.backend.SaveEmailProvider(ctx, provider); err != nil {
+		return err
+	}
+	return ps.persist()
+}
+
+func (ps *PersistentStorage) UpdateEmailProvider(ctx context.Context, provider *email.EmailProvider) error {
+	if err := ps.backend.UpdateEmailProvider(ctx, provider); err != nil {
+		return err
+	}
+	return ps.persist()
+}
+
+func (ps *PersistentStorage) ListEmailProviders(ctx context.Context, includeDisabled bool) ([]*email.EmailProvider, error) {
+	return ps.backend.ListEmailProviders(ctx, includeDisabled)
+}
+
+func (ps *PersistentStorage) GetEmailProvider(ctx context.Context, providerID string) (*email.EmailProvider, error) {
+	return ps.backend.GetEmailProvider(ctx, providerID)
+}
+
+func (ps *PersistentStorage) DeleteEmailProvider(ctx context.Context, providerID string) error {
+	if err := ps.backend.DeleteEmailProvider(ctx, providerID); err != nil {
+		return err
+	}
+	return ps.persist()
+}
+
+func (ps *PersistentStorage) SaveEmailTemplate(ctx context.Context, tpl *email.EmailTemplate) error {
+	if err := ps.backend.SaveEmailTemplate(ctx, tpl); err != nil {
+		return err
+	}
+	return ps.persist()
+}
+
+func (ps *PersistentStorage) UpdateEmailTemplate(ctx context.Context, tpl *email.EmailTemplate) error {
+	if err := ps.backend.UpdateEmailTemplate(ctx, tpl); err != nil {
+		return err
+	}
+	return ps.persist()
+}
+
+func (ps *PersistentStorage) ListEmailTemplates(ctx context.Context) ([]*email.EmailTemplate, error) {
+	return ps.backend.ListEmailTemplates(ctx)
+}
+
+func (ps *PersistentStorage) GetEmailTemplate(ctx context.Context, templateID string) (*email.EmailTemplate, error) {
+	return ps.backend.GetEmailTemplate(ctx, templateID)
+}
+
+func (ps *PersistentStorage) GetEmailTemplateBySlug(ctx context.Context, slug string) (*email.EmailTemplate, error) {
+	return ps.backend.GetEmailTemplateBySlug(ctx, slug)
+}
+
+func (ps *PersistentStorage) DeleteEmailTemplate(ctx context.Context, templateID string) error {
+	if err := ps.backend.DeleteEmailTemplate(ctx, templateID); err != nil {
+		return err
+	}
+	return ps.persist()
+}
+
+func (ps *PersistentStorage) SaveEmailTemplateRoute(ctx context.Context, route *email.EmailTemplateRoute) error {
+	if err := ps.backend.SaveEmailTemplateRoute(ctx, route); err != nil {
+		return err
+	}
+	return ps.persist()
+}
+
+func (ps *PersistentStorage) ListEmailTemplateRoutes(ctx context.Context, templateID, category string) ([]*email.EmailTemplateRoute, error) {
+	return ps.backend.ListEmailTemplateRoutes(ctx, templateID, category)
+}
+
+func (ps *PersistentStorage) DeleteEmailTemplateRoute(ctx context.Context, routeID string) error {
+	if err := ps.backend.DeleteEmailTemplateRoute(ctx, routeID); err != nil {
+		return err
+	}
+	return ps.persist()
+}
+
+func (ps *PersistentStorage) EnqueueEmail(ctx context.Context, msg *email.EmailMessage) error {
+	if err := ps.backend.EnqueueEmail(ctx, msg); err != nil {
+		return err
+	}
+	return ps.persist()
+}
+
+func (ps *PersistentStorage) UpdateEmailMessage(ctx context.Context, msg *email.EmailMessage) error {
+	if err := ps.backend.UpdateEmailMessage(ctx, msg); err != nil {
+		return err
+	}
+	return ps.persist()
+}
+
+func (ps *PersistentStorage) GetEmailMessage(ctx context.Context, messageID string) (*email.EmailMessage, error) {
+	return ps.backend.GetEmailMessage(ctx, messageID)
+}
+
+func (ps *PersistentStorage) LeaseNextEmail(ctx context.Context, dueBefore time.Time) (*email.EmailMessage, error) {
+	msg, err := ps.backend.LeaseNextEmail(ctx, dueBefore)
+	if err != nil || msg == nil {
+		return msg, err
+	}
+	if err := ps.persist(); err != nil {
+		return nil, err
+	}
+	return msg, nil
+}
+
+func (ps *PersistentStorage) AppendEmailEvent(ctx context.Context, event *email.EmailEvent) error {
+	if err := ps.backend.AppendEmailEvent(ctx, event); err != nil {
+		return err
+	}
+	return ps.persist()
+}
+
+func (ps *PersistentStorage) ListEmailEvents(ctx context.Context, messageID string) ([]*email.EmailEvent, error) {
+	return ps.backend.ListEmailEvents(ctx, messageID)
 }
 
 func (ps *PersistentStorage) persist() error {
