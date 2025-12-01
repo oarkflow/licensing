@@ -182,13 +182,12 @@ func createDemoData(ctx context.Context, lm *licensing.LicenseManager) error {
 	}
 
 	demoUsers := []demoSeed{
+		{label: "Trial", email: "user-trial@example.com", planSlug: "trial", maxDevices: 1, durationDays: 14},
 		{label: "Personal", email: "user-personal@example.com", planSlug: "personal", maxDevices: 1, durationDays: 365},
-		{label: "Solo", email: "user-solo@example.com", planSlug: "solo", maxDevices: 3, durationDays: 365},
-		{label: "Professional", email: "user-pro@example.com", planSlug: "professional", maxDevices: 10, durationDays: 365},
-		{label: "Team", email: "user-team@example.com", planSlug: "team", maxDevices: 25, durationDays: 365},
-		{label: "Startup", email: "user-startup@example.com", planSlug: "startup", maxDevices: 50, durationDays: 365},
+		{label: "Solo", email: "user-solo@example.com", planSlug: "solo", maxDevices: 2, durationDays: 365},
+		{label: "Team", email: "user-team@example.com", planSlug: "team", maxDevices: 5, durationDays: 365},
+		{label: "Business", email: "user-business@example.com", planSlug: "business", maxDevices: 15, durationDays: 365},
 		{label: "Enterprise", email: "user-enterprise@example.com", planSlug: "enterprise", maxDevices: 50, durationDays: 365},
-		{label: "Trial", email: "user-trial@example.com", planSlug: "trial", maxDevices: 1, durationDays: 7},
 	}
 
 	type credentialInfo struct {
@@ -346,13 +345,12 @@ func createDemoData(ctx context.Context, lm *licensing.LicenseManager) error {
 	fmt.Println("═══════════════════════════════════════════════════════════════════════════════════════════════════")
 	fmt.Println("📊 PERMISSION SUMMARY:")
 	fmt.Println("═══════════════════════════════════════════════════════════════════════════════════════════════════")
-	fmt.Println("   Personal      → Desktop + metadata context, CLI/API off")
-	fmt.Println("   Solo          → Adds CLI bootstrap + 3 devices")
-	fmt.Println("   Professional  → CLI + API automation, 10 devices")
-	fmt.Println("   Team          → Adds MSP tooling, SSO, 25 devices")
-	fmt.Println("   Startup       → Full platform, 50 devices")
-	fmt.Println("   Enterprise    → All features, premium governance")
-	fmt.Println("   Trial         → Same as Personal for 7 days")
+	fmt.Println("   Trial        → All features unlocked for 14 days evaluation")
+	fmt.Println("   Personal     → Core secrets, SSH, generators, GUI, 1 GB storage")
+	fmt.Println("   Solo         → + 2FA, P2P sharing, audit logs, version history, 5 GB storage")
+	fmt.Println("   Team         → + Scratchpads, templates, rotation, bundles, 25 GB storage")
+	fmt.Println("   Business     → + HTTP API, user management, ACLs, multi-tenant, sandbox, unlimited storage")
+	fmt.Println("   Enterprise   → + Compliance, FIPS, classification, container runtime, HSM")
 	fmt.Println("═══════════════════════════════════════════════════════════════════════════════════════════════════")
 	fmt.Println()
 

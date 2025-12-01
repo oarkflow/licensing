@@ -11,7 +11,7 @@ import (
 const (
 	secretrProductID   = "secretr"
 	secretrProductSlug = "secretr"
-	defaultTrialDays   = 7
+	defaultTrialDays   = 14
 )
 
 // SecretrCatalogSnapshot captures the canonical product, plan, and feature
@@ -43,12 +43,12 @@ type secretrPlanDefinition struct {
 var secretrPlanDefinitions = []secretrPlanDefinition{
 	{
 		ID:             "plan_secretr_trial",
-		Name:           "Trial",
+		Name:           "Free Trial",
 		Slug:           "trial",
-		Description:    "7-day full Personal experience for evaluations",
+		Description:    "Try everything before you buy. Full access to all features for 14 days. No credit card required.",
 		PricePerDevice: 0,
 		MinDevices:     1,
-		StorageLimit:   "500 MB",
+		StorageLimit:   "Unlimited",
 		BillingCycle:   "trial",
 		TrialDays:      defaultTrialDays,
 		IsTrial:        true,
@@ -60,9 +60,9 @@ var secretrPlanDefinitions = []secretrPlanDefinition{
 		Name:           "Personal",
 		Slug:           "personal",
 		Description:    "Best for: Individual developers managing personal secrets",
-		PricePerDevice: 1900, // $19/device/year
+		PricePerDevice: 1500, // $15/device/year
 		MinDevices:     1,
-		StorageLimit:   "500 MB",
+		StorageLimit:   "1 GB",
 		BillingCycle:   "yearly",
 		TrialDays:      0,
 		IsTrial:        false,
@@ -74,9 +74,9 @@ var secretrPlanDefinitions = []secretrPlanDefinition{
 		Name:           "Solo",
 		Slug:           "solo",
 		Description:    "Best for: Power users and freelancers with multiple workstations",
-		PricePerDevice: 4900, // $49/device/year
-		MinDevices:     3,
-		StorageLimit:   "2 GB",
+		PricePerDevice: 4000, // $40/device/year
+		MinDevices:     2,
+		StorageLimit:   "5 GB",
 		BillingCycle:   "yearly",
 		TrialDays:      0,
 		IsTrial:        false,
@@ -84,13 +84,13 @@ var secretrPlanDefinitions = []secretrPlanDefinition{
 		IsActive:       true,
 	},
 	{
-		ID:             "plan_secretr_professional",
-		Name:           "Professional",
-		Slug:           "professional",
+		ID:             "plan_secretr_team",
+		Name:           "Team",
+		Slug:           "team",
 		Description:    "Best for: Small teams collaborating on projects",
-		PricePerDevice: 9900, // $99/device/year
-		MinDevices:     10,
-		StorageLimit:   "5 GB",
+		PricePerDevice: 7800, // $78/device/year
+		MinDevices:     5,
+		StorageLimit:   "25 GB",
 		BillingCycle:   "yearly",
 		TrialDays:      0,
 		IsTrial:        false,
@@ -98,13 +98,13 @@ var secretrPlanDefinitions = []secretrPlanDefinition{
 		IsActive:       true,
 	},
 	{
-		ID:             "plan_secretr_team",
-		Name:           "Team",
-		Slug:           "team",
+		ID:             "plan_secretr_business",
+		Name:           "Business",
+		Slug:           "business",
 		Description:    "Best for: Growing organizations with centralized secret management needs",
-		PricePerDevice: 14900, // $149/device/year
-		MinDevices:     25,
-		StorageLimit:   "10 GB",
+		PricePerDevice: 13500, // $135/device/year
+		MinDevices:     15,
+		StorageLimit:   "Unlimited",
 		BillingCycle:   "yearly",
 		TrialDays:      0,
 		IsTrial:        false,
@@ -112,11 +112,11 @@ var secretrPlanDefinitions = []secretrPlanDefinition{
 		IsActive:       true,
 	},
 	{
-		ID:             "plan_secretr_startup",
-		Name:           "Startup",
-		Slug:           "startup",
-		Description:    "Best for: Fast-growing companies with security-first culture",
-		PricePerDevice: 24900, // $249/device/year
+		ID:             "plan_secretr_enterprise",
+		Name:           "Enterprise",
+		Slug:           "enterprise",
+		Description:    "Best for: Organizations with strict compliance and governance requirements. Custom SLAs, dedicated support, on-premises deployment assistance.",
+		PricePerDevice: 0, // Custom pricing - contact sales
 		MinDevices:     50,
 		StorageLimit:   "Unlimited",
 		BillingCycle:   "yearly",
@@ -125,24 +125,10 @@ var secretrPlanDefinitions = []secretrPlanDefinition{
 		DisplayOrder:   5,
 		IsActive:       true,
 	},
-	{
-		ID:             "plan_secretr_enterprise",
-		Name:           "Enterprise",
-		Slug:           "enterprise",
-		Description:    "Best for: Organizations with strict compliance and governance requirements",
-		PricePerDevice: 0, // Custom pricing - contact sales
-		MinDevices:     50,
-		StorageLimit:   "Unlimited",
-		BillingCycle:   "yearly",
-		TrialDays:      0,
-		IsTrial:        false,
-		DisplayOrder:   6,
-		IsActive:       true,
-	},
 }
 
 // Plan tier order for cumulative feature inheritance
-var secretrPlanOrder = []string{"personal", "solo", "professional", "team", "startup", "enterprise"}
+var secretrPlanOrder = []string{"personal", "solo", "team", "business", "enterprise"}
 
 // ==================== Feature Definitions ====================
 // Based on ENTITLEMENT_SCOPES.md - 3 main features: CLI, GUI, API
@@ -172,15 +158,14 @@ const (
 	permDeny  = ScopePermissionDeny
 )
 
-// Helper to create restriction maps
+// Helper to create restriction maps - denies for all plans before the specified one
 func denyBefore(planSlug string) map[string]ScopePermission {
 	order := map[string]int{
-		"personal":     0,
-		"solo":         1,
-		"professional": 2,
-		"team":         3,
-		"startup":      4,
-		"enterprise":   5,
+		"personal":   0,
+		"solo":       1,
+		"team":       2,
+		"business":   3,
+		"enterprise": 4,
 	}
 	threshold := order[planSlug]
 	result := make(map[string]ScopePermission)
@@ -194,31 +179,26 @@ func denyBefore(planSlug string) map[string]ScopePermission {
 
 func enterpriseOnly() map[string]ScopePermission {
 	return map[string]ScopePermission{
-		"personal":     permDeny,
-		"solo":         permDeny,
-		"professional": permDeny,
-		"team":         permDeny,
-		"startup":      permDeny,
+		"personal": permDeny,
+		"solo":     permDeny,
+		"team":     permDeny,
+		"business": permDeny,
 	}
 }
 
-func startupAndUp() map[string]ScopePermission {
-	return denyBefore("startup")
+func businessAndUp() map[string]ScopePermission {
+	return denyBefore("business")
 }
 
 func teamAndUp() map[string]ScopePermission {
 	return denyBefore("team")
 }
 
-func professionalAndUp() map[string]ScopePermission {
-	return denyBefore("professional")
-}
-
 func soloAndUp() map[string]ScopePermission {
 	return denyBefore("solo")
 }
 
-// CLI Feature with all 71 scopes from ENTITLEMENT_SCOPES.md
+// CLI Feature with all 83 scopes from ENTITLEMENT_SCOPES.md
 var cliFeature = secretrFeatureDefinition{
 	ID:          "feat_cli_001",
 	Name:        "CLI",
@@ -242,10 +222,10 @@ var cliFeature = secretrFeatureDefinition{
 		// File Management (All Plans)
 		{ID: "cli_s010", Name: "Files", Slug: "files", Description: "File vault operations"},
 
-		// Sharing & Collaboration (Professional+)
-		{ID: "cli_s011", Name: "Share", Slug: "share", Description: "Share secrets", PlanRestrictions: professionalAndUp()},
-		{ID: "cli_s012", Name: "P2P Share", Slug: "p2p-share", Description: "P2P sharing on LAN", PlanRestrictions: professionalAndUp()},
-		{ID: "cli_s013", Name: "P2P", Slug: "p2p", Description: "P2P operations", PlanRestrictions: professionalAndUp()},
+		// Sharing & Collaboration (Business+ for ACL share, Solo+ for P2P)
+		{ID: "cli_s011", Name: "Share", Slug: "share", Description: "ACL-based share secrets", PlanRestrictions: businessAndUp()},
+		{ID: "cli_s012", Name: "P2P Share", Slug: "p2p-share", Description: "P2P sharing on LAN", PlanRestrictions: soloAndUp()},
+		{ID: "cli_s013", Name: "P2P", Slug: "p2p", Description: "P2P operations", PlanRestrictions: soloAndUp()},
 
 		// Container Security (Enterprise only)
 		{ID: "cli_s014", Name: "Container", Slug: "container", Description: "Container operations", PlanRestrictions: enterpriseOnly()},
@@ -260,16 +240,16 @@ var cliFeature = secretrFeatureDefinition{
 		{ID: "cli_s019", Name: "Generate API Key", Slug: "gen-apikey", Description: "Generate API keys"},
 		{ID: "cli_s020", Name: "Generate Keypair", Slug: "gen-keypair", Description: "Generate keypairs"},
 		{ID: "cli_s021", Name: "Generate Symmetric Key", Slug: "gen-symkey", Description: "Generate symmetric keys"},
-		{ID: "cli_s022", Name: "Dynamic Secrets", Slug: "dynamic", Description: "Dynamic secret generation", PlanRestrictions: soloAndUp()},
+		{ID: "cli_s022", Name: "Dynamic Secrets", Slug: "dynamic", Description: "Dynamic secret generation"},
 
-		// Templates (Professional+)
-		{ID: "cli_s023", Name: "Template", Slug: "template", Description: "Secret templates", PlanRestrictions: professionalAndUp()},
+		// Templates (Team+)
+		{ID: "cli_s023", Name: "Template", Slug: "template", Description: "Secret templates", PlanRestrictions: teamAndUp()},
 
-		// Secret Rotation (Professional+)
-		{ID: "cli_s024", Name: "Rotate", Slug: "rotate", Description: "Secret rotation", PlanRestrictions: professionalAndUp()},
+		// Secret Rotation (Team+)
+		{ID: "cli_s024", Name: "Rotate", Slug: "rotate", Description: "Secret rotation", PlanRestrictions: teamAndUp()},
 
-		// Tenant Management (Team+)
-		{ID: "cli_s025", Name: "Tenant", Slug: "tenant", Description: "Tenant management", PlanRestrictions: teamAndUp()},
+		// Tenant Management (Business+)
+		{ID: "cli_s025", Name: "Tenant", Slug: "tenant", Description: "Tenant management", PlanRestrictions: businessAndUp()},
 
 		// Import/Export Advanced (All Plans)
 		{ID: "cli_s026", Name: "From File", Slug: "from-file", Description: "Import from file"},
@@ -278,8 +258,8 @@ var cliFeature = secretrFeatureDefinition{
 		{ID: "cli_s029", Name: "Push", Slug: "push", Description: "Push secrets"},
 		{ID: "cli_s030", Name: "Server Export", Slug: "server-export", Description: "Server export operations"},
 
-		// Scratchpad (Solo+)
-		{ID: "cli_s031", Name: "Scratchpad", Slug: "scratchpad", Description: "Encrypted scratchpads", PlanRestrictions: soloAndUp()},
+		// Scratchpad (Team+)
+		{ID: "cli_s031", Name: "Scratchpad", Slug: "scratchpad", Description: "Encrypted scratchpads", PlanRestrictions: teamAndUp()},
 
 		// Environment (All Plans)
 		{ID: "cli_s032", Name: "Print Env", Slug: "printenv", Description: "Print environment variables"},
@@ -296,10 +276,10 @@ var cliFeature = secretrFeatureDefinition{
 		{ID: "cli_s039", Name: "List KV Versions", Slug: "listkv", Description: "List KV versions", PlanRestrictions: soloAndUp()},
 		{ID: "cli_s040", Name: "Rollback KV", Slug: "rollbackkv", Description: "Rollback KV versions", PlanRestrictions: soloAndUp()},
 
-		// Security Sandbox (Startup+)
-		{ID: "cli_s041", Name: "Sandbox", Slug: "sandbox", Description: "Sandbox execution", PlanRestrictions: startupAndUp()},
-		{ID: "cli_s042", Name: "Secure Sandbox", Slug: "secure-sandbox", Description: "Secure sandbox execution", PlanRestrictions: startupAndUp()},
-		{ID: "cli_s043", Name: "SSB", Slug: "ssb", Description: "Secure sandbox shorthand", PlanRestrictions: startupAndUp()},
+		// Security Sandbox (Business+)
+		{ID: "cli_s041", Name: "Sandbox", Slug: "sandbox", Description: "Sandbox execution", PlanRestrictions: businessAndUp()},
+		{ID: "cli_s042", Name: "Secure Sandbox", Slug: "secure-sandbox", Description: "Secure sandbox execution", PlanRestrictions: businessAndUp()},
+		{ID: "cli_s043", Name: "SSB", Slug: "ssb", Description: "Secure sandbox shorthand", PlanRestrictions: businessAndUp()},
 
 		// Security Policy (Personal+)
 		{ID: "cli_s044", Name: "Security Policy", Slug: "security-policy", Description: "Security policy configuration"},
@@ -326,9 +306,9 @@ var cliFeature = secretrFeatureDefinition{
 		{ID: "cli_s055", Name: "Data Classification", Slug: "data-classification", Description: "Data classification full", PlanRestrictions: enterpriseOnly()},
 		{ID: "cli_s056", Name: "DC", Slug: "dc", Description: "Data classification shorthand", PlanRestrictions: enterpriseOnly()},
 
-		// Data Retention (Startup+)
-		{ID: "cli_s057", Name: "Retention", Slug: "retention", Description: "Data retention policies", PlanRestrictions: startupAndUp()},
-		{ID: "cli_s058", Name: "Ret", Slug: "ret", Description: "Retention shorthand", PlanRestrictions: startupAndUp()},
+		// Data Retention (Business+)
+		{ID: "cli_s057", Name: "Retention", Slug: "retention", Description: "Data retention policies", PlanRestrictions: businessAndUp()},
+		{ID: "cli_s058", Name: "Ret", Slug: "ret", Description: "Retention shorthand", PlanRestrictions: businessAndUp()},
 
 		// Breach Management (Enterprise only)
 		{ID: "cli_s059", Name: "Breach", Slug: "breach", Description: "Breach management", PlanRestrictions: enterpriseOnly()},
@@ -346,10 +326,34 @@ var cliFeature = secretrFeatureDefinition{
 		{ID: "cli_s067", Name: "Disable Passkey", Slug: "disable-passkey", Description: "Disable passkey auth", PlanRestrictions: soloAndUp()},
 		{ID: "cli_s068", Name: "Enable Share Prompts", Slug: "enable-share-prompts", Description: "Enable share prompts"},
 
-		// System Commands (Team+)
-		{ID: "cli_s069", Name: "Server", Slug: "server", Description: "Server mode operations", PlanRestrictions: teamAndUp()},
-		{ID: "cli_s070", Name: "KDS", Slug: "kds", Description: "Key distribution server", PlanRestrictions: teamAndUp()},
-		{ID: "cli_s071", Name: "Server Config", Slug: "server-config", Description: "Server configuration", PlanRestrictions: teamAndUp()},
+		// System Commands (Business+)
+		{ID: "cli_s069", Name: "Server", Slug: "server", Description: "Server mode operations", PlanRestrictions: businessAndUp()},
+		{ID: "cli_s070", Name: "KDS", Slug: "kds", Description: "Key distribution server", PlanRestrictions: businessAndUp()},
+		{ID: "cli_s071", Name: "Server Config", Slug: "server-config", Description: "Server configuration", PlanRestrictions: businessAndUp()},
+
+		// Version Control (Solo+)
+		{ID: "cli_s072", Name: "VCS", Slug: "vcs", Description: "Version control operations", PlanRestrictions: soloAndUp()},
+
+		// Vault Storage & Compaction (Team+)
+		{ID: "cli_s073", Name: "Compact", Slug: "compact", Description: "Vault compaction", PlanRestrictions: teamAndUp()},
+		{ID: "cli_s074", Name: "Vault Compact", Slug: "vault-compact", Description: "Vault compaction full", PlanRestrictions: teamAndUp()},
+
+		// Shamir Secret Sharing (Solo+)
+		{ID: "cli_s075", Name: "Shamir", Slug: "shamir", Description: "Shamir secret sharing", PlanRestrictions: soloAndUp()},
+		{ID: "cli_s076", Name: "Shamir Split", Slug: "shamir-split", Description: "Split secret with Shamir", PlanRestrictions: soloAndUp()},
+		{ID: "cli_s077", Name: "Shamir Combine", Slug: "shamir-combine", Description: "Combine Shamir shares", PlanRestrictions: soloAndUp()},
+
+		// Audit Logs (Solo+)
+		{ID: "cli_s078", Name: "Audit", Slug: "audit", Description: "Audit log operations", PlanRestrictions: soloAndUp()},
+		{ID: "cli_s079", Name: "Audit Log", Slug: "audit-log", Description: "Audit log viewing", PlanRestrictions: soloAndUp()},
+
+		// Config Injection (Business+)
+		{ID: "cli_s080", Name: "Inject", Slug: "inject", Description: "Config injection", PlanRestrictions: businessAndUp()},
+		{ID: "cli_s081", Name: "Config Inject", Slug: "config-inject", Description: "Config file injection", PlanRestrictions: businessAndUp()},
+
+		// Container Security Audit (Enterprise only)
+		{ID: "cli_s082", Name: "Container Audit", Slug: "container-audit", Description: "Container security audit", PlanRestrictions: enterpriseOnly()},
+		{ID: "cli_s083", Name: "CSA", Slug: "csa", Description: "Container security audit shorthand", PlanRestrictions: enterpriseOnly()},
 	},
 }
 
@@ -391,25 +395,25 @@ var guiFeature = secretrFeatureDefinition{
 		{ID: "gui_s019", Name: "SSH Terminal", Slug: "ssh_terminal", Description: "SSH terminal interface"},
 		{ID: "gui_s020", Name: "SSH Import", Slug: "ssh_import", Description: "Import SSH keys"},
 
-		// P2P Sharing Views (Professional+)
-		{ID: "gui_s021", Name: "P2P Share", Slug: "p2p_share", Description: "P2P sharing interface", PlanRestrictions: professionalAndUp()},
-		{ID: "gui_s022", Name: "P2P Discover", Slug: "p2p_discover", Description: "Discover P2P peers", PlanRestrictions: professionalAndUp()},
-		{ID: "gui_s023", Name: "P2P Receive", Slug: "p2p_receive", Description: "Receive P2P shares", PlanRestrictions: professionalAndUp()},
+		// P2P Sharing Views (Solo+)
+		{ID: "gui_s021", Name: "P2P Share", Slug: "p2p_share", Description: "P2P sharing interface", PlanRestrictions: soloAndUp()},
+		{ID: "gui_s022", Name: "P2P Discover", Slug: "p2p_discover", Description: "Discover P2P peers", PlanRestrictions: soloAndUp()},
+		{ID: "gui_s023", Name: "P2P Receive", Slug: "p2p_receive", Description: "Receive P2P shares", PlanRestrictions: soloAndUp()},
 
 		// Cryptographic Operations Views (All Plans)
 		{ID: "gui_s024", Name: "Sign Data", Slug: "sign_data", Description: "Data signing interface"},
 		{ID: "gui_s025", Name: "Verify Signature", Slug: "verify_signature", Description: "Signature verification"},
 
 		// Management Views
-		{ID: "gui_s026", Name: "Templates", Slug: "templates", Description: "Template management", PlanRestrictions: professionalAndUp()},
-		{ID: "gui_s027", Name: "Rotation", Slug: "rotation", Description: "Secret rotation management", PlanRestrictions: professionalAndUp()},
+		{ID: "gui_s026", Name: "Templates", Slug: "templates", Description: "Template management", PlanRestrictions: teamAndUp()},
+		{ID: "gui_s027", Name: "Rotation", Slug: "rotation", Description: "Secret rotation management", PlanRestrictions: teamAndUp()},
 		{ID: "gui_s028", Name: "Backup Restore", Slug: "backup_restore", Description: "Backup and restore interface"},
-		{ID: "gui_s029", Name: "Scratchpad", Slug: "scratchpad", Description: "Scratchpad interface", PlanRestrictions: soloAndUp()},
+		{ID: "gui_s029", Name: "Scratchpad", Slug: "scratchpad", Description: "Scratchpad interface", PlanRestrictions: teamAndUp()},
 
 		// Compliance Views (Enterprise only)
 		{ID: "gui_s030", Name: "Compliance Dashboard", Slug: "compliance_dashboard", Description: "Compliance dashboard", PlanRestrictions: enterpriseOnly()},
 		{ID: "gui_s031", Name: "Data Classification", Slug: "data_classification", Description: "Data classification interface", PlanRestrictions: enterpriseOnly()},
-		{ID: "gui_s032", Name: "Data Retention", Slug: "data_retention", Description: "Data retention interface", PlanRestrictions: startupAndUp()},
+		{ID: "gui_s032", Name: "Data Retention", Slug: "data_retention", Description: "Data retention interface", PlanRestrictions: businessAndUp()},
 		{ID: "gui_s033", Name: "Breach Notification", Slug: "breach_notification", Description: "Breach notification interface", PlanRestrictions: enterpriseOnly()},
 		{ID: "gui_s034", Name: "Access Reviews", Slug: "access_reviews", Description: "Access reviews interface", PlanRestrictions: enterpriseOnly()},
 		{ID: "gui_s035", Name: "FIPS Compliance", Slug: "fips_compliance", Description: "FIPS compliance interface", PlanRestrictions: enterpriseOnly()},
@@ -426,110 +430,110 @@ var apiFeature = secretrFeatureDefinition{
 	Name:        "API",
 	Slug:        "api",
 	Category:    "integration",
-	Description: "HTTP API access (requires Team+ plan)",
+	Description: "HTTP API access (requires Business+ plan)",
 	Scopes: []secretrScopeDefinition{
-		// Setup & Configuration (Team+)
-		{ID: "api_s001", Name: "Setup Check", Slug: "setup_check", Description: "Check setup status", PlanRestrictions: teamAndUp()},
-		{ID: "api_s002", Name: "Setup Complete", Slug: "setup_complete", Description: "Complete setup", PlanRestrictions: teamAndUp()},
-		{ID: "api_s003", Name: "Admin Regenerate Key", Slug: "admin_regenerate_key", Description: "Regenerate admin key", PlanRestrictions: teamAndUp()},
+		// Setup & Configuration (Business+)
+		{ID: "api_s001", Name: "Setup Check", Slug: "setup_check", Description: "Check setup status", PlanRestrictions: businessAndUp()},
+		{ID: "api_s002", Name: "Setup Complete", Slug: "setup_complete", Description: "Complete setup", PlanRestrictions: businessAndUp()},
+		{ID: "api_s003", Name: "Admin Regenerate Key", Slug: "admin_regenerate_key", Description: "Regenerate admin key", PlanRestrictions: businessAndUp()},
 
-		// Authentication (Team+)
-		{ID: "api_s004", Name: "Auth Login", Slug: "auth_login", Description: "Authenticate user", PlanRestrictions: teamAndUp()},
-		{ID: "api_s005", Name: "Auth Sessions List", Slug: "auth_sessions_list", Description: "List active sessions", PlanRestrictions: teamAndUp()},
-		{ID: "api_s006", Name: "Auth Sessions Revoke", Slug: "auth_sessions_revoke", Description: "Revoke sessions", PlanRestrictions: teamAndUp()},
+		// Authentication (Business+)
+		{ID: "api_s004", Name: "Auth Login", Slug: "auth_login", Description: "Authenticate user", PlanRestrictions: businessAndUp()},
+		{ID: "api_s005", Name: "Auth Sessions List", Slug: "auth_sessions_list", Description: "List active sessions", PlanRestrictions: businessAndUp()},
+		{ID: "api_s006", Name: "Auth Sessions Revoke", Slug: "auth_sessions_revoke", Description: "Revoke sessions", PlanRestrictions: businessAndUp()},
 
-		// Two-Factor Authentication (Team+)
-		{ID: "api_s007", Name: "2FA Status", Slug: "2fa_status", Description: "Get 2FA status", PlanRestrictions: teamAndUp()},
-		{ID: "api_s008", Name: "2FA Setup Start", Slug: "2fa_setup_start", Description: "Start 2FA setup", PlanRestrictions: teamAndUp()},
-		{ID: "api_s009", Name: "2FA Setup Verify", Slug: "2fa_setup_verify", Description: "Verify 2FA setup", PlanRestrictions: teamAndUp()},
-		{ID: "api_s010", Name: "2FA Verify", Slug: "2fa_verify", Description: "Verify 2FA code", PlanRestrictions: teamAndUp()},
-		{ID: "api_s011", Name: "2FA Disable", Slug: "2fa_disable", Description: "Disable 2FA", PlanRestrictions: teamAndUp()},
-		{ID: "api_s012", Name: "2FA Backup Code", Slug: "2fa_backup_code", Description: "Get backup codes", PlanRestrictions: teamAndUp()},
+		// Two-Factor Authentication (Business+)
+		{ID: "api_s007", Name: "2FA Status", Slug: "2fa_status", Description: "Get 2FA status", PlanRestrictions: businessAndUp()},
+		{ID: "api_s008", Name: "2FA Setup Start", Slug: "2fa_setup_start", Description: "Start 2FA setup", PlanRestrictions: businessAndUp()},
+		{ID: "api_s009", Name: "2FA Setup Verify", Slug: "2fa_setup_verify", Description: "Verify 2FA setup", PlanRestrictions: businessAndUp()},
+		{ID: "api_s010", Name: "2FA Verify", Slug: "2fa_verify", Description: "Verify 2FA code", PlanRestrictions: businessAndUp()},
+		{ID: "api_s011", Name: "2FA Disable", Slug: "2fa_disable", Description: "Disable 2FA", PlanRestrictions: businessAndUp()},
+		{ID: "api_s012", Name: "2FA Backup Code", Slug: "2fa_backup_code", Description: "Get backup codes", PlanRestrictions: businessAndUp()},
 
-		// Secrets Management (Team+)
-		{ID: "api_s013", Name: "Secrets Read", Slug: "secrets_read", Description: "Read secrets via API", PlanRestrictions: teamAndUp()},
-		{ID: "api_s014", Name: "Secrets Write", Slug: "secrets_write", Description: "Write secrets via API", PlanRestrictions: teamAndUp()},
-		{ID: "api_s015", Name: "Secrets Delete", Slug: "secrets_delete", Description: "Delete secrets via API", PlanRestrictions: teamAndUp()},
-		{ID: "api_s016", Name: "Secrets List", Slug: "secrets_list", Description: "List secrets via API", PlanRestrictions: teamAndUp()},
+		// Secrets Management (Business+)
+		{ID: "api_s013", Name: "Secrets Read", Slug: "secrets_read", Description: "Read secrets via API", PlanRestrictions: businessAndUp()},
+		{ID: "api_s014", Name: "Secrets Write", Slug: "secrets_write", Description: "Write secrets via API", PlanRestrictions: businessAndUp()},
+		{ID: "api_s015", Name: "Secrets Delete", Slug: "secrets_delete", Description: "Delete secrets via API", PlanRestrictions: businessAndUp()},
+		{ID: "api_s016", Name: "Secrets List", Slug: "secrets_list", Description: "List secrets via API", PlanRestrictions: businessAndUp()},
 
-		// KV Versioning (Team+)
-		{ID: "api_s017", Name: "KV Versions List", Slug: "kv_versions_list", Description: "List KV versions", PlanRestrictions: teamAndUp()},
-		{ID: "api_s018", Name: "KV Rollback", Slug: "kv_rollback", Description: "Rollback KV version", PlanRestrictions: teamAndUp()},
+		// KV Versioning (Business+)
+		{ID: "api_s017", Name: "KV Versions List", Slug: "kv_versions_list", Description: "List KV versions", PlanRestrictions: businessAndUp()},
+		{ID: "api_s018", Name: "KV Rollback", Slug: "kv_rollback", Description: "Rollback KV version", PlanRestrictions: businessAndUp()},
 
-		// Transit Engine (Startup+)
-		{ID: "api_s019", Name: "Transit Encrypt", Slug: "transit_encrypt", Description: "Transit encryption", PlanRestrictions: startupAndUp()},
-		{ID: "api_s020", Name: "Transit Decrypt", Slug: "transit_decrypt", Description: "Transit decryption", PlanRestrictions: startupAndUp()},
+		// Transit Engine (Business+)
+		{ID: "api_s019", Name: "Transit Encrypt", Slug: "transit_encrypt", Description: "Transit encryption", PlanRestrictions: businessAndUp()},
+		{ID: "api_s020", Name: "Transit Decrypt", Slug: "transit_decrypt", Description: "Transit decryption", PlanRestrictions: businessAndUp()},
 
-		// Dynamic Engines (Startup+)
-		{ID: "api_s021", Name: "Dynamic Database", Slug: "dynamic_database", Description: "Dynamic database credentials", PlanRestrictions: startupAndUp()},
-		{ID: "api_s022", Name: "Dynamic Cloud", Slug: "dynamic_cloud", Description: "Dynamic cloud tokens", PlanRestrictions: startupAndUp()},
-		{ID: "api_s023", Name: "Dynamic Verify", Slug: "dynamic_verify", Description: "Verify dynamic credentials", PlanRestrictions: startupAndUp()},
+		// Dynamic Engines (Business+)
+		{ID: "api_s021", Name: "Dynamic Database", Slug: "dynamic_database", Description: "Dynamic database credentials", PlanRestrictions: businessAndUp()},
+		{ID: "api_s022", Name: "Dynamic Cloud", Slug: "dynamic_cloud", Description: "Dynamic cloud tokens", PlanRestrictions: businessAndUp()},
+		{ID: "api_s023", Name: "Dynamic Verify", Slug: "dynamic_verify", Description: "Verify dynamic credentials", PlanRestrictions: businessAndUp()},
 
-		// Response Wrapping (Startup+)
-		{ID: "api_s024", Name: "Wrap Response", Slug: "wrap_response", Description: "Wrap API response", PlanRestrictions: startupAndUp()},
-		{ID: "api_s025", Name: "Unwrap Response", Slug: "unwrap_response", Description: "Unwrap API response", PlanRestrictions: startupAndUp()},
+		// Response Wrapping (Business+)
+		{ID: "api_s024", Name: "Wrap Response", Slug: "wrap_response", Description: "Wrap API response", PlanRestrictions: businessAndUp()},
+		{ID: "api_s025", Name: "Unwrap Response", Slug: "unwrap_response", Description: "Unwrap API response", PlanRestrictions: businessAndUp()},
 
-		// File Management (Team+)
-		{ID: "api_s026", Name: "Files List", Slug: "files_list", Description: "List files via API", PlanRestrictions: teamAndUp()},
-		{ID: "api_s027", Name: "Files Upload", Slug: "files_upload", Description: "Upload files via API", PlanRestrictions: teamAndUp()},
-		{ID: "api_s028", Name: "Files Download", Slug: "files_download", Description: "Download files via API", PlanRestrictions: teamAndUp()},
-		{ID: "api_s029", Name: "Files Delete", Slug: "files_delete", Description: "Delete files via API", PlanRestrictions: teamAndUp()},
-		{ID: "api_s030", Name: "Files Render", Slug: "files_render", Description: "Render files via API", PlanRestrictions: teamAndUp()},
+		// File Management (Business+)
+		{ID: "api_s026", Name: "Files List", Slug: "files_list", Description: "List files via API", PlanRestrictions: businessAndUp()},
+		{ID: "api_s027", Name: "Files Upload", Slug: "files_upload", Description: "Upload files via API", PlanRestrictions: businessAndUp()},
+		{ID: "api_s028", Name: "Files Download", Slug: "files_download", Description: "Download files via API", PlanRestrictions: businessAndUp()},
+		{ID: "api_s029", Name: "Files Delete", Slug: "files_delete", Description: "Delete files via API", PlanRestrictions: businessAndUp()},
+		{ID: "api_s030", Name: "Files Render", Slug: "files_render", Description: "Render files via API", PlanRestrictions: businessAndUp()},
 
-		// SSH Management (Team+)
-		{ID: "api_s031", Name: "SSH Keys Get", Slug: "ssh_keys_get", Description: "Get SSH keys", PlanRestrictions: teamAndUp()},
-		{ID: "api_s032", Name: "SSH Keys Create", Slug: "ssh_keys_create", Description: "Create SSH keys", PlanRestrictions: teamAndUp()},
-		{ID: "api_s033", Name: "SSH Keys Delete", Slug: "ssh_keys_delete", Description: "Delete SSH keys", PlanRestrictions: teamAndUp()},
-		{ID: "api_s034", Name: "SSH Keys List", Slug: "ssh_keys_list", Description: "List SSH keys", PlanRestrictions: teamAndUp()},
-		{ID: "api_s035", Name: "SSH Profiles Get", Slug: "ssh_profiles_get", Description: "Get SSH profiles", PlanRestrictions: teamAndUp()},
-		{ID: "api_s036", Name: "SSH Profiles Create", Slug: "ssh_profiles_create", Description: "Create SSH profiles", PlanRestrictions: teamAndUp()},
-		{ID: "api_s037", Name: "SSH Profiles Delete", Slug: "ssh_profiles_delete", Description: "Delete SSH profiles", PlanRestrictions: teamAndUp()},
-		{ID: "api_s038", Name: "SSH Profiles List", Slug: "ssh_profiles_list", Description: "List SSH profiles", PlanRestrictions: teamAndUp()},
+		// SSH Management (Business+)
+		{ID: "api_s031", Name: "SSH Keys Get", Slug: "ssh_keys_get", Description: "Get SSH keys", PlanRestrictions: businessAndUp()},
+		{ID: "api_s032", Name: "SSH Keys Create", Slug: "ssh_keys_create", Description: "Create SSH keys", PlanRestrictions: businessAndUp()},
+		{ID: "api_s033", Name: "SSH Keys Delete", Slug: "ssh_keys_delete", Description: "Delete SSH keys", PlanRestrictions: businessAndUp()},
+		{ID: "api_s034", Name: "SSH Keys List", Slug: "ssh_keys_list", Description: "List SSH keys", PlanRestrictions: businessAndUp()},
+		{ID: "api_s035", Name: "SSH Profiles Get", Slug: "ssh_profiles_get", Description: "Get SSH profiles", PlanRestrictions: businessAndUp()},
+		{ID: "api_s036", Name: "SSH Profiles Create", Slug: "ssh_profiles_create", Description: "Create SSH profiles", PlanRestrictions: businessAndUp()},
+		{ID: "api_s037", Name: "SSH Profiles Delete", Slug: "ssh_profiles_delete", Description: "Delete SSH profiles", PlanRestrictions: businessAndUp()},
+		{ID: "api_s038", Name: "SSH Profiles List", Slug: "ssh_profiles_list", Description: "List SSH profiles", PlanRestrictions: businessAndUp()},
 
-		// Certificate Management (Team+)
-		{ID: "api_s039", Name: "Certificate Generate", Slug: "certificate_generate", Description: "Generate certificates", PlanRestrictions: teamAndUp()},
+		// Certificate Management (Business+)
+		{ID: "api_s039", Name: "Certificate Generate", Slug: "certificate_generate", Description: "Generate certificates", PlanRestrictions: businessAndUp()},
 
-		// Key Generation (Team+)
-		{ID: "api_s040", Name: "Generate JWT", Slug: "generate_jwt", Description: "Generate JWT secrets", PlanRestrictions: teamAndUp()},
-		{ID: "api_s041", Name: "Generate API Key", Slug: "generate_apikey", Description: "Generate API keys", PlanRestrictions: teamAndUp()},
-		{ID: "api_s042", Name: "Generate Keypair", Slug: "generate_keypair", Description: "Generate keypairs", PlanRestrictions: teamAndUp()},
-		{ID: "api_s043", Name: "Generate Symmetric Key", Slug: "generate_symkey", Description: "Generate symmetric keys", PlanRestrictions: teamAndUp()},
+		// Key Generation (Business+)
+		{ID: "api_s040", Name: "Generate JWT", Slug: "generate_jwt", Description: "Generate JWT secrets", PlanRestrictions: businessAndUp()},
+		{ID: "api_s041", Name: "Generate API Key", Slug: "generate_apikey", Description: "Generate API keys", PlanRestrictions: businessAndUp()},
+		{ID: "api_s042", Name: "Generate Keypair", Slug: "generate_keypair", Description: "Generate keypairs", PlanRestrictions: businessAndUp()},
+		{ID: "api_s043", Name: "Generate Symmetric Key", Slug: "generate_symkey", Description: "Generate symmetric keys", PlanRestrictions: businessAndUp()},
 
-		// Managed Keys (Team+)
-		{ID: "api_s044", Name: "Managed Keys List", Slug: "managed_keys_list", Description: "List managed keys", PlanRestrictions: teamAndUp()},
-		{ID: "api_s045", Name: "Managed Keys Create", Slug: "managed_keys_create", Description: "Create managed keys", PlanRestrictions: teamAndUp()},
-		{ID: "api_s046", Name: "Managed Keys Rotate", Slug: "managed_keys_rotate", Description: "Rotate managed keys", PlanRestrictions: teamAndUp()},
-		{ID: "api_s047", Name: "Managed Keys Archive", Slug: "managed_keys_archive", Description: "Archive managed keys", PlanRestrictions: teamAndUp()},
-		{ID: "api_s048", Name: "Managed Keys Destroy", Slug: "managed_keys_destroy", Description: "Destroy managed keys", PlanRestrictions: teamAndUp()},
+		// Managed Keys (Business+)
+		{ID: "api_s044", Name: "Managed Keys List", Slug: "managed_keys_list", Description: "List managed keys", PlanRestrictions: businessAndUp()},
+		{ID: "api_s045", Name: "Managed Keys Create", Slug: "managed_keys_create", Description: "Create managed keys", PlanRestrictions: businessAndUp()},
+		{ID: "api_s046", Name: "Managed Keys Rotate", Slug: "managed_keys_rotate", Description: "Rotate managed keys", PlanRestrictions: businessAndUp()},
+		{ID: "api_s047", Name: "Managed Keys Archive", Slug: "managed_keys_archive", Description: "Archive managed keys", PlanRestrictions: businessAndUp()},
+		{ID: "api_s048", Name: "Managed Keys Destroy", Slug: "managed_keys_destroy", Description: "Destroy managed keys", PlanRestrictions: businessAndUp()},
 
-		// User Management (Team+)
-		{ID: "api_s049", Name: "Users Scopes List", Slug: "users_scopes_list", Description: "List user scopes", PlanRestrictions: teamAndUp()},
-		{ID: "api_s050", Name: "Users List", Slug: "users_list", Description: "List users", PlanRestrictions: teamAndUp()},
-		{ID: "api_s051", Name: "Users Create", Slug: "users_create", Description: "Create users", PlanRestrictions: teamAndUp()},
-		{ID: "api_s052", Name: "Users Get", Slug: "users_get", Description: "Get user details", PlanRestrictions: teamAndUp()},
-		{ID: "api_s053", Name: "Users Update", Slug: "users_update", Description: "Update users", PlanRestrictions: teamAndUp()},
-		{ID: "api_s054", Name: "Users Delete", Slug: "users_delete", Description: "Delete users", PlanRestrictions: teamAndUp()},
-		{ID: "api_s055", Name: "Users API Keys List", Slug: "users_apikeys_list", Description: "List user API keys", PlanRestrictions: teamAndUp()},
-		{ID: "api_s056", Name: "Users API Keys Create", Slug: "users_apikeys_create", Description: "Create user API keys", PlanRestrictions: teamAndUp()},
-		{ID: "api_s057", Name: "Users API Keys Get", Slug: "users_apikeys_get", Description: "Get user API keys", PlanRestrictions: teamAndUp()},
-		{ID: "api_s058", Name: "Users API Keys Update", Slug: "users_apikeys_update", Description: "Update user API keys", PlanRestrictions: teamAndUp()},
-		{ID: "api_s059", Name: "Users API Keys Revoke", Slug: "users_apikeys_revoke", Description: "Revoke user API keys", PlanRestrictions: teamAndUp()},
+		// User Management (Business+)
+		{ID: "api_s049", Name: "Users Scopes List", Slug: "users_scopes_list", Description: "List user scopes", PlanRestrictions: businessAndUp()},
+		{ID: "api_s050", Name: "Users List", Slug: "users_list", Description: "List users", PlanRestrictions: businessAndUp()},
+		{ID: "api_s051", Name: "Users Create", Slug: "users_create", Description: "Create users", PlanRestrictions: businessAndUp()},
+		{ID: "api_s052", Name: "Users Get", Slug: "users_get", Description: "Get user details", PlanRestrictions: businessAndUp()},
+		{ID: "api_s053", Name: "Users Update", Slug: "users_update", Description: "Update users", PlanRestrictions: businessAndUp()},
+		{ID: "api_s054", Name: "Users Delete", Slug: "users_delete", Description: "Delete users", PlanRestrictions: businessAndUp()},
+		{ID: "api_s055", Name: "Users API Keys List", Slug: "users_apikeys_list", Description: "List user API keys", PlanRestrictions: businessAndUp()},
+		{ID: "api_s056", Name: "Users API Keys Create", Slug: "users_apikeys_create", Description: "Create user API keys", PlanRestrictions: businessAndUp()},
+		{ID: "api_s057", Name: "Users API Keys Get", Slug: "users_apikeys_get", Description: "Get user API keys", PlanRestrictions: businessAndUp()},
+		{ID: "api_s058", Name: "Users API Keys Update", Slug: "users_apikeys_update", Description: "Update user API keys", PlanRestrictions: businessAndUp()},
+		{ID: "api_s059", Name: "Users API Keys Revoke", Slug: "users_apikeys_revoke", Description: "Revoke user API keys", PlanRestrictions: businessAndUp()},
 
-		// Tenant Management (Startup+)
-		{ID: "api_s060", Name: "Tenants Add", Slug: "tenants_add", Description: "Add tenants", PlanRestrictions: startupAndUp()},
-		{ID: "api_s061", Name: "Tenants List", Slug: "tenants_list", Description: "List tenants", PlanRestrictions: startupAndUp()},
-		{ID: "api_s062", Name: "Tenants Set Key", Slug: "tenants_setkey", Description: "Set tenant key", PlanRestrictions: startupAndUp()},
-		{ID: "api_s063", Name: "Tenants Get Key", Slug: "tenants_getkey", Description: "Get tenant key", PlanRestrictions: startupAndUp()},
-		{ID: "api_s064", Name: "Tenants Set Secret", Slug: "tenants_set_secret", Description: "Set tenant secret", PlanRestrictions: startupAndUp()},
-		{ID: "api_s065", Name: "Tenants Get Secret", Slug: "tenants_get_secret", Description: "Get tenant secret", PlanRestrictions: startupAndUp()},
+		// Tenant Management (Business+)
+		{ID: "api_s060", Name: "Tenants Add", Slug: "tenants_add", Description: "Add tenants", PlanRestrictions: businessAndUp()},
+		{ID: "api_s061", Name: "Tenants List", Slug: "tenants_list", Description: "List tenants", PlanRestrictions: businessAndUp()},
+		{ID: "api_s062", Name: "Tenants Set Key", Slug: "tenants_setkey", Description: "Set tenant key", PlanRestrictions: businessAndUp()},
+		{ID: "api_s063", Name: "Tenants Get Key", Slug: "tenants_getkey", Description: "Get tenant key", PlanRestrictions: businessAndUp()},
+		{ID: "api_s064", Name: "Tenants Set Secret", Slug: "tenants_set_secret", Description: "Set tenant secret", PlanRestrictions: businessAndUp()},
+		{ID: "api_s065", Name: "Tenants Get Secret", Slug: "tenants_get_secret", Description: "Get tenant secret", PlanRestrictions: businessAndUp()},
 
-		// Groups & Namespaces (Team+)
-		{ID: "api_s066", Name: "Groups Add", Slug: "groups_add", Description: "Add groups", PlanRestrictions: teamAndUp()},
-		{ID: "api_s067", Name: "Groups Generate Secret", Slug: "groups_generate_secret", Description: "Generate group secret", PlanRestrictions: teamAndUp()},
+		// Groups & Namespaces (Business+)
+		{ID: "api_s066", Name: "Groups Add", Slug: "groups_add", Description: "Add groups", PlanRestrictions: businessAndUp()},
+		{ID: "api_s067", Name: "Groups Generate Secret", Slug: "groups_generate_secret", Description: "Generate group secret", PlanRestrictions: businessAndUp()},
 
-		// Export/Import (Team+)
-		{ID: "api_s068", Name: "Export All", Slug: "export_all", Description: "Export all data via API", PlanRestrictions: teamAndUp()},
-		{ID: "api_s069", Name: "Import All", Slug: "import_all", Description: "Import all data via API", PlanRestrictions: teamAndUp()},
+		// Export/Import (Business+)
+		{ID: "api_s068", Name: "Export All", Slug: "export_all", Description: "Export all data via API", PlanRestrictions: businessAndUp()},
+		{ID: "api_s069", Name: "Import All", Slug: "import_all", Description: "Import all data via API", PlanRestrictions: businessAndUp()},
 	},
 }
 
@@ -709,7 +713,7 @@ func ensurePlanFeatures(ctx context.Context, storage Storage, plan *Plan, featur
 		}
 
 		// Determine if feature is enabled for this plan
-		// API feature is only enabled for Team+ plans
+		// API feature is only enabled for Business+ plans
 		enabled := true
 		if featureDef.Slug == "api" {
 			enabled = planHasAPIAccess(plan.Slug)
@@ -734,7 +738,7 @@ func ensurePlanFeatures(ctx context.Context, storage Storage, plan *Plan, featur
 
 func planHasAPIAccess(planSlug string) bool {
 	switch planSlug {
-	case "team", "startup", "enterprise":
+	case "business", "enterprise":
 		return true
 	default:
 		return false
@@ -911,24 +915,24 @@ func GetPlanStorageLimit(planSlug string) string {
 			return def.StorageLimit
 		}
 	}
-	return "500 MB"
+	return "1 GB"
 }
 
 // GetPlanStorageLimitBytes returns the storage limit in bytes
 func GetPlanStorageLimitBytes(planSlug string) int64 {
 	switch planSlug {
-	case "personal", "trial":
-		return 524288000 // 500 MB
+	case "trial":
+		return -1 // Unlimited during trial
+	case "personal":
+		return 1073741824 // 1 GB
 	case "solo":
-		return 2147483648 // 2 GB
-	case "professional":
 		return 5368709120 // 5 GB
 	case "team":
-		return 10737418240 // 10 GB
-	case "startup", "enterprise":
+		return 26843545600 // 25 GB
+	case "business", "enterprise":
 		return -1 // Unlimited
 	default:
-		return 524288000 // Default 500 MB
+		return 1073741824 // Default 1 GB
 	}
 }
 
@@ -987,7 +991,7 @@ func GetScopesForPlan(planSlug string) map[string][]string {
 		}
 	}
 
-	// API is only available for Team+
+	// API is only available for Business+
 	if planHasAPIAccess(planSlug) {
 		for _, scope := range apiFeature.Scopes {
 			if IsScopeAllowedForPlan("api", scope.Slug, planSlug) {
@@ -1024,7 +1028,7 @@ func GetDeniedScopesForPlan(planSlug string) map[string][]string {
 		}
 	}
 
-	// API is only available for Team+, so denied for lower plans
+	// API is only available for Business+, so denied for lower plans
 	if !planHasAPIAccess(planSlug) {
 		for _, scope := range apiFeature.Scopes {
 			result["api"] = append(result["api"], scope.Slug)

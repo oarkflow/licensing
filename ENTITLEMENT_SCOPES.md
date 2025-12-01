@@ -2,6 +2,17 @@
 
 This document defines the complete entitlement structure covering all CLI commands, API endpoints, and GUI features in the Secretr project.
 
+## Plan Overview
+
+| Plan | Price | Min Devices | Storage | Key Features |
+|------|-------|-------------|---------|--------------|
+| **Trial** | $0 (14 days) | 1 | Unlimited | All features unlocked |
+| **Personal** | $15/device/yr | 1 | 1 GB | Core secrets, SSH, generators, GUI |
+| **Solo** | $40/device/yr | 2 | 5 GB | + 2FA, P2P sharing, audit, versioning |
+| **Team** | $78/device/yr | 5 | 25 GB | + Scratchpads, templates, rotation, bundles |
+| **Business** | $135/device/yr | 15 | Unlimited | + API server, user mgmt, ACL, multi-tenant, sandbox |
+| **Enterprise** | Custom | 50+ | Unlimited | + Compliance, FIPS, containers, HSM |
+
 ## License Data Structure
 
 ```json
@@ -9,8 +20,8 @@ This document defines the complete entitlement structure covering all CLI comman
   "entitlements": {
     "product_id": "prod_secretr_001",
     "product_slug": "secretr",
-    "plan_id": "plan_professional_001",
-    "plan_slug": "professional",
+    "plan_id": "plan_team_001",
+    "plan_slug": "team",
     "features": {
       "cli": { ... },
       "gui": { ... },
@@ -71,19 +82,20 @@ The `cli` feature controls command-line interface access.
 #### Sharing & Collaboration
 ```json
 {
-  "share": { "scope_id": "cli_s011", "scope_slug": "share", "permission": "allow" },
-  "p2p-share": { "scope_id": "cli_s012", "scope_slug": "p2p-share", "permission": "allow" },
-  "p2p": { "scope_id": "cli_s013", "scope_slug": "p2p", "permission": "allow" }
+  "share": { "scope_id": "cli_s011", "scope_slug": "share", "permission": "allow", "min_plan": "business" },
+  "p2p-share": { "scope_id": "cli_s012", "scope_slug": "p2p-share", "permission": "allow", "min_plan": "solo" },
+  "p2p": { "scope_id": "cli_s013", "scope_slug": "p2p", "permission": "allow", "min_plan": "solo" }
 }
 ```
+*Note: P2P sharing requires Solo plan or higher. ACL-based sharing requires Business plan or higher*
 
 #### Container Security
 ```json
 {
-  "container": { "scope_id": "cli_s014", "scope_slug": "container", "permission": "deny" }
+  "container": { "scope_id": "cli_s014", "scope_slug": "container", "permission": "deny", "min_plan": "enterprise" }
 }
 ```
-*Note: Container operations typically restricted to enterprise plans*
+*Note: Container operations restricted to Enterprise plan*
 
 #### Backup & Recovery
 ```json
@@ -108,24 +120,26 @@ The `cli` feature controls command-line interface access.
 #### Templates
 ```json
 {
-  "template": { "scope_id": "cli_s023", "scope_slug": "template", "permission": "allow" }
+  "template": { "scope_id": "cli_s023", "scope_slug": "template", "permission": "allow", "min_plan": "team" }
 }
 ```
+*Note: Templates require Team plan or higher*
 
 #### Secret Rotation
 ```json
 {
-  "rotate": { "scope_id": "cli_s024", "scope_slug": "rotate", "permission": "allow" }
+  "rotate": { "scope_id": "cli_s024", "scope_slug": "rotate", "permission": "allow", "min_plan": "team" }
 }
 ```
+*Note: Rotation requires Team plan or higher*
 
 #### Tenant Management
 ```json
 {
-  "tenant": { "scope_id": "cli_s025", "scope_slug": "tenant", "permission": "deny" }
+  "tenant": { "scope_id": "cli_s025", "scope_slug": "tenant", "permission": "deny", "min_plan": "business" }
 }
 ```
-*Note: Multi-tenancy typically restricted to team/enterprise plans*
+*Note: Multi-tenancy requires Business plan or higher*
 
 #### Import/Export Advanced
 ```json
@@ -141,9 +155,10 @@ The `cli` feature controls command-line interface access.
 #### Scratchpad
 ```json
 {
-  "scratchpad": { "scope_id": "cli_s031", "scope_slug": "scratchpad", "permission": "allow" }
+  "scratchpad": { "scope_id": "cli_s031", "scope_slug": "scratchpad", "permission": "allow", "min_plan": "team" }
 }
 ```
+*Note: Scratchpads require Team plan or higher*
 
 #### Environment
 ```json
@@ -167,20 +182,22 @@ The `cli` feature controls command-line interface access.
 #### Versioning
 ```json
 {
-  "listkv": { "scope_id": "cli_s039", "scope_slug": "listkv", "permission": "allow" },
-  "rollbackkv": { "scope_id": "cli_s040", "scope_slug": "rollbackkv", "permission": "allow" }
+  "listkv": { "scope_id": "cli_s039", "scope_slug": "listkv", "permission": "allow", "min_plan": "solo" },
+  "rollbackkv": { "scope_id": "cli_s040", "scope_slug": "rollbackkv", "permission": "allow", "min_plan": "solo" },
+  "vcs": { "scope_id": "cli_s072", "scope_slug": "vcs", "permission": "allow", "min_plan": "solo" }
 }
 ```
+*Note: Version control features require Solo plan or higher*
 
 #### Security Sandbox
 ```json
 {
-  "sandbox": { "scope_id": "cli_s041", "scope_slug": "sandbox", "permission": "deny" },
-  "secure-sandbox": { "scope_id": "cli_s042", "scope_slug": "secure-sandbox", "permission": "deny" },
-  "ssb": { "scope_id": "cli_s043", "scope_slug": "ssb", "permission": "deny" }
+  "sandbox": { "scope_id": "cli_s041", "scope_slug": "sandbox", "permission": "deny", "min_plan": "business" },
+  "secure-sandbox": { "scope_id": "cli_s042", "scope_slug": "secure-sandbox", "permission": "deny", "min_plan": "business" },
+  "ssb": { "scope_id": "cli_s043", "scope_slug": "ssb", "permission": "deny", "min_plan": "business" }
 }
 ```
-*Note: Sandbox features typically restricted to professional/enterprise plans*
+*Note: Sandbox features require Business plan or higher*
 
 #### Security Policy
 ```json
@@ -272,12 +289,58 @@ The `cli` feature controls command-line interface access.
 #### System Commands
 ```json
 {
-  "server": { "scope_id": "cli_s069", "scope_slug": "server", "permission": "deny" },
-  "kds": { "scope_id": "cli_s070", "scope_slug": "kds", "permission": "deny" },
-  "server-config": { "scope_id": "cli_s071", "scope_slug": "server-config", "permission": "deny" }
+  "server": { "scope_id": "cli_s069", "scope_slug": "server", "permission": "deny", "min_plan": "team" },
+  "kds": { "scope_id": "cli_s070", "scope_slug": "kds", "permission": "deny", "min_plan": "team" },
+  "server-config": { "scope_id": "cli_s071", "scope_slug": "server-config", "permission": "deny", "min_plan": "team" }
 }
 ```
-*Note: Server mode and server-config typically restricted to team/enterprise plans*
+*Note: Server mode and server-config require Team plan or higher*
+
+#### Vault Storage & Compaction
+```json
+{
+  "compact": { "scope_id": "cli_s073", "scope_slug": "compact", "permission": "allow", "min_plan": "professional" },
+  "vault-compact": { "scope_id": "cli_s074", "scope_slug": "vault-compact", "permission": "allow", "min_plan": "professional" }
+}
+```
+*Note: Vault compaction requires Professional plan or higher*
+
+#### Shamir Secret Sharing
+```json
+{
+  "shamir": { "scope_id": "cli_s075", "scope_slug": "shamir", "permission": "allow", "min_plan": "solo" },
+  "shamir-split": { "scope_id": "cli_s076", "scope_slug": "shamir-split", "permission": "allow", "min_plan": "solo" },
+  "shamir-combine": { "scope_id": "cli_s077", "scope_slug": "shamir-combine", "permission": "allow", "min_plan": "solo" }
+}
+```
+*Note: Shamir secret sharing requires Solo plan or higher*
+
+#### Audit Logs
+```json
+{
+  "audit": { "scope_id": "cli_s078", "scope_slug": "audit", "permission": "allow", "min_plan": "solo" },
+  "audit-log": { "scope_id": "cli_s079", "scope_slug": "audit-log", "permission": "allow", "min_plan": "solo" }
+}
+```
+*Note: Audit logging requires Solo plan or higher*
+
+#### Config Injection
+```json
+{
+  "inject": { "scope_id": "cli_s080", "scope_slug": "inject", "permission": "allow", "min_plan": "startup" },
+  "config-inject": { "scope_id": "cli_s081", "scope_slug": "config-inject", "permission": "allow", "min_plan": "startup" }
+}
+```
+*Note: Config injection requires Startup plan or higher*
+
+#### Container Security Audit
+```json
+{
+  "container-audit": { "scope_id": "cli_s082", "scope_slug": "container-audit", "permission": "deny", "min_plan": "enterprise" },
+  "csa": { "scope_id": "cli_s083", "scope_slug": "csa", "permission": "deny", "min_plan": "enterprise" }
+}
+```
+*Note: Container security audit requires Enterprise plan*
 
 ---
 
@@ -591,12 +654,37 @@ The `api` feature controls HTTP API access.
 
 ## 4. Plan-Based Feature Matrix
 
-### Personal Plan
+### Trial Plan (14 days)
+```json
+{
+  "cli": {
+    "enabled": true,
+    "scopes": {}
+  },
+  "gui": {
+    "enabled": true,
+    "scopes": {}
+  },
+  "api": {
+    "enabled": true,
+    "scopes": {}
+  }
+}
+```
+*Note: Empty scopes = all features unlocked during trial*
+
+### Personal Plan ($15/device/year, min 1 device)
 ```json
 {
   "cli": {
     "enabled": true,
     "scopes": {
+      "p2p-share": { "permission": "deny" },
+      "p2p": { "permission": "deny" },
+      "share": { "permission": "deny" },
+      "scratchpad": { "permission": "deny" },
+      "template": { "permission": "deny" },
+      "rotate": { "permission": "deny" },
       "container": { "permission": "deny" },
       "sandbox": { "permission": "deny" },
       "secure-sandbox": { "permission": "deny" },
@@ -607,7 +695,112 @@ The `api` feature controls HTTP API access.
       "classify": { "permission": "deny" },
       "retention": { "permission": "deny" },
       "breach": { "permission": "deny" },
-      "access-review": { "permission": "deny" }
+      "access-review": { "permission": "deny" },
+      "listkv": { "permission": "deny" },
+      "rollbackkv": { "permission": "deny" },
+      "vcs": { "permission": "deny" },
+      "enable-2fa": { "permission": "deny" },
+      "disable-2fa": { "permission": "deny" },
+      "enable-passkey": { "permission": "deny" },
+      "disable-passkey": { "permission": "deny" },
+      "shamir": { "permission": "deny" },
+      "shamir-split": { "permission": "deny" },
+      "shamir-combine": { "permission": "deny" },
+      "audit": { "permission": "deny" },
+      "audit-log": { "permission": "deny" }
+    }
+  },
+  "gui": {
+    "enabled": true,
+    "scopes": {
+      "p2p_share": { "permission": "deny" },
+      "p2p_discover": { "permission": "deny" },
+      "p2p_receive": { "permission": "deny" },
+      "scratchpad": { "permission": "deny" },
+      "templates": { "permission": "deny" },
+      "rotation": { "permission": "deny" },
+      "two_factor_auth": { "permission": "deny" },
+      "shamir_sharing": { "permission": "deny" },
+      "audit_log": { "permission": "deny" },
+      "compliance_dashboard": { "permission": "deny" },
+      "data_classification": { "permission": "deny" },
+      "data_retention": { "permission": "deny" },
+      "breach_notification": { "permission": "deny" },
+      "access_reviews": { "permission": "deny" },
+      "fips_compliance": { "permission": "deny" }
+    }
+  },
+  "api": {
+    "enabled": false
+  }
+}
+```
+
+### Solo Plan ($40/device/year, min 2 devices)
+```json
+{
+  "cli": {
+    "enabled": true,
+    "scopes": {
+      "scratchpad": { "permission": "deny" },
+      "template": { "permission": "deny" },
+      "rotate": { "permission": "deny" },
+      "share": { "permission": "deny" },
+      "container": { "permission": "deny" },
+      "sandbox": { "permission": "deny" },
+      "secure-sandbox": { "permission": "deny" },
+      "tenant": { "permission": "deny" },
+      "server": { "permission": "deny" },
+      "compliance": { "permission": "deny" },
+      "fips": { "permission": "deny" },
+      "classify": { "permission": "deny" },
+      "retention": { "permission": "deny" },
+      "breach": { "permission": "deny" },
+      "access-review": { "permission": "deny" },
+      "inject": { "permission": "deny" },
+      "config-inject": { "permission": "deny" }
+    }
+  },
+  "gui": {
+    "enabled": true,
+    "scopes": {
+      "scratchpad": { "permission": "deny" },
+      "templates": { "permission": "deny" },
+      "rotation": { "permission": "deny" },
+      "compliance_dashboard": { "permission": "deny" },
+      "data_classification": { "permission": "deny" },
+      "data_retention": { "permission": "deny" },
+      "breach_notification": { "permission": "deny" },
+      "access_reviews": { "permission": "deny" },
+      "fips_compliance": { "permission": "deny" }
+    }
+  },
+  "api": {
+    "enabled": false
+  }
+}
+```
+
+### Team Plan ($78/device/year, min 5 devices)
+```json
+{
+  "cli": {
+    "enabled": true,
+    "scopes": {
+      "share": { "permission": "deny" },
+      "container": { "permission": "deny" },
+      "sandbox": { "permission": "deny" },
+      "secure-sandbox": { "permission": "deny" },
+      "tenant": { "permission": "deny" },
+      "server": { "permission": "deny" },
+      "compliance": { "permission": "deny" },
+      "fips": { "permission": "deny" },
+      "classify": { "permission": "deny" },
+      "retention": { "permission": "deny" },
+      "breach": { "permission": "deny" },
+      "access-review": { "permission": "deny" },
+      "inject": { "permission": "deny" },
+      "config-inject": { "permission": "deny" }
     }
   },
   "gui": {
@@ -627,22 +820,20 @@ The `api` feature controls HTTP API access.
 }
 ```
 
-### Starter Plan
+### Business Plan ($135/device/year, min 15 devices)
 ```json
 {
   "cli": {
     "enabled": true,
     "scopes": {
       "container": { "permission": "deny" },
-      "sandbox": { "permission": "deny" },
-      "tenant": { "permission": "deny" },
-      "server": { "permission": "deny" },
       "compliance": { "permission": "deny" },
       "fips": { "permission": "deny" },
       "classify": { "permission": "deny" },
-      "retention": { "permission": "deny" },
       "breach": { "permission": "deny" },
-      "access-review": { "permission": "deny" }
+      "access-review": { "permission": "deny" },
+      "container-audit": { "permission": "deny" },
+      "csa": { "permission": "deny" }
     }
   },
   "gui": {
@@ -650,7 +841,6 @@ The `api` feature controls HTTP API access.
     "scopes": {
       "compliance_dashboard": { "permission": "deny" },
       "data_classification": { "permission": "deny" },
-      "data_retention": { "permission": "deny" },
       "breach_notification": { "permission": "deny" },
       "access_reviews": { "permission": "deny" },
       "fips_compliance": { "permission": "deny" }
@@ -658,98 +848,13 @@ The `api` feature controls HTTP API access.
   },
   "api": {
     "enabled": true,
-    "scopes": {
-      "users_list": { "permission": "deny" },
-      "users_create": { "permission": "deny" },
-      "tenants_add": { "permission": "deny" }
-    }
+    "scopes": {}
   }
 }
 ```
+*Note: API enabled with unlimited access, no rate limits*
 
-### Professional Plan
-```json
-{
-  "cli": {
-    "enabled": true,
-    "scopes": {
-      "sandbox": { "permission": "allow" },
-      "secure-sandbox": { "permission": "allow" },
-      "tenant": { "permission": "deny" },
-      "server": { "permission": "deny" },
-      "compliance": { "permission": "deny" },
-      "fips": { "permission": "deny" },
-      "classify": { "permission": "deny" },
-      "retention": { "permission": "deny" },
-      "breach": { "permission": "deny" },
-      "access-review": { "permission": "deny" }
-    }
-  },
-  "gui": {
-    "enabled": true,
-    "scopes": {
-      "compliance_dashboard": { "permission": "deny" },
-      "data_classification": { "permission": "deny" },
-      "data_retention": { "permission": "deny" },
-      "breach_notification": { "permission": "deny" },
-      "access_reviews": { "permission": "deny" },
-      "fips_compliance": { "permission": "deny" }
-    }
-  },
-  "api": {
-    "enabled": true,
-    "scopes": {
-      "users_list": { "permission": "allow" },
-      "users_create": { "permission": "allow" },
-      "tenants_add": { "permission": "deny" }
-    }
-  }
-}
-```
-
-### Team Plan
-```json
-{
-  "cli": {
-    "enabled": true,
-    "scopes": {
-      "sandbox": { "permission": "allow" },
-      "secure-sandbox": { "permission": "allow" },
-      "container": { "permission": "allow" },
-      "tenant": { "permission": "allow" },
-      "server": { "permission": "allow" },
-      "server-config": { "permission": "allow" },
-      "compliance": { "permission": "deny" },
-      "fips": { "permission": "deny" },
-      "classify": { "permission": "deny" },
-      "retention": { "permission": "deny" },
-      "breach": { "permission": "deny" },
-      "access-review": { "permission": "deny" }
-    }
-  },
-  "gui": {
-    "enabled": true,
-    "scopes": {
-      "compliance_dashboard": { "permission": "deny" },
-      "data_classification": { "permission": "deny" },
-      "data_retention": { "permission": "deny" },
-      "breach_notification": { "permission": "deny" },
-      "access_reviews": { "permission": "deny" },
-      "fips_compliance": { "permission": "deny" }
-    }
-  },
-  "api": {
-    "enabled": true,
-    "scopes": {
-      "users_list": { "permission": "allow" },
-      "users_create": { "permission": "allow" },
-      "tenants_add": { "permission": "allow" }
-    }
-  }
-}
-```
-
-### Enterprise Plan
+### Enterprise Plan (Custom, min 50+ devices)
 ```json
 {
   "cli": {
@@ -766,13 +871,13 @@ The `api` feature controls HTTP API access.
   }
 }
 ```
-*Note: Empty scopes object means all actions are allowed*
+*Note: Empty scopes object means all actions are allowed with unlimited access*
 
 ---
 
 ## 5. Complete License Data Example
 
-### Personal Plan Example
+### Personal Plan Example ($15/device/year, 1 device min)
 ```json
 {
   "entitlements": {
@@ -780,6 +885,10 @@ The `api` feature controls HTTP API access.
     "product_slug": "secretr",
     "plan_id": "plan_personal_001",
     "plan_slug": "personal",
+    "min_devices": 1,
+    "max_devices": 1,
+    "storage_limit_bytes": 1073741824,
+    "storage_limit_display": "1 GB",
     "features": {
       "cli": {
         "feature_id": "feat_cli_001",
@@ -787,26 +896,33 @@ The `api` feature controls HTTP API access.
         "category": "interface",
         "enabled": true,
         "scopes": {
-          "get": { "scope_id": "cli_s001", "scope_slug": "get", "permission": "allow" },
-          "set": { "scope_id": "cli_s002", "scope_slug": "set", "permission": "allow" },
-          "list": { "scope_id": "cli_s003", "scope_slug": "list", "permission": "allow" },
-          "delete": { "scope_id": "cli_s004", "scope_slug": "delete", "permission": "allow" },
-          "copy": { "scope_id": "cli_s005", "scope_slug": "copy", "permission": "allow" },
-          "ssh": { "scope_id": "cli_s007", "scope_slug": "ssh", "permission": "allow" },
-          "ssh-key": { "scope_id": "cli_s008", "scope_slug": "ssh-key", "permission": "allow" },
-          "files": { "scope_id": "cli_s010", "scope_slug": "files", "permission": "allow" },
-          "share": { "scope_id": "cli_s011", "scope_slug": "share", "permission": "allow" },
-          "backup": { "scope_id": "cli_s015", "scope_slug": "backup", "permission": "allow" },
-          "container": { "scope_id": "cli_s014", "scope_slug": "container", "permission": "deny" },
-          "sandbox": { "scope_id": "cli_s041", "scope_slug": "sandbox", "permission": "deny" },
-          "tenant": { "scope_id": "cli_s025", "scope_slug": "tenant", "permission": "deny" },
-          "server": { "scope_id": "cli_s069", "scope_slug": "server", "permission": "deny" },
-          "compliance": { "scope_id": "cli_s052", "scope_slug": "compliance", "permission": "deny" },
-          "fips": { "scope_id": "cli_s050", "scope_slug": "fips", "permission": "deny" },
-          "classify": { "scope_id": "cli_s054", "scope_slug": "classify", "permission": "deny" },
-          "retention": { "scope_id": "cli_s057", "scope_slug": "retention", "permission": "deny" },
-          "breach": { "scope_id": "cli_s059", "scope_slug": "breach", "permission": "deny" },
-          "access-review": { "scope_id": "cli_s061", "scope_slug": "access-review", "permission": "deny" }
+          "get": { "permission": "allow" },
+          "set": { "permission": "allow" },
+          "list": { "permission": "allow" },
+          "delete": { "permission": "allow" },
+          "copy": { "permission": "allow" },
+          "ssh": { "permission": "allow" },
+          "ssh-key": { "permission": "allow" },
+          "files": { "permission": "allow" },
+          "backup": { "permission": "allow" },
+          "generate": { "permission": "allow" },
+          "policy": { "permission": "allow" },
+          "seal": { "permission": "allow" },
+          "metrics": { "permission": "allow" },
+          "share": { "permission": "deny" },
+          "scratchpad": { "permission": "deny" },
+          "template": { "permission": "deny" },
+          "rotation": { "permission": "deny" },
+          "2fa": { "permission": "deny" },
+          "passkey": { "permission": "deny" },
+          "listkv": { "permission": "deny" },
+          "audit": { "permission": "deny" },
+          "sandbox": { "permission": "deny" },
+          "tenant": { "permission": "deny" },
+          "server": { "permission": "deny" },
+          "container": { "permission": "deny" },
+          "compliance": { "permission": "deny" },
+          "fips": { "permission": "deny" }
         }
       },
       "gui": {
@@ -815,17 +931,16 @@ The `api` feature controls HTTP API access.
         "category": "interface",
         "enabled": true,
         "scopes": {
-          "view": { "scope_id": "gui_s001", "scope_slug": "view", "permission": "allow" },
-          "list": { "scope_id": "gui_s002", "scope_slug": "list", "permission": "allow" },
-          "create": { "scope_id": "gui_s003", "scope_slug": "create", "permission": "allow" },
-          "update": { "scope_id": "gui_s004", "scope_slug": "update", "permission": "allow" },
-          "delete": { "scope_id": "gui_s005", "scope_slug": "delete", "permission": "allow" },
-          "secret_manager": { "scope_id": "gui_s007", "scope_slug": "secret_manager", "permission": "allow" },
-          "file_manager": { "scope_id": "gui_s011", "scope_slug": "file_manager", "permission": "allow" },
-          "ssh_profiles": { "scope_id": "gui_s018", "scope_slug": "ssh_profiles", "permission": "allow" },
-          "compliance_dashboard": { "scope_id": "gui_s030", "scope_slug": "compliance_dashboard", "permission": "deny" },
-          "data_classification": { "scope_id": "gui_s031", "scope_slug": "data_classification", "permission": "deny" },
-          "fips_compliance": { "scope_id": "gui_s035", "scope_slug": "fips_compliance", "permission": "deny" }
+          "view": { "permission": "allow" },
+          "list": { "permission": "allow" },
+          "create": { "permission": "allow" },
+          "update": { "permission": "allow" },
+          "delete": { "permission": "allow" },
+          "secret_manager": { "permission": "allow" },
+          "file_manager": { "permission": "allow" },
+          "generators": { "permission": "allow" },
+          "p2p_discovery": { "permission": "deny" },
+          "compliance_dashboard": { "permission": "deny" }
         }
       },
       "api": {
@@ -840,7 +955,63 @@ The `api` feature controls HTTP API access.
 }
 ```
 
-### Enterprise Plan Example (All Features)
+### Business Plan Example ($135/device/year, 15 device min)
+```json
+{
+  "entitlements": {
+    "product_id": "prod_secretr_001",
+    "product_slug": "secretr",
+    "plan_id": "plan_business_001",
+    "plan_slug": "business",
+    "min_devices": 15,
+    "max_devices": -1,
+    "storage_limit_bytes": -1,
+    "storage_limit_display": "Unlimited",
+    "features": {
+      "cli": {
+        "feature_id": "feat_cli_001",
+        "feature_slug": "cli",
+        "category": "interface",
+        "enabled": true,
+        "scopes": {
+          "container": { "permission": "deny" },
+          "compliance": { "permission": "deny" },
+          "fips": { "permission": "deny" },
+          "classify": { "permission": "deny" },
+          "breach": { "permission": "deny" },
+          "access-review": { "permission": "deny" }
+        }
+      },
+      "gui": {
+        "feature_id": "feat_gui_001",
+        "feature_slug": "gui",
+        "category": "interface",
+        "enabled": true,
+        "scopes": {
+          "compliance_dashboard": { "permission": "deny" },
+          "data_classification": { "permission": "deny" },
+          "fips_compliance": { "permission": "deny" }
+        }
+      },
+      "api": {
+        "feature_id": "feat_api_001",
+        "feature_slug": "api",
+        "category": "integration",
+        "enabled": true,
+        "scopes": {
+          "container_inject": { "permission": "deny" },
+          "container_extract": { "permission": "deny" },
+          "compliance_check": { "permission": "deny" },
+          "fips_validate": { "permission": "deny" }
+        }
+      }
+    }
+  }
+}
+```
+*Note: Business plan shows deny-list approach - only explicitly denied scopes are listed*
+
+### Enterprise Plan Example (Custom pricing, 50+ devices)
 ```json
 {
   "entitlements": {
@@ -848,6 +1019,10 @@ The `api` feature controls HTTP API access.
     "product_slug": "secretr",
     "plan_id": "plan_enterprise_001",
     "plan_slug": "enterprise",
+    "min_devices": 50,
+    "max_devices": -1,
+    "storage_limit_bytes": -1,
+    "storage_limit_display": "Unlimited",
     "features": {
       "cli": {
         "feature_id": "feat_cli_001",
@@ -874,6 +1049,7 @@ The `api` feature controls HTTP API access.
   }
 }
 ```
+*Note: Empty scopes object means all actions are allowed with unlimited access*
 
 ---
 
@@ -881,21 +1057,26 @@ The `api` feature controls HTTP API access.
 
 ```json
 {
+  "trial": {
+    "storage_limit_bytes": -1,
+    "storage_limit_display": "Unlimited",
+    "duration_days": 14
+  },
   "personal": {
-    "storage_limit_bytes": 524288000,
-    "storage_limit_display": "500 MB"
+    "storage_limit_bytes": 1073741824,
+    "storage_limit_display": "1 GB"
   },
-  "starter": {
-    "storage_limit_bytes": 524288000,
-    "storage_limit_display": "500 MB"
-  },
-  "professional": {
-    "storage_limit_bytes": 2147483648,
-    "storage_limit_display": "2 GB"
-  },
-  "team": {
+  "solo": {
     "storage_limit_bytes": 5368709120,
     "storage_limit_display": "5 GB"
+  },
+  "team": {
+    "storage_limit_bytes": 26843545600,
+    "storage_limit_display": "25 GB"
+  },
+  "business": {
+    "storage_limit_bytes": -1,
+    "storage_limit_display": "Unlimited"
   },
   "enterprise": {
     "storage_limit_bytes": -1,
@@ -923,7 +1104,7 @@ if !guiEntitlementManager.IsGUIActionAllowed("compliance_dashboard") {
 
 // Check if API endpoint is allowed
 if !entitlementManager.IsAPIActionAllowed("tenants_add") {
-    return http.StatusForbidden, "This API endpoint requires a Team or Enterprise plan"
+    return http.StatusForbidden, "This API endpoint requires a Business or Enterprise plan"
 }
 ```
 
@@ -943,62 +1124,68 @@ When `scopes` is an empty object `{}`, all operations within that feature are al
 
 | Category | Scope Count | Typical Restriction |
 |----------|-------------|---------------------|
-| CLI Basic Operations | 6 | Always allowed |
-| CLI SSH Management | 3 | Always allowed |
-| CLI File Operations | 1 | Always allowed |
-| CLI Sharing | 3 | Always allowed |
-| CLI Container Security | 1 | Professional+ |
-| CLI Backup/Import/Export | 7 | Always allowed |
-| CLI Generators | 5 | Always allowed |
-| CLI Templates | 1 | Always allowed |
-| CLI Rotation | 1 | Always allowed |
-| CLI Tenant Management | 1 | Team+ |
-| CLI Sandbox | 3 | Professional+ |
-| CLI Security Policy | 2 | Always allowed |
-| CLI Vault Security | 2 | Always allowed |
-| CLI Observability | 2 | Always allowed |
+| CLI Basic Operations | 6 | All plans |
+| CLI SSH Management | 3 | Personal+ |
+| CLI File Operations | 1 | All plans |
+| CLI Sharing | 3 | Solo+ (P2P requires 2 devices) |
+| CLI Container Security | 1 | Enterprise |
+| CLI Backup/Import/Export | 7 | Personal+ |
+| CLI Generators | 5 | Personal+ |
+| CLI Templates | 1 | Team+ |
+| CLI Rotation | 1 | Team+ |
+| CLI Tenant Management | 1 | Business+ |
+| CLI Sandbox | 3 | Business+ |
+| CLI Security Policy | 2 | Personal+ |
+| CLI Vault Security | 2 | Personal+ |
+| CLI Observability | 2 | Personal+ |
+| CLI Versioning (listkv, rollbackkv, vcs) | 3 | Solo+ |
+| CLI Shamir | 3 | Solo+ |
+| CLI Audit | 2 | Solo+ |
 | CLI FIPS Compliance | 2 | Enterprise |
 | CLI Compliance Frameworks | 2 | Enterprise |
 | CLI Data Classification | 3 | Enterprise |
-| CLI Data Retention | 2 | Enterprise |
+| CLI Data Retention | 2 | Business+ |
 | CLI Breach Management | 2 | Enterprise |
 | CLI Access Review | 3 | Enterprise |
-| CLI Authentication | 5 | Always allowed |
-| CLI System Commands | 3 | Team+ |
-| **Total CLI Scopes** | **71** | |
+| CLI Authentication (2FA/Passkey) | 5 | Solo+ |
+| CLI System Commands (Server) | 3 | Business+ |
+| CLI Vault Compaction | 2 | Team+ |
+| CLI Config Injection | 2 | Business+ |
+| CLI Container Security Audit | 2 | Enterprise |
+| **Total CLI Scopes** | **83** | |
 | | | |
-| GUI CRUD Operations | 6 | Always allowed |
-| GUI Secret Management | 4 | Always allowed |
-| GUI File Management | 3 | Always allowed |
-| GUI Generators | 4 | Always allowed |
-| GUI SSH Management | 3 | Always allowed |
-| GUI P2P Sharing | 3 | Always allowed |
-| GUI Cryptographic Ops | 2 | Always allowed |
-| GUI Management Views | 4 | Always allowed |
+| GUI CRUD Operations | 6 | All plans |
+| GUI Secret Management | 4 | Personal+ |
+| GUI File Management | 3 | All plans |
+| GUI Generators | 4 | Personal+ |
+| GUI SSH Management | 3 | Personal+ |
+| GUI P2P Sharing | 3 | Solo+ |
+| GUI Cryptographic Ops | 2 | Solo+ |
+| GUI Management Views | 4 | Solo+ |
 | GUI Compliance Views | 6 | Enterprise |
-| GUI Security Views | 2 | Always allowed |
+| GUI Security Views | 2 | Solo+ |
 | **Total GUI Scopes** | **37** | |
 | | | |
-| API Setup & Config | 3 | Always allowed |
-| API Authentication | 3 | Always allowed |
-| API Two-Factor Auth | 6 | Always allowed |
-| API Secrets Management | 4 | Always allowed |
-| API KV Versioning | 2 | Always allowed |
-| API Transit Engine | 2 | Always allowed |
-| API Dynamic Engines | 3 | Always allowed |
-| API Response Wrapping | 2 | Always allowed |
-| API File Management | 5 | Always allowed |
-| API SSH Management | 8 | Always allowed |
-| API Certificate Mgmt | 1 | Always allowed |
-| API Key Generation | 4 | Always allowed |
-| API Managed Keys | 5 | Always allowed |
-| API User Management | 11 | Team+ |
-| API Tenant Management | 6 | Team+ |
-| API Groups/Namespaces | 2 | Always allowed |
-| API Export/Import | 2 | Always allowed |
+| API Setup & Config | 3 | Business+ (requires HTTP API) |
+| API Authentication | 3 | Business+ |
+| API Two-Factor Auth | 6 | Solo+ |
+| API Secrets Management | 4 | Business+ |
+| API KV Versioning | 2 | Solo+ |
+| API Transit Engine | 2 | Business+ |
+| API Dynamic Engines | 3 | Solo+ |
+| API Response Wrapping | 2 | Business+ |
+| API File Management | 5 | Business+ |
+| API SSH Management | 8 | Business+ |
+| API Certificate Mgmt | 1 | Solo+ |
+| API Key Generation | 4 | Personal+ |
+| API Managed Keys | 5 | Business+ |
+| API User Management | 11 | Business+ |
+| API Tenant Management | 6 | Business+ |
+| API Groups/Namespaces | 2 | Business+ |
+| API Export/Import | 2 | Personal+ |
 | **Total API Scopes** | **69** | |
 | | | |
-| **Grand Total** | **177** | |
+| **Grand Total** | **189** | |
 
 ---
 

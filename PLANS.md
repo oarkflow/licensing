@@ -4,6 +4,17 @@ Secretr is a **local-first, offline-capable** secret management tool designed fo
 
 ---
 
+## Free Trial - 14 Days
+
+**Try everything before you buy.** Full access to all features for 14 days.
+
+- ✅ All features from all plans unlocked
+- ✅ Unlimited secrets and storage
+- ✅ No credit card required
+- ⏰ Converts to Personal plan after trial (or choose another plan)
+
+---
+
 ## Common Features (All Plans)
 
 These core features are included in every plan:
@@ -48,12 +59,12 @@ These core features are included in every plan:
 
 ---
 
-## Personal - $19/device/year (min 1 device)
+## Personal - $15/device/year (min 1 device)
 
 **Best for:** Individual developers managing personal secrets
 
 ### Storage
-- 500 MB encrypted vault storage
+- 1 GB encrypted vault storage
 
 ### Features
 Everything in Common Features plus:
@@ -109,12 +120,12 @@ Everything in Common Features plus:
 
 ---
 
-## Solo - $49/device/year (min 3 devices)
+## Solo - $40/device/year (min 2 devices)
 
 **Best for:** Power users and freelancers with multiple workstations
 
 ### Storage
-- 2 GB encrypted vault storage
+- 5 GB encrypted vault storage
 
 ### Features
 Everything from Personal plus:
@@ -141,12 +152,6 @@ Everything from Personal plus:
 - RSA keypair generation (up to 4096-bit)
 - EC/ECDSA keypair generation (P256/P384/P521)
 
-### 📝 Scratchpad
-- Encrypted notes (scratchpads)
-- Scratchpad password protection
-- Scratchpad expiration (TTL-based)
-- Secret ranges in scratchpads
-
 ### 📤 Advanced Import & Export
 - Import from CSV/TSV
 - Selective export (secrets, files, SSH)
@@ -163,17 +168,32 @@ Everything from Personal plus:
 - Certificate management UI
 - Avatar badges & customization
 
+### 🤝 P2P Sharing (LAN)
+- Secrets/Files sharing on LAN
+- End-to-end encrypted P2P (ECDH + AES-GCM)
+- Peer discovery (mDNS + UDP)
+- P2P user alias for discovery
+- Duplicate resolution on receive
+- Share notifications
+
 ---
 
-## Professional - $99/device/year (min 10 devices)
+## Team - $78/device/year (min 5 devices)
 
 **Best for:** Small teams collaborating on projects
 
 ### Storage
-- 5 GB encrypted vault storage
+- 25 GB encrypted vault storage
 
 ### Features
 Everything from Solo plus:
+
+### 📝 Scratchpad
+- Encrypted notes (scratchpads)
+- Scratchpad password protection
+- Scratchpad expiration (TTL-based)
+- Secret ranges in scratchpads
+- Scratchpad sharing via P2P
 
 ### 🔐 Team Security
 - Tampering detection & auto-response
@@ -191,36 +211,36 @@ Everything from Solo plus:
 - Rotation policies (interval-based)
 - Password/API key generators for rotation
 - Rotation history tracking
+- Dual-key overlap windows
+- Automated rotation execution
+- Rotation notification hooks
 
 ### 📁 Bundle Management
 - Encrypted bundle import/export
 - Bundle passphrase protection
 - Nested JSON flattening for ENV export
+- Bundle expiry windows
 
 ### 🗂️ Organization
 - Namespace-based secret organization
 - Vault storage compaction
 - Hard reset with backup
 
-### 🤝 P2P Sharing (LAN)
-- Secrets/Files/Scratchpad sharing on LAN
-- End-to-end encrypted P2P (ECDH + AES-GCM)
-- Peer discovery (mDNS + UDP)
-- P2P user alias for discovery
-- Duplicate resolution on receive
-- Share notifications
+### 💾 Advanced Backup
+- Automated backup scheduling
+- Backup replication
 
 ---
 
-## Team - $149/device/year (min 25 devices)
+## Business - $135/device/year (min 15 devices)
 
 **Best for:** Growing organizations with centralized secret management needs
 
 ### Storage
-- 10 GB encrypted vault storage
+- Unlimited encrypted vault storage
 
 ### Features
-Everything from Professional plus:
+Everything from Team plus:
 
 ### 🔐 Access Control
 - ACL-based secret grants/revokes
@@ -228,16 +248,6 @@ Everything from Professional plus:
 - Share link generation with expiry
 - Principal-based access control
 - Role-based access control (admin, write, read)
-
-### 🔄 Advanced Rotation
-- Dual-key overlap windows
-- Automated rotation execution
-- Rotation notification hooks
-- Bundle expiry windows
-
-### 💾 Advanced Backup
-- Automated backup scheduling
-- Backup replication
 
 ### 🌐 HTTP API Server (Pro Mode)
 - HTTP/JSON API server with TLS
@@ -247,9 +257,9 @@ Everything from Professional plus:
 - Backup/restore endpoints
 - `/healthz` liveness probe
 - `/readyz` readiness probe
-- Rate limiting middleware
 - CSRF protection
 - Security headers (X-Frame-Options, CSP)
+- Unlimited API requests
 
 ### 👥 User Management
 - User management (create, list, update, delete)
@@ -265,18 +275,6 @@ Everything from Professional plus:
 - HTTP request metrics
 - Vault operation metrics
 - User operation metrics
-
----
-
-## Startup - $249/device/year (min 50 devices)
-
-**Best for:** Fast-growing companies with security-first culture
-
-### Storage
-- Unlimited encrypted vault storage
-
-### Features
-Everything from Team plus:
 
 ### 🏢 Multi-Tenant Support
 - Tenant management (create, list, delete)
@@ -314,7 +312,7 @@ Everything from Team plus:
 
 ---
 
-## Enterprise - Contact Sales
+## Enterprise - Contact Sales (min 50+ devices)
 
 **Best for:** Organizations with strict compliance and governance requirements
 
@@ -325,7 +323,7 @@ Everything from Team plus:
 - On-premises deployment assistance
 
 ### Features
-Everything from Startup plus:
+Everything from Business plus:
 
 ### 🐳 Advanced Container Runtime (Linux)
 - Namespace container isolation
@@ -400,7 +398,7 @@ Everything from Startup plus:
 | Mode | Description |
 |------|-------------|
 | **Standard** (default) | Local CLI experience with all offline features. HTTP server disabled for minimal attack surface. |
-| **Pro** (Team+) | Unlocks HTTP/JSON API, observability endpoints, and web assets for service deployment. |
+| **Pro** (Business+) | Unlocks HTTP/JSON API, observability endpoints, and web assets for service deployment. |
 
 Switch modes with `-mode=pro` or `-mode=standard` CLI flag.
 
@@ -408,33 +406,33 @@ Switch modes with `-mode=pro` or `-mode=standard` CLI flag.
 
 ## Feature Comparison Matrix
 
-| Category | Personal | Solo | Professional | Team | Startup | Enterprise |
-|----------|:--------:|:----:|:------------:|:----:|:-------:|:----------:|
-| **Price** | $19/dev/yr | $49/dev/yr | $99/dev/yr | $149/dev/yr | $249/dev/yr | Custom |
-| **Min Devices** | 1 | 3 | 10 | 25 | 50 | — |
-| **Min ACV** | $19 | $147 | $990 | $3,725 | $12,450 | Custom |
-| **Storage** | 500 MB | 2 GB | 5 GB | 10 GB | Unlimited | Unlimited |
-| **Secret Expiration** | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| **2FA/Passkey** | — | ✅ | ✅ | ✅ | ✅ | ✅ |
-| **Scratchpads** | — | ✅ | ✅ | ✅ | ✅ | ✅ |
-| **Audit Logs** | — | ✅ | ✅ | ✅ | ✅ | ✅ |
-| **Templates & Rotation** | — | — | ✅ | ✅ | ✅ | ✅ |
-| **P2P Sharing** | — | — | ✅ | ✅ | ✅ | ✅ |
-| **Bundle Export** | — | — | ✅ | ✅ | ✅ | ✅ |
-| **Access Control (ACL)** | — | — | — | ✅ | ✅ | ✅ |
-| **HTTP API Server** | — | — | — | ✅ | ✅ | ✅ |
-| **User Management** | — | — | — | ✅ | ✅ | ✅ |
-| **Multi-Tenant** | — | — | — | — | ✅ | ✅ |
-| **Secret Engines** | — | — | — | — | ✅ | ✅ |
-| **Data Retention** | — | — | — | — | ✅ | ✅ |
-| **Secure Sandbox** | — | — | — | — | ✅ | ✅ |
-| **Container Runtime** | — | — | — | — | — | ✅ |
-| **Compliance Mgmt** | — | — | — | — | — | ✅ |
-| **FIPS Mode** | — | — | — | — | — | ✅ |
-| **Data Classification** | — | — | — | — | — | ✅ |
-| **Access Review** | — | — | — | — | — | ✅ |
-| **Breach Mgmt** | — | — | — | — | — | ✅ |
-| **HSM Integration** | — | — | — | — | — | ✅ |
+| Category | Personal | Solo | Team | Business | Enterprise |
+|----------|:--------:|:----:|:----:|:--------:|:----------:|
+| **Price** | $15/dev/yr | $40/dev/yr | $78/dev/yr | $135/dev/yr | Custom |
+| **Min Devices** | 1 | 2 | 5 | 15 | 50+ |
+| **Min ACV** | $15 | $80 | $390 | $2,025 | Custom |
+| **Storage** | 1 GB | 5 GB | 25 GB | Unlimited | Unlimited |
+| **Secret Expiration** | ✅ | ✅ | ✅ | ✅ | ✅ |
+| **2FA/Passkey** | — | ✅ | ✅ | ✅ | ✅ |
+| **P2P Sharing** | — | ✅ | ✅ | ✅ | ✅ |
+| **Scratchpads** | — | — | ✅ | ✅ | ✅ |
+| **Audit Logs** | — | ✅ | ✅ | ✅ | ✅ |
+| **Templates & Rotation** | — | — | ✅ | ✅ | ✅ |
+| **Bundle Export** | — | — | ✅ | ✅ | ✅ |
+| **Access Control (ACL)** | — | — | — | ✅ | ✅ |
+| **HTTP API Server** | — | — | — | ✅ | ✅ |
+| **User Management** | — | — | — | ✅ | ✅ |
+| **Multi-Tenant** | — | — | — | ✅ | ✅ |
+| **Secret Engines** | — | — | — | ✅ | ✅ |
+| **Data Retention** | — | — | — | ✅ | ✅ |
+| **Secure Sandbox** | — | — | — | ✅ | ✅ |
+| **Container Runtime** | — | — | — | — | ✅ |
+| **Compliance Mgmt** | — | — | — | — | ✅ |
+| **FIPS Mode** | — | — | — | — | ✅ |
+| **Data Classification** | — | — | — | — | ✅ |
+| **Access Review** | — | — | — | — | ✅ |
+| **Breach Mgmt** | — | — | — | — | ✅ |
+| **HSM Integration** | — | — | — | — | ✅ |
 
 ---
 
@@ -442,11 +440,10 @@ Switch modes with `-mode=pro` or `-mode=standard` CLI flag.
 
 | When you need... | Upgrade to |
 |------------------|------------|
-| 2FA, Passkeys, or Scratchpads | **Solo** |
-| Templates, Rotation, or Team Sharing | **Professional** |
-| HTTP API, User Management, or ACLs | **Team** |
-| Multi-Tenant, Secret Engines, or Retention | **Startup** |
-| Compliance, FIPS, Classification, or HSM | **Enterprise** |
+| 2FA, Passkeys, P2P Sharing, or Version History | **Solo** |
+| Scratchpads, Templates, Rotation, or Team Backup | **Team** |
+| HTTP API, User Management, ACLs, or Multi-Tenant | **Business** |
+| Compliance, FIPS, Classification, Container Runtime, or HSM | **Enterprise** |
 
 ---
 
@@ -465,10 +462,11 @@ Switch modes with `-mode=pro` or `-mode=standard` CLI flag.
 
 | Devices | Discount |
 |---------|----------|
-| 50-99 | 10% off |
-| 100-249 | 15% off |
-| 250-499 | 20% off |
-| 500+ | Contact sales |
+| 25-49 | 10% off |
+| 50-99 | 15% off |
+| 100-249 | 20% off |
+| 250-499 | 25% off |
+| 500+ | 30% off + Contact sales |
 
 ---
 
@@ -488,8 +486,8 @@ Switch modes with `-mode=pro` or `-mode=standard` CLI flag.
 ### Total Cost of Ownership (Example)
 | Scenario | Secretr (Team) | Cloud-Based (Typical) | Self-Hosted Enterprise |
 |----------|----------------|----------------------|------------------------|
-| 25 developers, 1 year | $3,725 | $5,000-8,000 | ~$15,000-20,000+ |
-| 50 developers, 1 year | $6,705* | $10,000-15,000 | ~$30,000-40,000+ |
-| 100 developers, 1 year | $12,665* | $20,000-30,000 | ~$60,000-80,000+ |
+| 5 developers, 1 year | $390 | $1,260-2,000 | ~$5,000-10,000+ |
+| 15 developers, 1 year | $2,025 (Business) | $3,780-6,000 | ~$15,000-25,000+ |
+| 50 developers, 1 year | $5,737* | $12,600-20,000 | ~$50,000-80,000+ |
 
 *With volume discount applied
