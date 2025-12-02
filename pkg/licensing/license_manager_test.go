@@ -6,6 +6,34 @@ import (
 	"time"
 )
 
+func TestClientProfileHelpers(t *testing.T) {
+	storage := NewInMemoryStorage()
+	lm := &LicenseManager{storage: storage}
+	ctx := context.Background()
+
+	client, err := lm.CreateClientWithProfile(ctx, "profile@example.com", "  Ada Lovelace  ", "  Analytical Engines  ")
+	if err != nil {
+		t.Fatalf("expected client to be created: %v", err)
+	}
+	if client.Name != "Ada Lovelace" {
+		t.Fatalf("expected name trimmed, got %q", client.Name)
+	}
+	if client.CompanyName != "Analytical Engines" {
+		t.Fatalf("expected company trimmed, got %q", client.CompanyName)
+	}
+
+	updated, err := lm.UpdateClientProfile(ctx, client, "Ada Byron", "")
+	if err != nil {
+		t.Fatalf("expected profile update to succeed: %v", err)
+	}
+	if updated.Name != "Ada Byron" {
+		t.Fatalf("expected name to change, got %q", updated.Name)
+	}
+	if updated.CompanyName != "Analytical Engines" {
+		t.Fatalf("company should remain unchanged when blank provided, got %q", updated.CompanyName)
+	}
+}
+
 func TestResolveLicenseIdentity(t *testing.T) {
 	lm := &LicenseManager{}
 	license := &License{

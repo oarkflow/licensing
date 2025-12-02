@@ -494,6 +494,10 @@ func (lm *LicenseManager) ValidateAPIKey(ctx context.Context, token string) (*Ad
 }
 
 func (lm *LicenseManager) CreateClient(ctx context.Context, email string) (*Client, error) {
+	return lm.CreateClientWithProfile(ctx, email, "", "")
+}
+
+func (lm *LicenseManager) CreateClientWithProfile(ctx context.Context, email, name, company string) (*Client, error) {
 	email = strings.TrimSpace(email)
 	if !emailRegex.MatchString(email) {
 		return nil, fmt.Errorf("invalid email address")
@@ -501,11 +505,13 @@ func (lm *LicenseManager) CreateClient(ctx context.Context, email string) (*Clie
 
 	now := time.Now()
 	client := &Client{
-		ID:        uuid.New().String(),
-		Email:     email,
-		Status:    ClientStatusActive,
-		CreatedAt: now,
-		UpdatedAt: now,
+		ID:          uuid.New().String(),
+		Email:       email,
+		Name:        strings.TrimSpace(name),
+		CompanyName: strings.TrimSpace(company),
+		Status:      ClientStatusActive,
+		CreatedAt:   now,
+		UpdatedAt:   now,
 	}
 
 	if err := lm.storage.SaveClient(ctx, client); err != nil {
@@ -515,6 +521,31 @@ func (lm *LicenseManager) CreateClient(ctx context.Context, email string) (*Clie
 		return nil, fmt.Errorf("failed to save client: %w", err)
 	}
 
+	return client, nil
+}
+
+func (lm *LicenseManager) UpdateClientProfile(ctx context.Context, client *Client, name, company string) (*Client, error) {
+	if client == nil {
+		return nil, fmt.Errorf("client is required")
+	}
+	trimmedName := strings.TrimSpace(name)
+	trimmedCompany := strings.TrimSpace(company)
+	changed := false
+	if trimmedName != "" && trimmedName != client.Name {
+		client.Name = trimmedName
+		changed = true
+	}
+	if trimmedCompany != "" && trimmedCompany != client.CompanyName {
+		client.CompanyName = trimmedCompany
+		changed = true
+	}
+	if !changed {
+		return client, nil
+	}
+	client.UpdatedAt = time.Now()
+	if err := lm.storage.UpdateClient(ctx, client); err != nil {
+		return nil, fmt.Errorf("failed to update client: %w", err)
+	}
 	return client, nil
 }
 

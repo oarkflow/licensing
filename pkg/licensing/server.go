@@ -1,6 +1,7 @@
 package licensing
 
 import (
+	"context"
 	"crypto/sha256"
 	"crypto/subtle"
 	"crypto/tls"
@@ -8,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"html"
 	"io"
 	"log"
 	"net"
@@ -17,6 +19,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	email "github.com/oarkflow/licensing/pkg/email"
 	"github.com/oarkflow/licensing/pkg/utils"
 )
 
@@ -56,6 +59,12 @@ type apiKeyMetadata struct {
 type apiKeyIssueResponse struct {
 	Token    string         `json:"token"`
 	Metadata apiKeyMetadata `json:"metadata"`
+}
+
+type emailDispatchResult struct {
+	Queued    bool   `json:"queued"`
+	MessageID string `json:"message_id,omitempty"`
+	Error     string `json:"error,omitempty"`
 }
 
 func newAdminUserResponse(user *AdminUser) adminUserResponse {
@@ -279,6 +288,31 @@ func (s *Server) respondClientError(w http.ResponseWriter, status int, message s
 		return
 	}
 	s.respondError(w, status, message)
+}
+
+func (s *Server) enqueueEmail(ctx context.Context, to, subject, htmlBody, textBody string, metadata map[string]string) (*emailDispatchResult, error) {
+	to = strings.TrimSpace(to)
+	if to == "" {
+		return nil, fmt.Errorf("recipient email is required")
+	}
+	storage := s.lm.Storage()
+	if storage == nil {
+		return nil, fmt.Errorf("email storage backend unavailable")
+	}
+	msg := &email.EmailMessage{
+		ID:           uuid.New().String(),
+		To:           to,
+		Subject:      subject,
+		RenderedHTML: htmlBody,
+		RenderedText: textBody,
+		Status:       email.MessageStatusQueued,
+		MaxRetries:   3,
+		Metadata:     metadata,
+	}
+	if err := storage.EnqueueEmail(ctx, msg); err != nil {
+		return nil, err
+	}
+	return &emailDispatchResult{Queued: true, MessageID: msg.ID}, nil
 }
 
 func (s *Server) decodeClientJSONBody(w http.ResponseWriter, r *http.Request, dst interface{}, limit int64) ([]byte, bool) {
@@ -729,6 +763,210 @@ func (s *Server) handleSubscriptions(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+func (s *Server) handleProvisionLicense(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		s.respondError(w, http.StatusMethodNotAllowed, "Method not allowed")
+		return
+	}
+	if !s.enforceRateLimit(w, r) {
+		return
+	}
+	if !s.authorizeAdmin(w, r) {
+		return
+	}
+
+	var req provisionLicenseRequest
+	if !s.decodeJSONBody(w, r, &req, maxAdminPayloadBytes) {
+		return
+	}
+	ctx := r.Context()
+	emailAddr := strings.TrimSpace(req.Email)
+	if !emailRegex.MatchString(emailAddr) {
+		s.respondError(w, http.StatusBadRequest, "invalid email address")
+		return
+	}
+	planSlugInput := strings.TrimSpace(req.PlanSlug)
+	if planSlugInput == "" {
+		s.respondError(w, http.StatusBadRequest, "plan_slug is required")
+		return
+	}
+	if req.DurationDays <= 0 {
+		s.respondError(w, http.StatusBadRequest, "duration_days must be greater than zero")
+		return
+	}
+
+	planID := strings.TrimSpace(req.PlanID)
+	productID := strings.TrimSpace(req.ProductID)
+	var (
+		plan    *Plan
+		planErr error
+	)
+	if planID != "" {
+		plan, planErr = s.lm.Storage().GetPlan(ctx, planID)
+		if planErr != nil {
+			s.respondError(w, http.StatusBadRequest, "plan not found")
+			return
+		}
+	} else {
+		plan, planErr = s.lm.Storage().FindPlanBySlug(ctx, planSlugInput)
+		if planErr != nil || plan == nil {
+			s.respondError(w, http.StatusBadRequest, "plan not found")
+			return
+		}
+		planID = plan.ID
+	}
+	if !plan.IsActive {
+		s.respondError(w, http.StatusBadRequest, "plan is not active")
+		return
+	}
+	if planSlugInput != "" && planSlugInput != plan.Slug {
+		s.respondError(w, http.StatusBadRequest, "plan_slug does not match plan")
+		return
+	}
+	planSlug := plan.Slug
+	var (
+		product    *Product
+		productErr error
+	)
+	if productID != "" {
+		product, productErr = s.lm.Storage().GetProduct(ctx, productID)
+		if productErr != nil || product == nil {
+			s.respondError(w, http.StatusBadRequest, "product not found")
+			return
+		}
+		if plan.ProductID != "" && plan.ProductID != product.ID {
+			s.respondError(w, http.StatusBadRequest, "plan does not belong to specified product")
+			return
+		}
+	} else if plan.ProductID != "" {
+		productID = plan.ProductID
+		product, productErr = s.lm.Storage().GetProduct(ctx, productID)
+		if productErr != nil {
+			s.respondError(w, http.StatusBadRequest, "product not found")
+			return
+		}
+	}
+
+	maxDevices := req.MaxDevices
+	if maxDevices <= 0 {
+		if plan.MinDevices > 0 {
+			maxDevices = plan.MinDevices
+		} else {
+			maxDevices = 1
+		}
+	}
+	duration := time.Duration(req.DurationDays) * 24 * time.Hour
+	modeInput := strings.TrimSpace(req.CheckMode)
+	mode := ParseLicenseCheckMode(modeInput)
+	interval := time.Duration(req.CheckIntervalSeconds) * time.Second
+	if modeInput == "" {
+		mode, interval = s.lm.DefaultCheckPolicy()
+	} else if mode == LicenseCheckModeCustom && interval <= 0 {
+		_, defaultInterval := s.lm.DefaultCheckPolicy()
+		interval = defaultInterval
+	}
+
+	client, err := s.lm.GetClientByEmail(ctx, emailAddr)
+	clientCreated := false
+	if err != nil {
+		if errors.Is(err, errClientMissing) {
+			client, err = s.lm.CreateClientWithProfile(ctx, emailAddr, req.Name, req.CompanyName)
+			if err != nil {
+				s.respondError(w, http.StatusBadRequest, err.Error())
+				return
+			}
+			clientCreated = true
+		} else {
+			s.respondError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+	} else {
+		if _, err := s.lm.UpdateClientProfile(ctx, client, req.Name, req.CompanyName); err != nil {
+			s.respondError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+	}
+
+	ops := &GenerateLicenseOptions{ProductID: productID, PlanID: planID}
+	license, err := s.lm.GenerateLicenseWithOptions(ctx, client.ID, duration, maxDevices, planSlug, mode, interval, ops)
+	if err != nil {
+		s.respondError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	clientLabel := client.Name
+	if clientLabel == "" {
+		clientLabel = client.Email
+	}
+	planLabel := plan.Name
+	if planLabel == "" {
+		planLabel = plan.Slug
+	}
+	productLabel := "your account"
+	if product != nil && product.Name != "" {
+		productLabel = product.Name
+	}
+
+	emails := make(map[string]emailDispatchResult)
+	welcomeSubject := fmt.Sprintf("Welcome to %s", productLabel)
+	welcomeText := fmt.Sprintf("Hi %s,\n\nYou're now set up on the %s plan (%s). We'll send your license JSON in a separate email right away. Keep an eye on your inbox and store the JSON securely before activating devices.\n\nThanks,\nThe Licensing Team", clientLabel, planLabel, productLabel)
+	welcomeHTML := fmt.Sprintf("<p>Hi %s,</p><p>You're now set up on the <strong>%s</strong> plan for %s.</p><p>We'll send your license JSON in a separate email momentarily. Save it securely before activating devices.</p><p>Thanks,<br/>The Licensing Team</p>", html.EscapeString(clientLabel), html.EscapeString(planLabel), html.EscapeString(productLabel))
+	if res, err := s.enqueueEmail(ctx, client.Email, welcomeSubject, welcomeHTML, welcomeText, map[string]string{
+		"category":   "onboarding",
+		"template":   "client_welcome",
+		"plan_slug":  plan.Slug,
+		"product_id": productID,
+	}); err != nil {
+		emails["welcome"] = emailDispatchResult{Queued: false, Error: err.Error()}
+		log.Printf("failed to queue welcome email for %s: %v", client.Email, err)
+	} else {
+		emails["welcome"] = *res
+	}
+
+	licensePayload := map[string]any{
+		"email":       client.Email,
+		"client_id":   client.ID,
+		"license_key": license.LicenseKey,
+		"plan_slug":   license.PlanSlug,
+		"plan_id":     license.PlanID,
+		"product_id":  license.ProductID,
+		"expires_at":  license.ExpiresAt,
+		"max_devices": license.MaxDevices,
+	}
+	if planLabel != "" {
+		licensePayload["plan_name"] = planLabel
+	}
+	licenseJSON, err := json.MarshalIndent(licensePayload, "", "  ")
+	if err != nil {
+		log.Printf("failed to marshal license payload for email: %v", err)
+	}
+	licenseSubject := fmt.Sprintf("%s license credentials", productLabel)
+	jsonBody := string(licenseJSON)
+	licenseText := fmt.Sprintf("Hi %s,\n\nHere are the license credentials you can store as a JSON file before activating devices:\n\n%s\n\nKeep this file private.\n\nThanks,\nThe Licensing Team", clientLabel, jsonBody)
+	licenseHTML := fmt.Sprintf("<p>Hi %s,</p><p>Here are the license credentials you can store as a JSON file before activating devices:</p><pre style=\"padding:12px;background:#0f172a;color:#e2e8f0;border-radius:8px;white-space:pre-wrap;\">%s</pre><p>Keep this file private.</p><p>Thanks,<br/>The Licensing Team</p>", html.EscapeString(clientLabel), html.EscapeString(jsonBody))
+	if res, err := s.enqueueEmail(ctx, client.Email, licenseSubject, licenseHTML, licenseText, map[string]string{
+		"category":   "onboarding",
+		"template":   "license_payload",
+		"plan_slug":  plan.Slug,
+		"product_id": productID,
+	}); err != nil {
+		emails["license"] = emailDispatchResult{Queued: false, Error: err.Error()}
+		log.Printf("failed to queue license email for %s: %v", client.Email, err)
+	} else {
+		emails["license"] = *res
+	}
+
+	response := map[string]any{
+		"client":         client,
+		"license":        license,
+		"client_created": clientCreated,
+		"plan":           plan,
+		"product":        product,
+		"emails":         emails,
+	}
+	s.respondJSON(w, http.StatusCreated, response)
+}
+
 func (s *Server) handleLicenses(w http.ResponseWriter, r *http.Request) {
 	if !s.enforceRateLimit(w, r) {
 		return
@@ -925,7 +1163,7 @@ func (s *Server) handleClients(w http.ResponseWriter, r *http.Request) {
 		if !s.decodeJSONBody(w, r, &req, maxAdminPayloadBytes) {
 			return
 		}
-		client, err := s.lm.CreateClient(r.Context(), req.Email)
+		client, err := s.lm.CreateClientWithProfile(r.Context(), req.Email, req.Name, req.CompanyName)
 		if err != nil {
 			s.respondError(w, http.StatusBadRequest, err.Error())
 			return
@@ -1135,6 +1373,7 @@ func (s *Server) Start() error {
 	mux.HandleFunc("/api/clients/", s.handleClientActions)
 	mux.HandleFunc("/api/admin/users", s.handleAdminUsers)
 	mux.HandleFunc("/api/admin/api-keys", s.handleAdminAPIKeys)
+	mux.HandleFunc("/api/admin/licenses/provision", s.handleProvisionLicense)
 	mux.HandleFunc("/api/products", s.handleProducts)
 	mux.HandleFunc("/api/products/", s.handleProductActions)
 	mux.HandleFunc("/api/entitlements", s.handleEntitlements)

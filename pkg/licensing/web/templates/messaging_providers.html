@@ -1,0 +1,133 @@
+{{template "base" .}}
+
+{{define "content"}}
+<div class="space-y-6">
+    <div class="flex items-center justify-between">
+        <div>
+            <h2 class="text-2xl font-bold text-gray-900">Email Providers</h2>
+            <p class="mt-1 text-sm text-gray-500">Manage upstream SMTP or API providers, priorities, and defaults.</p>
+        </div>
+        <div class="flex gap-3">
+            <a href="/messaging/compose"
+                class="inline-flex items-center rounded-md bg-white px-3 py-2 text-sm font-semibold text-gray-900 shadow-sm ring-1 ring-inset ring-gray-300 hover:bg-gray-50">
+                Compose Email
+            </a>
+            <a href="/messaging/providers/new"
+                class="inline-flex items-center rounded-md bg-primary-600 px-3 py-2 text-sm font-semibold text-white shadow-sm hover:bg-primary-500">
+                Add Provider
+            </a>
+        </div>
+    </div>
+
+    {{if not .Data.Providers}}
+    <div class="rounded-lg border border-dashed border-gray-300 bg-white p-8 text-center">
+        <p class="text-base font-semibold text-gray-900">No providers configured</p>
+        <p class="mt-1 text-sm text-gray-500">Add an SMTP, SendGrid, SES, or custom provider to start sending emails.
+        </p>
+        <a href="/messaging/providers/new"
+            class="mt-4 inline-flex items-center rounded-md bg-primary-600 px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-primary-500">
+            Create Provider
+        </a>
+    </div>
+    {{else}}
+    <div class="overflow-hidden rounded-lg bg-white shadow">
+        <table class="min-w-full divide-y divide-gray-200">
+            <thead class="bg-gray-50">
+                <tr>
+                    <th scope="col"
+                        class="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">
+                        Provider
+                    </th>
+                    <th scope="col"
+                        class="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">
+                        Type
+                    </th>
+                    <th scope="col"
+                        class="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">
+                        Priority
+                    </th>
+                    <th scope="col"
+                        class="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">
+                        Default
+                    </th>
+                    <th scope="col"
+                        class="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">
+                        Status
+                    </th>
+                    <th scope="col"
+                        class="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">
+                        Success / Failure
+                    </th>
+                    <th scope="col"
+                        class="px-6 py-3 text-right text-xs font-medium uppercase tracking-wider text-gray-500">
+                        Actions
+                    </th>
+                </tr>
+            </thead>
+            <tbody class="divide-y divide-gray-200 bg-white">
+                {{range .Data.Providers}}
+                <tr>
+                    <td class="px-6 py-4 text-sm text-gray-900">
+                        <div class="font-semibold">{{.Name}}</div>
+                        <div class="text-gray-500 text-xs">Slug: {{.Slug}}</div>
+                    </td>
+                    <td class="px-6 py-4 text-sm capitalize text-gray-700">{{.Type}}</td>
+                    <td class="px-6 py-4 text-sm text-gray-700">{{.Priority}}</td>
+                    <td class="px-6 py-4 text-sm">
+                        {{if .IsDefault}}
+                        <span
+                            class="inline-flex items-center rounded-full bg-green-50 px-2.5 py-0.5 text-xs font-medium text-green-700">Default</span>
+                        {{else}}
+                        <span
+                            class="inline-flex items-center rounded-full bg-gray-100 px-2.5 py-0.5 text-xs font-medium text-gray-600">-
+                        </span>
+                        {{end}}
+                    </td>
+                    <td class="px-6 py-4 text-sm">
+                        {{if .Enabled}}
+                        <span
+                            class="inline-flex items-center rounded-full bg-green-50 px-2.5 py-0.5 text-xs font-medium text-green-700">Enabled</span>
+                        {{else}}
+                        <span
+                            class="inline-flex items-center rounded-full bg-red-50 px-2.5 py-0.5 text-xs font-medium text-red-700">Disabled</span>
+                        {{end}}
+                    </td>
+                    <td class="px-6 py-4 text-sm text-gray-700">
+                        {{.SuccessCount}} / {{.FailureCount}}
+                    </td>
+                    <td class="px-6 py-4 text-right text-sm">
+                        <div class="flex flex-wrap items-center justify-end gap-2">
+                            <a href="/messaging/providers/{{.ID}}"
+                                class="inline-flex items-center rounded-md border border-gray-300 px-2.5 py-1.5 text-xs font-medium text-gray-700 shadow-sm hover:bg-gray-50">
+                                Details
+                            </a>
+                            {{if not .IsDefault}}
+                            <form method="POST" class="inline">
+                                <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
+                                <input type="hidden" name="provider_id" value="{{.ID}}">
+                                <input type="hidden" name="action" value="set_default">
+                                <button type="submit"
+                                    class="inline-flex items-center rounded-md border border-transparent bg-white px-2.5 py-1.5 text-xs font-medium text-gray-700 shadow-sm ring-1 ring-inset ring-gray-300 hover:bg-gray-50">
+                                    Set Default
+                                </button>
+                            </form>
+                            {{end}}
+                            <form method="POST" class="inline">
+                                <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
+                                <input type="hidden" name="provider_id" value="{{.ID}}">
+                                <input type="hidden" name="action" value="toggle">
+                                <button type="submit"
+                                    class="inline-flex items-center rounded-md border border-transparent px-2.5 py-1.5 text-xs font-medium text-white shadow-sm {{if .Enabled}}bg-red-600 hover:bg-red-500{{else}}bg-green-600 hover:bg-green-500{{end}}">
+                                    {{if .Enabled}}Disable{{else}}Enable{{end}}
+                                </button>
+                            </form>
+                        </div>
+                    </td>
+                </tr>
+                {{end}}
+            </tbody>
+        </table>
+    </div>
+    {{end}}
+</div>
+{{end}}

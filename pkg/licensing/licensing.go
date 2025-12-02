@@ -10,13 +10,15 @@ import (
 // ==================== License Manager ====================
 
 type Client struct {
-	ID        string       `json:"id"`
-	Email     string       `json:"email"`
-	Status    ClientStatus `json:"status"`
-	CreatedAt time.Time    `json:"created_at"`
-	UpdatedAt time.Time    `json:"updated_at"`
-	BannedAt  time.Time    `json:"banned_at,omitempty"`
-	BanReason string       `json:"ban_reason,omitempty"`
+	ID          string       `json:"id"`
+	Email       string       `json:"email"`
+	Name        string       `json:"name,omitempty"`
+	CompanyName string       `json:"company_name,omitempty"`
+	Status      ClientStatus `json:"status"`
+	CreatedAt   time.Time    `json:"created_at"`
+	UpdatedAt   time.Time    `json:"updated_at"`
+	BannedAt    time.Time    `json:"banned_at,omitempty"`
+	BanReason   string       `json:"ban_reason,omitempty"`
 }
 
 type License struct {
@@ -254,7 +256,9 @@ func validateActivationRequest(req *ActivationRequest) error {
 const maxAdminPayloadBytes = 256 << 10
 
 type createClientRequest struct {
-	Email string `json:"email"`
+	Email       string `json:"email"`
+	Name        string `json:"name,omitempty"`
+	CompanyName string `json:"company_name,omitempty"`
 }
 
 type banClientRequest struct {
@@ -291,4 +295,17 @@ type trialLicenseAPIRequest struct {
 	ProductID         string `json:"product_id,omitempty"`
 	TrialDurationDays int    `json:"trial_duration_days,omitempty"`
 	SubscriptionURL   string `json:"subscription_url,omitempty"`
+}
+
+type provisionLicenseRequest struct {
+	Email                string `json:"email"`
+	Name                 string `json:"name,omitempty"`
+	CompanyName          string `json:"company_name,omitempty"`
+	ProductID            string `json:"product_id,omitempty"`
+	PlanID               string `json:"plan_id,omitempty"`
+	PlanSlug             string `json:"plan_slug"`
+	DurationDays         int    `json:"duration_days"`
+	MaxDevices           int    `json:"max_devices"`
+	CheckMode            string `json:"check_mode,omitempty"`
+	CheckIntervalSeconds int64  `json:"check_interval_seconds,omitempty"`
 }

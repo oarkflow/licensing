@@ -67,19 +67,97 @@ A hardened license server and client that leverage pluggable signing providers (
    go run .
    ```
    On startup the server logs the active storage backend, TLS mode, and the location of the exported public key (`~/.licensing/server_public_key.pem`).
-4. **Use the admin APIs:** include `X-API-Key: <key>` when calling `/api/clients`, `/api/licenses`, `/api/licenses/{id}/revoke`, etc.
+4. **Use the admin APIs:** include `X-API-Key: <key>` on every request.
 
-    Creating a license requires a plan slug so downstream services know which feature set to unlock:
+## Admin API Reference
 
-    ```json
-    {
-       "client_id": "client-123",
-       "duration_days": 365,
-       "max_devices": 5,
-       "plan_slug": "enterprise",
-       "check_mode": "monthly"
-    }
-    ```
+All endpoints live under `http(s)://<host>:<port>/api`. Supply the `X-API-Key` header with every call.
+
+### Clients
+
+| Method | Endpoint | Description |
+| --- | --- | --- |
+| `POST` | `/api/clients` | Create a new client |
+| `GET` | `/api/clients` | List all clients |
+| `GET` | `/api/clients/{id}` | Retrieve a single client |
+| `POST` | `/api/clients/{id}/ban` | Ban a client (blocks activations) |
+| `POST` | `/api/clients/{id}/unban` | Remove the ban |
+
+**Create Client Request**
+```json
+{
+  "email": "owner@example.com",
+  "metadata": { "account_id": "acct_123" }
+}
+```
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| `email` | string | yes | Primary contact email |
+| `metadata` | object | no | Arbitrary key-value data |
+
+### Licenses
+
+| Method | Endpoint | Description |
+| --- | --- | --- |
+| `POST` | `/api/licenses` | Issue a new license |
+| `GET` | `/api/licenses` | List all licenses |
+| `GET` | `/api/licenses/{id}` | Retrieve a single license |
+| `POST` | `/api/licenses/{id}/revoke` | Revoke a license |
+| `POST` | `/api/licenses/{id}/reinstate` | Reinstate a revoked license |
+
+**Create License Request**
+```json
+{
+  "client_id": "client-123",
+  "duration_days": 365,
+  "max_devices": 5,
+  "plan_slug": "enterprise",
+  "check_mode": "monthly",
+  "check_interval_seconds": 0
+}
+```
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| `client_id` | string | yes | ID returned when creating the client |
+| `duration_days` | int | yes | How long the license is valid |
+| `max_devices` | int | yes | Maximum concurrent device activations |
+| `plan_slug` | string | yes | Plan identifier (e.g. `starter`, `pro`, `enterprise`) |
+| `check_mode` | string | no | `none`, `each_execution`, `monthly`, `yearly`, or `custom` |
+| `check_interval_seconds` | int | no | Used when `check_mode` is `custom` |
+
+**Revoke Request**
+```json
+{ "reason": "chargeback" }
+```
+
+### Activation & Verification (Client-side)
+
+| Method | Endpoint | Description |
+| --- | --- | --- |
+| `POST` | `/api/activate` | Activate a device for a license key |
+| `POST` | `/api/verify` | Verify an existing activation |
+
+These endpoints require additional headers instead of `X-API-Key`:
+
+| Header | Description |
+| --- | --- |
+| `X-Device-Fingerprint` | SHA-256 hex fingerprint of the device |
+| `X-License-Key` | Upper-case, hyphenless license key |
+| `User-Agent` | Identifies the calling SDK/app |
+
+**Activation Request Body**
+```json
+{
+  "email": "owner@example.com",
+  "client_id": "client-123",
+  "license_key": "AAAA-BBBB-CCCC-DDDD-...",
+  "device_fingerprint": "abcdef1234..."
+}
+```
+
+See `docs/api/README.md` for more examples and `docs/api/licensing_openapi.yaml` for the full OpenAPI spec.
 
 ## Client Setup
 

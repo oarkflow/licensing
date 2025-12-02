@@ -67,6 +67,8 @@ func ensureSQLiteSchema(db *squealx.DB) error {
 			id TEXT PRIMARY KEY,
 			email TEXT NOT NULL,
 			email_lower TEXT NOT NULL UNIQUE,
+			name TEXT,
+			company_name TEXT,
 			status TEXT NOT NULL,
 			created_at TIMESTAMP NOT NULL,
 			updated_at TIMESTAMP NOT NULL,
@@ -96,8 +98,8 @@ func ensureSQLiteSchema(db *squealx.DB) error {
 			FOREIGN KEY(client_id) REFERENCES clients(id) ON DELETE CASCADE
 		);`,
 		`CREATE TABLE IF NOT EXISTS license_devices (
-            license_id TEXT NOT NULL,
-            fingerprint TEXT NOT NULL,
+			license_id TEXT NOT NULL,
+			fingerprint TEXT NOT NULL,
             activated_at TIMESTAMP NOT NULL,
             last_seen_at TIMESTAMP NOT NULL,
             transport_key BLOB NOT NULL,
@@ -239,6 +241,9 @@ func ensureSQLiteSchema(db *squealx.DB) error {
 			return fmt.Errorf("sqlite schema migration failed: %w", err)
 		}
 	}
+	if err := ensureClientProfileColumns(db); err != nil {
+		return err
+	}
 	if err := ensureSQLiteColumn(db, "licenses", "max_devices", "INTEGER NOT NULL DEFAULT 0"); err != nil {
 		return err
 	}
@@ -318,6 +323,16 @@ func ensureSQLiteColumn(db *squealx.DB, table, column, definition string) error 
 	stmt := fmt.Sprintf("ALTER TABLE %s ADD COLUMN %s %s", table, column, definition)
 	if _, err := db.Exec(stmt); err != nil {
 		return fmt.Errorf("failed to add column %s: %w", column, err)
+	}
+	return nil
+}
+
+func ensureClientProfileColumns(db *squealx.DB) error {
+	if err := ensureSQLiteColumn(db, "clients", "name", "TEXT"); err != nil {
+		return err
+	}
+	if err := ensureSQLiteColumn(db, "clients", "company_name", "TEXT"); err != nil {
+		return err
 	}
 	return nil
 }
@@ -447,9 +462,13 @@ func scanClientRow(scanner rowScanner) (*Client, error) {
 	var createdAt, updatedAt sqliteTimeValue
 	var banned sqliteNullTime
 	var banReason sql.NullString
+	var name sql.NullString
+	var company sql.NullString
 	if err := scanner.Scan(
 		&c.ID,
 		&c.Email,
+		&name,
+		&company,
 		&c.Status,
 		&createdAt,
 		&updatedAt,
@@ -457,6 +476,12 @@ func scanClientRow(scanner rowScanner) (*Client, error) {
 		&banReason,
 	); err != nil {
 		return nil, err
+	}
+	if name.Valid {
+		c.Name = name.String
+	}
+	if company.Valid {
+		c.CompanyName = company.String
 	}
 	c.CreatedAt = createdAt.Time
 	c.UpdatedAt = updatedAt.Time
@@ -558,12 +583,14 @@ func (s *SQLiteStorage) SaveClient(ctx context.Context, client *Client) error {
 	if client == nil {
 		return fmt.Errorf("client is nil")
 	}
-	query := `INSERT INTO clients (id, email, email_lower, status, created_at, updated_at, banned_at, ban_reason)
-	          VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+	query := `INSERT INTO clients (id, email, email_lower, name, company_name, status, created_at, updated_at, banned_at, ban_reason)
+	          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 	_, err := s.db.ExecContext(ctx, query,
 		client.ID,
 		client.Email,
 		normalizeEmail(client.Email),
+		client.Name,
+		client.CompanyName,
 		client.Status,
 		client.CreatedAt,
 		client.UpdatedAt,
@@ -584,11 +611,13 @@ func (s *SQLiteStorage) UpdateClient(ctx context.Context, client *Client) error 
 		return fmt.Errorf("client is nil")
 	}
 	query := `UPDATE clients
-	          SET email = ?, email_lower = ?, status = ?, created_at = ?, updated_at = ?, banned_at = ?, ban_reason = ?
+	          SET email = ?, email_lower = ?, name = ?, company_name = ?, status = ?, created_at = ?, updated_at = ?, banned_at = ?, ban_reason = ?
 	          WHERE id = ?`
 	res, err := s.db.ExecContext(ctx, query,
 		client.Email,
 		normalizeEmail(client.Email),
+		client.Name,
+		client.CompanyName,
 		client.Status,
 		client.CreatedAt,
 		client.UpdatedAt,
@@ -610,7 +639,7 @@ func (s *SQLiteStorage) UpdateClient(ctx context.Context, client *Client) error 
 }
 
 func (s *SQLiteStorage) GetClient(ctx context.Context, clientID string) (*Client, error) {
-	query := `SELECT id, email, status, created_at, updated_at, banned_at, ban_reason
+	query := `SELECT id, email, name, company_name, status, created_at, updated_at, banned_at, ban_reason
 	          FROM clients WHERE id = ?`
 	row := s.db.QueryRowContext(ctx, query, clientID)
 	client, err := scanClientRow(row)
@@ -624,7 +653,7 @@ func (s *SQLiteStorage) GetClient(ctx context.Context, clientID string) (*Client
 }
 
 func (s *SQLiteStorage) GetClientByEmail(ctx context.Context, email string) (*Client, error) {
-	query := `SELECT id, email, status, created_at, updated_at, banned_at, ban_reason
+	query := `SELECT id, email, name, company_name, status, created_at, updated_at, banned_at, ban_reason
 	          FROM clients WHERE email_lower = ?`
 	row := s.db.QueryRowContext(ctx, query, normalizeEmail(email))
 	client, err := scanClientRow(row)
@@ -638,7 +667,7 @@ func (s *SQLiteStorage) GetClientByEmail(ctx context.Context, email string) (*Cl
 }
 
 func (s *SQLiteStorage) ListClients(ctx context.Context) ([]*Client, error) {
-	query := `SELECT id, email, status, created_at, updated_at, banned_at, ban_reason
+	query := `SELECT id, email, name, company_name, status, created_at, updated_at, banned_at, ban_reason
 	          FROM clients ORDER BY created_at ASC`
 	rows, err := s.db.QueryContext(ctx, query)
 	if err != nil {

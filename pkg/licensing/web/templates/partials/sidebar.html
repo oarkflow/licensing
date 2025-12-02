@@ -60,6 +60,48 @@
                 </a>
 
                 <div class="pt-4">
+                    <p class="px-3 text-xs font-semibold uppercase tracking-wider text-gray-500">Messaging</p>
+                </div>
+
+                <a href="/messaging/providers" class="{{if hasPrefix .CurrentPath " /messaging/providers"}}bg-primary-50
+                    text-primary-700{{else}}text-gray-600 hover:bg-gray-50 hover:text-gray-900{{end}} group flex
+                    items-center px-2 py-2 text-sm font-medium rounded-md">
+                    <svg class="{{if hasPrefix .CurrentPath "
+                        /messaging/providers"}}text-primary-500{{else}}text-gray-400 group-hover:text-gray-500{{end}}
+                        mr-3 flex-shrink-0 h-6 w-6" fill="none" viewBox="0 0 24 24" stroke-width="1.5"
+                        stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round"
+                            d="M3 8.25l8.25-3 8.25 3m-16.5 0l8.25 3m-8.25-3v7.5l8.25 3m0-7.5l8.25-3m-8.25 3v7.5m8.25-10.5v7.5l-8.25 3" />
+                    </svg>
+                    Email Providers
+                </a>
+
+                <a href="/messaging/templates" class="{{if hasPrefix .CurrentPath " /messaging/templates"}}bg-primary-50
+                    text-primary-700{{else}}text-gray-600 hover:bg-gray-50 hover:text-gray-900{{end}} group flex
+                    items-center px-2 py-2 text-sm font-medium rounded-md">
+                    <svg class="{{if hasPrefix .CurrentPath "
+                        /messaging/templates"}}text-primary-500{{else}}text-gray-400 group-hover:text-gray-500{{end}}
+                        mr-3 flex-shrink-0 h-6 w-6" fill="none" viewBox="0 0 24 24" stroke-width="1.5"
+                        stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round"
+                            d="M5.25 5.25h13.5m-13.5 4.5h13.5m-13.5 4.5h13.5m-13.5 4.5h6.75" />
+                    </svg>
+                    Email Templates
+                </a>
+
+                <a href="/messaging/compose" class="{{if hasPrefix .CurrentPath " /messaging/compose"}}bg-primary-50
+                    text-primary-700{{else}}text-gray-600 hover:bg-gray-50 hover:text-gray-900{{end}} group flex
+                    items-center px-2 py-2 text-sm font-medium rounded-md">
+                    <svg class="{{if hasPrefix .CurrentPath " /messaging/compose"}}text-primary-500{{else}}text-gray-400
+                        group-hover:text-gray-500{{end}} mr-3 flex-shrink-0 h-6 w-6" fill="none" viewBox="0 0 24 24"
+                        stroke-width="1.5" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round"
+                            d="M3 8.25l7.5 4.5L18 8.25m-15 7.5l7.5 4.5m-7.5-4.5v-9l7.5-4.5m0 0l7.5 4.5m0 0v9m0-9l-7.5 4.5" />
+                    </svg>
+                    Compose Email
+                </a>
+
+                <div class="pt-4">
                     <p class="px-3 text-xs font-semibold uppercase tracking-wider text-gray-500">Administration</p>
                 </div>
 

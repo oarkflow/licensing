@@ -368,6 +368,15 @@ func (ws *WebServer) Handler() http.Handler {
 	// Features
 	mux.HandleFunc("/features/", ws.requireAuth(ws.handleFeatureDetail))
 
+	// Messaging
+	mux.HandleFunc("/messaging/providers", ws.requireAuth(ws.handleEmailProviders))
+	mux.HandleFunc("/messaging/providers/new", ws.requireAuth(ws.handleNewEmailProvider))
+	mux.HandleFunc("/messaging/providers/", ws.requireAuth(ws.handleEmailProviderDetail))
+	mux.HandleFunc("/messaging/templates", ws.requireAuth(ws.handleEmailTemplates))
+	mux.HandleFunc("/messaging/templates/new", ws.requireAuth(ws.handleNewEmailTemplate))
+	mux.HandleFunc("/messaging/templates/", ws.requireAuth(ws.handleEmailTemplateDetail))
+	mux.HandleFunc("/messaging/compose", ws.requireAuth(ws.handleEmailCompose))
+
 	// Admin Users
 	mux.HandleFunc("/admin/users", ws.requireAuth(ws.handleUsers))
 	mux.HandleFunc("/admin/users/new", ws.requireAuth(ws.handleNewUser))
