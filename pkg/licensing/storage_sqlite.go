@@ -235,6 +235,16 @@ func ensureSQLiteSchema(db *squealx.DB) error {
 			created_at TIMESTAMP NOT NULL
 		);`,
 		`CREATE INDEX IF NOT EXISTS idx_email_events_message_id ON email_events(message_id);`,
+		`CREATE TABLE IF NOT EXISTS sessions (
+			id TEXT PRIMARY KEY,
+			user_id TEXT NOT NULL,
+			username TEXT NOT NULL,
+			created_at TIMESTAMP NOT NULL,
+			expires_at TIMESTAMP NOT NULL,
+			FOREIGN KEY(user_id) REFERENCES admin_users(id) ON DELETE CASCADE
+		);`,
+		`CREATE INDEX IF NOT EXISTS idx_sessions_user_id ON sessions(user_id);`,
+		`CREATE INDEX IF NOT EXISTS idx_sessions_expires_at ON sessions(expires_at);`,
 	}
 	for _, stmt := range stmts {
 		if _, err := db.Exec(stmt); err != nil {
@@ -1385,4 +1395,83 @@ func (s *SQLiteStorage) ListDeviceTrials(ctx context.Context) ([]*DeviceTrial, e
 		trials = append(trials, &trial)
 	}
 	return trials, rows.Err()
+}
+
+// ==================== Session Storage Methods ====================
+
+// AdminSession represents a persistent admin session
+type AdminSession struct {
+	ID        string
+	UserID    string
+	Username  string
+	CreatedAt time.Time
+	ExpiresAt time.Time
+}
+
+// ErrSessionMissing is returned when a session is not found
+var ErrSessionMissing = errors.New("session not found")
+
+func (s *SQLiteStorage) SaveSession(ctx context.Context, session *AdminSession) error {
+	if session == nil {
+		return fmt.Errorf("session is nil")
+	}
+	query := `INSERT INTO sessions (id, user_id, username, created_at, expires_at)
+              VALUES (?, ?, ?, ?, ?)`
+	_, err := s.db.ExecContext(ctx, query,
+		session.ID,
+		session.UserID,
+		session.Username,
+		session.CreatedAt,
+		session.ExpiresAt,
+	)
+	return err
+}
+
+func (s *SQLiteStorage) GetSession(ctx context.Context, sessionID string) (*AdminSession, error) {
+	query := `SELECT id, user_id, username, created_at, expires_at FROM sessions WHERE id = ?`
+	row := s.db.QueryRowContext(ctx, query, sessionID)
+	var session AdminSession
+	var createdAt, expiresAt sqliteTimeValue
+	if err := row.Scan(&session.ID, &session.UserID, &session.Username, &createdAt, &expiresAt); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, ErrSessionMissing
+		}
+		return nil, err
+	}
+	session.CreatedAt = createdAt.Time
+	session.ExpiresAt = expiresAt.Time
+	return &session, nil
+}
+
+func (s *SQLiteStorage) DeleteSession(ctx context.Context, sessionID string) error {
+	query := `DELETE FROM sessions WHERE id = ?`
+	_, err := s.db.ExecContext(ctx, query, sessionID)
+	return err
+}
+
+func (s *SQLiteStorage) DeleteExpiredSessions(ctx context.Context) error {
+	query := `DELETE FROM sessions WHERE expires_at < ?`
+	_, err := s.db.ExecContext(ctx, query, time.Now())
+	return err
+}
+
+func (s *SQLiteStorage) ListSessionsByUser(ctx context.Context, userID string) ([]*AdminSession, error) {
+	query := `SELECT id, user_id, username, created_at, expires_at FROM sessions WHERE user_id = ? ORDER BY created_at DESC`
+	rows, err := s.db.QueryContext(ctx, query, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var sessions []*AdminSession
+	for rows.Next() {
+		var session AdminSession
+		var createdAt, expiresAt sqliteTimeValue
+		if err := rows.Scan(&session.ID, &session.UserID, &session.Username, &createdAt, &expiresAt); err != nil {
+			return nil, err
+		}
+		session.CreatedAt = createdAt.Time
+		session.ExpiresAt = expiresAt.Time
+		sessions = append(sessions, &session)
+	}
+	return sessions, rows.Err()
 }

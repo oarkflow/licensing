@@ -298,14 +298,9 @@ type trialLicenseAPIRequest struct {
 }
 
 type provisionLicenseRequest struct {
-	Email                string `json:"email"`
-	Name                 string `json:"name,omitempty"`
-	CompanyName          string `json:"company_name,omitempty"`
-	ProductID            string `json:"product_id,omitempty"`
-	PlanID               string `json:"plan_id,omitempty"`
-	PlanSlug             string `json:"plan_slug"`
-	DurationDays         int    `json:"duration_days"`
-	MaxDevices           int    `json:"max_devices"`
-	CheckMode            string `json:"check_mode,omitempty"`
-	CheckIntervalSeconds int64  `json:"check_interval_seconds,omitempty"`
+	Email       string `json:"email"`
+	Name        string `json:"name,omitempty"`
+	CompanyName string `json:"company_name,omitempty"`
+	ProductID   string `json:"product_id"`
+	PlanID      string `json:"plan_id"`
 }

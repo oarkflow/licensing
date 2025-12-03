@@ -120,28 +120,51 @@ const (
 	MessageStatusBounced  MessageStatus = "bounced"
 )
 
+// EmailAttachment represents a file attached to an email.
+type EmailAttachment struct {
+	Filename    string `json:"filename"`
+	ContentType string `json:"content_type"`
+	Data        []byte `json:"data,omitempty"`        // Base64 decoded content
+	DataBase64  string `json:"data_base64,omitempty"` // Base64 encoded content for JSON transport
+	Size        int64  `json:"size"`
+}
+
+// Clone returns a deep copy of the attachment.
+func (a *EmailAttachment) Clone() *EmailAttachment {
+	if a == nil {
+		return nil
+	}
+	clone := *a
+	if a.Data != nil {
+		clone.Data = make([]byte, len(a.Data))
+		copy(clone.Data, a.Data)
+	}
+	return &clone
+}
+
 // EmailMessage is persisted for queueing, auditing, and retries.
 type EmailMessage struct {
-	ID            string            `json:"id"`
-	TemplateID    string            `json:"template_id"`
-	ProviderID    string            `json:"provider_id,omitempty"`
-	To            string            `json:"to"`
-	CC            []string          `json:"cc,omitempty"`
-	BCC           []string          `json:"bcc,omitempty"`
-	Subject       string            `json:"subject"`
-	RenderedHTML  string            `json:"rendered_html,omitempty"`
-	RenderedText  string            `json:"rendered_text,omitempty"`
-	Variables     map[string]any    `json:"variables,omitempty"`
-	Metadata      map[string]string `json:"metadata,omitempty"`
-	Status        MessageStatus     `json:"status"`
-	RetryCount    int               `json:"retry_count"`
-	MaxRetries    int               `json:"max_retries"`
-	FailoverCount int               `json:"failover_count"`
-	LastError     string            `json:"last_error,omitempty"`
-	NextAttemptAt time.Time         `json:"next_attempt_at"`
-	LastAttemptAt time.Time         `json:"last_attempt_at"`
-	CreatedAt     time.Time         `json:"created_at"`
-	UpdatedAt     time.Time         `json:"updated_at"`
+	ID            string             `json:"id"`
+	TemplateID    string             `json:"template_id"`
+	ProviderID    string             `json:"provider_id,omitempty"`
+	To            string             `json:"to"`
+	CC            []string           `json:"cc,omitempty"`
+	BCC           []string           `json:"bcc,omitempty"`
+	Subject       string             `json:"subject"`
+	RenderedHTML  string             `json:"rendered_html,omitempty"`
+	RenderedText  string             `json:"rendered_text,omitempty"`
+	Variables     map[string]any     `json:"variables,omitempty"`
+	Metadata      map[string]string  `json:"metadata,omitempty"`
+	Attachments   []*EmailAttachment `json:"attachments,omitempty"`
+	Status        MessageStatus      `json:"status"`
+	RetryCount    int                `json:"retry_count"`
+	MaxRetries    int                `json:"max_retries"`
+	FailoverCount int                `json:"failover_count"`
+	LastError     string             `json:"last_error,omitempty"`
+	NextAttemptAt time.Time          `json:"next_attempt_at"`
+	LastAttemptAt time.Time          `json:"last_attempt_at"`
+	CreatedAt     time.Time          `json:"created_at"`
+	UpdatedAt     time.Time          `json:"updated_at"`
 }
 
 // Clone returns a deep copy of the message.
@@ -162,6 +185,12 @@ func (m *EmailMessage) Clone() *EmailMessage {
 		clone.Metadata = make(map[string]string, len(m.Metadata))
 		for k, v := range m.Metadata {
 			clone.Metadata[k] = v
+		}
+	}
+	if m.Attachments != nil {
+		clone.Attachments = make([]*EmailAttachment, len(m.Attachments))
+		for i, att := range m.Attachments {
+			clone.Attachments[i] = att.Clone()
 		}
 	}
 	return &clone

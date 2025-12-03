@@ -454,6 +454,7 @@ func (s *SQLiteStorage) EnqueueEmail(ctx context.Context, msg *email.EmailMessag
 		msg.Status = email.MessageStatusQueued
 	}
 
+	templateID := nullableString(msg.TemplateID)
 	providerID := nullableString(msg.ProviderID)
 	ccJSON, err := encodeStringSliceNullable(msg.CC)
 	if err != nil {
@@ -479,7 +480,7 @@ func (s *SQLiteStorage) EnqueueEmail(ctx context.Context, msg *email.EmailMessag
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 	_, err = s.db.ExecContext(ctx, query,
 		msg.ID,
-		msg.TemplateID,
+		templateID,
 		providerID,
 		msg.To,
 		ccJSON,

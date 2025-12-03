@@ -52,6 +52,8 @@ type Plan struct {
 	Description    string            `json:"description,omitempty"`
 	Price          int64             `json:"price"`            // Price per device in cents (for per-device pricing)
 	MinDevices     int               `json:"min_devices"`      // Minimum number of devices required
+	MaxDevices     int               `json:"max_devices"`      // Maximum number of devices allowed (0 = unlimited)
+	DurationDays   int               `json:"duration_days"`    // License duration in days (0 = unlimited/lifetime)
 	PricePerDevice int64             `json:"price_per_device"` // Price per device per billing cycle in cents
 	Currency       string            `json:"currency"`         // ISO 4217 currency code (e.g., USD)
 	BillingCycle   string            `json:"billing_cycle"`    // monthly, yearly, lifetime, one-time

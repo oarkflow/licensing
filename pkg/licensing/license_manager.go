@@ -472,6 +472,11 @@ func (lm *LicenseManager) RevokeAPIKey(ctx context.Context, keyID string) error 
 	return lm.storage.DeleteAPIKey(ctx, keyID)
 }
 
+// DeleteAPIKey deletes an API key by ID (alias for RevokeAPIKey)
+func (lm *LicenseManager) DeleteAPIKey(ctx context.Context, keyID string) error {
+	return lm.storage.DeleteAPIKey(ctx, keyID)
+}
+
 func (lm *LicenseManager) ValidateAPIKey(ctx context.Context, token string) (*AdminUser, error) {
 	token = strings.TrimSpace(token)
 	if token == "" {

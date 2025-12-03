@@ -155,6 +155,234 @@ curl -sSL -X POST "$BASE_URL/api/clients/$CLIENT_ID/unban" \
 
 These endpoints immediately affect subsequent activations and verifications; no server restart is required.
 
+## Workflow: Provision License (All-in-One)
+
+The `/api/admin/licenses/provision` endpoint is a comprehensive single-call solution that:
+- Creates or updates a client record
+- Generates a license key bound to a plan
+- Queues welcome and license delivery emails
+
+This is the recommended endpoint for integrations with payment processors, CRMs, or subscription management platforms.
+
+### Basic Provision Request
+
+```bash
+curl -sSL -X POST "$BASE_URL/api/admin/licenses/provision" \
+  -H "X-API-Key: $ADMIN_KEY" \
+  -H 'Content-Type: application/json' \
+  -H 'User-Agent: my-erp/2024.05' \
+  -d '{
+    "email": "customer@example.com",
+    "name": "John Doe",
+    "company_name": "Acme Corp",
+    "plan_slug": "pro",
+    "duration_days": 365,
+    "max_devices": 3
+  }'
+```
+
+### Complete Provision Request (All Options)
+
+```bash
+curl -sSL -X POST "$BASE_URL/api/admin/licenses/provision" \
+  -H "X-API-Key: $ADMIN_KEY" \
+  -H 'Content-Type: application/json' \
+  -H 'User-Agent: stripe-webhook/1.0' \
+  -d '{
+    "email": "enterprise@company.com",
+    "name": "Jane Smith",
+    "company_name": "Enterprise Inc",
+    "product_id": "prod_01HRV...",
+    "plan_id": "plan_01HRV...",
+    "plan_slug": "enterprise",
+    "duration_days": 365,
+    "max_devices": 10,
+    "check_mode": "monthly",
+    "check_interval_seconds": 2592000
+  }'
+```
+
+### Request Body Fields
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `email` | string | Yes | Customer email address (used for client lookup/creation and notifications) |
+| `name` | string | No | Customer display name |
+| `company_name` | string | No | Company or organization name |
+| `product_id` | string | No | Specific product ID (optional if plan is self-contained) |
+| `plan_id` | string | No | Specific plan ID (alternative to plan_slug) |
+| `plan_slug` | string | Yes | Plan identifier (e.g., "free", "pro", "enterprise") |
+| `duration_days` | int | Yes | License validity period in days |
+| `max_devices` | int | No | Maximum concurrent device activations (defaults to 1 or plan minimum) |
+| `check_mode` | string | No | License check policy: "none", "each-run", "monthly", "yearly", "custom" |
+| `check_interval_seconds` | int64 | No | Custom check interval when check_mode is "custom" |
+
+### Check Mode Options
+
+- `none` – No periodic license verification required
+- `each-run` – Verify license on every application start
+- `monthly` – Verify license once per month
+- `yearly` – Verify license once per year
+- `custom` – Use custom interval specified in `check_interval_seconds`
+
+### Response Example
+
+```json
+{
+  "client": {
+    "id": "client_01HRV...",
+    "email": "customer@example.com",
+    "name": "John Doe",
+    "company_name": "Acme Corp",
+    "created_at": "2025-01-15T10:30:00Z",
+    "updated_at": "2025-01-15T10:30:00Z"
+  },
+  "license": {
+    "id": "lic_01HRV...",
+    "license_key": "AAAA-BBBB-CCCC-DDDD-EEEE-FFFF-GGGG-HHHH",
+    "client_id": "client_01HRV...",
+    "plan_slug": "pro",
+    "plan_id": "plan_01HRV...",
+    "product_id": "prod_01HRV...",
+    "expires_at": "2026-01-15T10:30:00Z",
+    "max_devices": 3,
+    "status": "active"
+  },
+  "client_created": true,
+  "plan": {
+    "id": "plan_01HRV...",
+    "name": "Pro Plan",
+    "slug": "pro"
+  },
+  "product": {
+    "id": "prod_01HRV...",
+    "name": "MyApp",
+    "slug": "myapp"
+  },
+  "emails": {
+    "welcome": {
+      "queued": true,
+      "message_id": "msg_01HRV..."
+    },
+    "license": {
+      "queued": true,
+      "message_id": "msg_01HRV..."
+    }
+  }
+}
+```
+
+### Integration Examples
+
+#### Stripe Webhook Handler (Python)
+
+```python
+import requests
+import os
+
+def handle_checkout_complete(event):
+    customer = event['data']['object']['customer_details']
+    line_items = event['data']['object']['line_items']['data']
+
+    response = requests.post(
+        f"{os.environ['LICENSE_SERVER_URL']}/api/admin/licenses/provision",
+        headers={
+            'X-API-Key': os.environ['LICENSE_API_KEY'],
+            'Content-Type': 'application/json',
+            'User-Agent': 'stripe-webhook/1.0'
+        },
+        json={
+            'email': customer['email'],
+            'name': customer['name'],
+            'plan_slug': line_items[0]['price']['lookup_key'],  # e.g., "pro_yearly"
+            'duration_days': 365,
+            'max_devices': 5
+        }
+    )
+
+    if response.status_code == 201:
+        license_data = response.json()
+        # Store license_data['license']['id'] for future management
+        return license_data
+    else:
+        raise Exception(f"License provisioning failed: {response.text}")
+```
+
+#### Node.js/Express Handler
+
+```javascript
+const axios = require('axios');
+
+async function provisionLicense(customerEmail, planSlug, durationDays) {
+  const response = await axios.post(
+    `${process.env.LICENSE_SERVER_URL}/api/admin/licenses/provision`,
+    {
+      email: customerEmail,
+      plan_slug: planSlug,
+      duration_days: durationDays,
+      max_devices: 3,
+      check_mode: 'monthly'
+    },
+    {
+      headers: {
+        'X-API-Key': process.env.LICENSE_API_KEY,
+        'Content-Type': 'application/json',
+        'User-Agent': 'billing-service/1.0'
+      }
+    }
+  );
+
+  return response.data;
+}
+```
+
+#### Shell Script (CI/CD Pipeline)
+
+```bash
+#!/bin/bash
+set -e
+
+# Environment variables
+export BASE_URL="${LICENSE_SERVER_URL:-http://localhost:8801}"
+export ADMIN_KEY="${LICENSE_API_KEY}"
+
+# Provision license for a new customer
+provision_license() {
+    local email="$1"
+    local plan="$2"
+    local days="${3:-365}"
+    local devices="${4:-1}"
+
+    curl -sSL -X POST "$BASE_URL/api/admin/licenses/provision" \
+        -H "X-API-Key: $ADMIN_KEY" \
+        -H 'Content-Type: application/json' \
+        -H 'User-Agent: deploy-script/1.0' \
+        -d "{
+            \"email\": \"$email\",
+            \"plan_slug\": \"$plan\",
+            \"duration_days\": $days,
+            \"max_devices\": $devices
+        }" | jq .
+}
+
+# Usage: ./provision.sh customer@example.com pro 365 5
+provision_license "$1" "$2" "$3" "$4"
+```
+
+### Error Responses
+
+| Status | Error | Resolution |
+|--------|-------|------------|
+| 400 | "invalid email address" | Provide a valid email format |
+| 400 | "plan_slug is required" | Include the plan_slug field |
+| 400 | "duration_days must be greater than zero" | Set duration_days > 0 |
+| 400 | "plan not found" | Verify plan_slug or plan_id exists |
+| 400 | "plan is not active" | Activate the plan or use a different one |
+| 400 | "product not found" | Verify product_id if specified |
+| 400 | "plan does not belong to specified product" | Ensure plan and product are correctly linked |
+| 401 | "Unauthorized" | Check X-API-Key header |
+| 429 | "Too many requests" | Implement backoff and retry |
+
 ## Error Handling Cheatsheet
 
 | Status | Meaning | Recommended Action |

@@ -37,15 +37,24 @@ type Session struct {
 	ExpiresAt time.Time
 }
 
+// SessionStore defines the interface for session persistence
+type SessionStore interface {
+	SaveSession(ctx context.Context, session *licensing.AdminSession) error
+	GetSession(ctx context.Context, sessionID string) (*licensing.AdminSession, error)
+	DeleteSession(ctx context.Context, sessionID string) error
+	DeleteExpiredSessions(ctx context.Context) error
+}
+
 // WebServer handles the admin UI
 type WebServer struct {
 	lm            *licensing.LicenseManager
 	templates     map[string]*template.Template
-	sessions      map[string]*Session
+	sessions      map[string]*Session // In-memory cache for fast lookups
 	sessionsMu    sync.RWMutex
 	sessionMaxAge time.Duration
 	csrfSecrets   map[string]time.Time
 	csrfMu        sync.RWMutex
+	sessionStore  SessionStore // Persistent session storage
 }
 
 // NewWebServer creates a new web server instance
@@ -57,6 +66,13 @@ func NewWebServer(lm *licensing.LicenseManager) (*WebServer, error) {
 		csrfSecrets:   make(map[string]time.Time),
 	}
 
+	// Try to get session store from LicenseManager's storage
+	if store, ok := lm.Storage().(SessionStore); ok {
+		ws.sessionStore = store
+		// Load existing sessions from storage
+		ws.loadSessionsFromStorage()
+	}
+
 	if err := ws.loadTemplates(); err != nil {
 		return nil, fmt.Errorf("failed to load templates: %w", err)
 	}
@@ -65,6 +81,18 @@ func NewWebServer(lm *licensing.LicenseManager) (*WebServer, error) {
 	go ws.cleanupSessions()
 
 	return ws, nil
+}
+
+// loadSessionsFromStorage loads non-expired sessions from persistent storage
+func (ws *WebServer) loadSessionsFromStorage() {
+	if ws.sessionStore == nil {
+		return
+	}
+	ctx := context.Background()
+	// Clean up expired sessions first
+	if err := ws.sessionStore.DeleteExpiredSessions(ctx); err != nil {
+		log.Printf("Warning: failed to cleanup expired sessions: %v", err)
+	}
 }
 
 func (ws *WebServer) loadTemplates() error {
@@ -209,6 +237,14 @@ func (ws *WebServer) cleanupSessions() {
 		}
 		ws.sessionsMu.Unlock()
 
+		// Also cleanup from persistent storage
+		if ws.sessionStore != nil {
+			ctx := context.Background()
+			if err := ws.sessionStore.DeleteExpiredSessions(ctx); err != nil {
+				log.Printf("Warning: failed to cleanup expired sessions from storage: %v", err)
+			}
+		}
+
 		ws.csrfMu.Lock()
 		for token, expires := range ws.csrfSecrets {
 			if expires.Before(now) {
@@ -262,19 +298,66 @@ func (ws *WebServer) CreateSession(userID, username string) *Session {
 	ws.sessions[sessionID] = session
 	ws.sessionsMu.Unlock()
 
+	// Persist to storage if available
+	if ws.sessionStore != nil {
+		ctx := context.Background()
+		adminSession := &licensing.AdminSession{
+			ID:        session.ID,
+			UserID:    session.UserID,
+			Username:  session.Username,
+			CreatedAt: session.CreatedAt,
+			ExpiresAt: session.ExpiresAt,
+		}
+		if err := ws.sessionStore.SaveSession(ctx, adminSession); err != nil {
+			log.Printf("Warning: failed to persist session: %v", err)
+		}
+	}
+
 	return session
 }
 
 // GetSession retrieves a session by ID
 func (ws *WebServer) GetSession(sessionID string) *Session {
+	// Try in-memory cache first
 	ws.sessionsMu.RLock()
 	session, ok := ws.sessions[sessionID]
 	ws.sessionsMu.RUnlock()
 
-	if !ok || session.ExpiresAt.Before(time.Now()) {
-		return nil
+	if ok {
+		if session.ExpiresAt.Before(time.Now()) {
+			// Session expired, remove it
+			ws.DeleteSession(sessionID)
+			return nil
+		}
+		return session
 	}
-	return session
+
+	// Try persistent storage
+	if ws.sessionStore != nil {
+		ctx := context.Background()
+		adminSession, err := ws.sessionStore.GetSession(ctx, sessionID)
+		if err == nil && adminSession != nil {
+			if adminSession.ExpiresAt.Before(time.Now()) {
+				// Session expired, remove it
+				ws.DeleteSession(sessionID)
+				return nil
+			}
+			// Cache it in memory
+			session = &Session{
+				ID:        adminSession.ID,
+				UserID:    adminSession.UserID,
+				Username:  adminSession.Username,
+				CreatedAt: adminSession.CreatedAt,
+				ExpiresAt: adminSession.ExpiresAt,
+			}
+			ws.sessionsMu.Lock()
+			ws.sessions[sessionID] = session
+			ws.sessionsMu.Unlock()
+			return session
+		}
+	}
+
+	return nil
 }
 
 // ValidateSession implements the licensing.SessionValidator interface
@@ -300,6 +383,12 @@ func (ws *WebServer) DeleteSession(sessionID string) {
 	ws.sessionsMu.Lock()
 	delete(ws.sessions, sessionID)
 	ws.sessionsMu.Unlock()
+
+	// Also delete from persistent storage
+	if ws.sessionStore != nil {
+		ctx := context.Background()
+		_ = ws.sessionStore.DeleteSession(ctx, sessionID) // Ignore errors on delete
+	}
 }
 
 // TemplateData holds common data for templates
@@ -336,6 +425,17 @@ func (ws *WebServer) Handler() http.Handler {
 
 	// JSON API endpoints that use session auth
 	mux.HandleFunc("/api/dashboard/stats", ws.requireAPIAuth(ws.handleAPIDashboardStats))
+
+	// Messaging API endpoints
+	mux.HandleFunc("/api/email/providers", ws.requireAPIAuth(ws.handleAPIEmailProviders))
+	mux.HandleFunc("/api/email/providers/", ws.requireAPIAuth(ws.handleAPIEmailProviderDetail))
+	mux.HandleFunc("/api/email/providers/test", ws.requireAPIAuth(ws.handleAPIEmailProviderTest))
+	mux.HandleFunc("/api/email/providers/{id}/default", ws.requireAPIAuth(ws.handleAPIEmailProviderDefault))
+	mux.HandleFunc("/api/email/providers/{id}/toggle", ws.requireAPIAuth(ws.handleAPIEmailProviderToggle))
+	mux.HandleFunc("/api/email/templates", ws.requireAPIAuth(ws.handleAPIEmailTemplates))
+	mux.HandleFunc("/api/email/templates/", ws.requireAPIAuth(ws.handleAPIEmailTemplateDetail))
+	mux.HandleFunc("/api/email/compose/preview", ws.requireAPIAuth(ws.handleAPIEmailComposePreview))
+	mux.HandleFunc("/api/email/compose/send", ws.requireAPIAuth(ws.handleAPIEmailComposeSend))
 
 	// Initial setup (before any admin exists)
 	mux.HandleFunc("/setup", ws.handleSetup)
@@ -790,7 +890,8 @@ func (ws *WebServer) handleAPILogin(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if !ws.hasAdminUser(r.Context()) {
-		ws.respondAPIError(w, http.StatusNotFound, "No admin users configured, setup required")
+		// Redirect to setup page instead of showing error
+		http.Redirect(w, r, "/setup", http.StatusSeeOther)
 		return
 	}
 

@@ -141,6 +141,8 @@ func ensureProductSchema(db *squealx.DB) error {
 	}
 	hasIsTrialColumn := false
 	hasMinDevicesColumn := false
+	hasMaxDevicesColumn := false
+	hasDurationDaysColumn := false
 	hasPricePerDeviceColumn := false
 	for rows.Next() {
 		var cid int
@@ -156,6 +158,12 @@ func ensureProductSchema(db *squealx.DB) error {
 		}
 		if name == "min_devices" {
 			hasMinDevicesColumn = true
+		}
+		if name == "max_devices" {
+			hasMaxDevicesColumn = true
+		}
+		if name == "duration_days" {
+			hasDurationDaysColumn = true
 		}
 		if name == "price_per_device" {
 			hasPricePerDeviceColumn = true
@@ -173,6 +181,20 @@ func ensureProductSchema(db *squealx.DB) error {
 	if !hasMinDevicesColumn {
 		if _, err := db.Exec(`ALTER TABLE plans ADD COLUMN min_devices INTEGER NOT NULL DEFAULT 1;`); err != nil {
 			return fmt.Errorf("failed to add min_devices column: %w", err)
+		}
+	}
+
+	// Migration: add max_devices column to plans if it doesn't exist
+	if !hasMaxDevicesColumn {
+		if _, err := db.Exec(`ALTER TABLE plans ADD COLUMN max_devices INTEGER NOT NULL DEFAULT 0;`); err != nil {
+			return fmt.Errorf("failed to add max_devices column: %w", err)
+		}
+	}
+
+	// Migration: add duration_days column to plans if it doesn't exist
+	if !hasDurationDaysColumn {
+		if _, err := db.Exec(`ALTER TABLE plans ADD COLUMN duration_days INTEGER NOT NULL DEFAULT 0;`); err != nil {
+			return fmt.Errorf("failed to add duration_days column: %w", err)
 		}
 	}
 
@@ -344,11 +366,11 @@ func (s *SQLiteStorage) SavePlan(ctx context.Context, plan *Plan) error {
 		plan.MinDevices = 1
 	}
 
-	query := `INSERT INTO plans (id, product_id, name, slug, slug_key, description, price, min_devices, price_per_device, currency, billing_cycle, trial_days, is_trial, is_active, display_order, metadata, created_at, updated_at)
-			  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+	query := `INSERT INTO plans (id, product_id, name, slug, slug_key, description, price, min_devices, max_devices, duration_days, price_per_device, currency, billing_cycle, trial_days, is_trial, is_active, display_order, metadata, created_at, updated_at)
+			  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 	_, err = s.db.ExecContext(ctx, query,
 		plan.ID, plan.ProductID, plan.Name, plan.Slug, slugKey,
-		plan.Description, plan.Price, plan.MinDevices, plan.PricePerDevice, plan.Currency, plan.BillingCycle,
+		plan.Description, plan.Price, plan.MinDevices, plan.MaxDevices, plan.DurationDays, plan.PricePerDevice, plan.Currency, plan.BillingCycle,
 		plan.TrialDays, plan.IsTrial, plan.IsActive, plan.DisplayOrder, string(metadataJSON),
 		plan.CreatedAt, plan.UpdatedAt)
 	if err != nil {
@@ -382,10 +404,10 @@ func (s *SQLiteStorage) UpdatePlan(ctx context.Context, plan *Plan) error {
 		plan.MinDevices = 1
 	}
 
-	query := `UPDATE plans SET product_id=?, name=?, slug=?, slug_key=?, description=?, price=?, min_devices=?, price_per_device=?, currency=?, billing_cycle=?, trial_days=?, is_trial=?, is_active=?, display_order=?, metadata=?, updated_at=? WHERE id=?`
+	query := `UPDATE plans SET product_id=?, name=?, slug=?, slug_key=?, description=?, price=?, min_devices=?, max_devices=?, duration_days=?, price_per_device=?, currency=?, billing_cycle=?, trial_days=?, is_trial=?, is_active=?, display_order=?, metadata=?, updated_at=? WHERE id=?`
 	result, err := s.db.ExecContext(ctx, query,
 		plan.ProductID, plan.Name, plan.Slug, slugKey,
-		plan.Description, plan.Price, plan.MinDevices, plan.PricePerDevice, plan.Currency, plan.BillingCycle,
+		plan.Description, plan.Price, plan.MinDevices, plan.MaxDevices, plan.DurationDays, plan.PricePerDevice, plan.Currency, plan.BillingCycle,
 		plan.TrialDays, plan.IsTrial, plan.IsActive, plan.DisplayOrder, string(metadataJSON),
 		plan.UpdatedAt, plan.ID)
 	if err != nil {
@@ -402,26 +424,26 @@ func (s *SQLiteStorage) UpdatePlan(ctx context.Context, plan *Plan) error {
 }
 
 func (s *SQLiteStorage) GetPlan(ctx context.Context, planID string) (*Plan, error) {
-	query := `SELECT id, product_id, name, slug, description, price, min_devices, price_per_device, currency, billing_cycle, trial_days, is_trial, is_active, display_order, metadata, created_at, updated_at FROM plans WHERE id=?`
+	query := `SELECT id, product_id, name, slug, description, price, min_devices, max_devices, duration_days, price_per_device, currency, billing_cycle, trial_days, is_trial, is_active, display_order, metadata, created_at, updated_at FROM plans WHERE id=?`
 	row := s.db.QueryRowContext(ctx, query, planID)
 	return s.scanPlan(row)
 }
 
 func (s *SQLiteStorage) GetPlanBySlug(ctx context.Context, productID, slug string) (*Plan, error) {
 	slugKey := productID + ":" + strings.ToLower(slug)
-	query := `SELECT id, product_id, name, slug, description, price, min_devices, price_per_device, currency, billing_cycle, trial_days, is_trial, is_active, display_order, metadata, created_at, updated_at FROM plans WHERE slug_key=?`
+	query := `SELECT id, product_id, name, slug, description, price, min_devices, max_devices, duration_days, price_per_device, currency, billing_cycle, trial_days, is_trial, is_active, display_order, metadata, created_at, updated_at FROM plans WHERE slug_key=?`
 	row := s.db.QueryRowContext(ctx, query, slugKey)
 	return s.scanPlan(row)
 }
 
 func (s *SQLiteStorage) FindPlanBySlug(ctx context.Context, slug string) (*Plan, error) {
-	query := `SELECT id, product_id, name, slug, description, price, min_devices, price_per_device, currency, billing_cycle, trial_days, is_trial, is_active, display_order, metadata, created_at, updated_at FROM plans WHERE LOWER(slug)=LOWER(?) LIMIT 1`
+	query := `SELECT id, product_id, name, slug, description, price, min_devices, max_devices, duration_days, price_per_device, currency, billing_cycle, trial_days, is_trial, is_active, display_order, metadata, created_at, updated_at FROM plans WHERE LOWER(slug)=LOWER(?) LIMIT 1`
 	row := s.db.QueryRowContext(ctx, query, slug)
 	return s.scanPlan(row)
 }
 
 func (s *SQLiteStorage) ListPlansByProduct(ctx context.Context, productID string) ([]*Plan, error) {
-	query := `SELECT id, product_id, name, slug, description, price, min_devices, price_per_device, currency, billing_cycle, trial_days, is_trial, is_active, display_order, metadata, created_at, updated_at FROM plans WHERE product_id=? ORDER BY display_order, name`
+	query := `SELECT id, product_id, name, slug, description, price, min_devices, max_devices, duration_days, price_per_device, currency, billing_cycle, trial_days, is_trial, is_active, display_order, metadata, created_at, updated_at FROM plans WHERE product_id=? ORDER BY display_order, name`
 	rows, err := s.db.QueryContext(ctx, query, productID)
 	if err != nil {
 		return nil, err
@@ -439,7 +461,7 @@ func (s *SQLiteStorage) ListPlansByProduct(ctx context.Context, productID string
 }
 
 func (s *SQLiteStorage) GetTrialPlanForProduct(ctx context.Context, productID string) (*Plan, error) {
-	query := `SELECT id, product_id, name, slug, description, price, min_devices, price_per_device, currency, billing_cycle, trial_days, is_trial, is_active, display_order, metadata, created_at, updated_at FROM plans WHERE product_id=? AND is_trial=1 LIMIT 1`
+	query := `SELECT id, product_id, name, slug, description, price, min_devices, max_devices, duration_days, price_per_device, currency, billing_cycle, trial_days, is_trial, is_active, display_order, metadata, created_at, updated_at FROM plans WHERE product_id=? AND is_trial=1 LIMIT 1`
 	row := s.db.QueryRowContext(ctx, query, productID)
 	return s.scanPlan(row)
 }
@@ -463,7 +485,7 @@ func (s *SQLiteStorage) scanPlan(scanner productRowScanner) (*Plan, error) {
 	var metadataJSON sql.NullString
 	var createdAt, updatedAt sqliteTimeValue
 	err := scanner.Scan(&plan.ID, &plan.ProductID, &plan.Name, &plan.Slug, &description,
-		&plan.Price, &plan.MinDevices, &plan.PricePerDevice, &plan.Currency, &plan.BillingCycle, &plan.TrialDays, &plan.IsTrial,
+		&plan.Price, &plan.MinDevices, &plan.MaxDevices, &plan.DurationDays, &plan.PricePerDevice, &plan.Currency, &plan.BillingCycle, &plan.TrialDays, &plan.IsTrial,
 		&plan.IsActive, &plan.DisplayOrder, &metadataJSON,
 		&createdAt, &updatedAt)
 	if err == sql.ErrNoRows {
@@ -491,7 +513,7 @@ func (s *SQLiteStorage) scanPlanRow(scanner productRowScanner) (*Plan, error) {
 	var metadataJSON sql.NullString
 	var createdAt, updatedAt sqliteTimeValue
 	err := scanner.Scan(&plan.ID, &plan.ProductID, &plan.Name, &plan.Slug, &description,
-		&plan.Price, &plan.MinDevices, &plan.PricePerDevice, &plan.Currency, &plan.BillingCycle, &plan.TrialDays, &plan.IsTrial,
+		&plan.Price, &plan.MinDevices, &plan.MaxDevices, &plan.DurationDays, &plan.PricePerDevice, &plan.Currency, &plan.BillingCycle, &plan.TrialDays, &plan.IsTrial,
 		&plan.IsActive, &plan.DisplayOrder, &metadataJSON,
 		&createdAt, &updatedAt)
 	if err != nil {

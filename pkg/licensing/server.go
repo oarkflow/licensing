@@ -6,6 +6,7 @@ import (
 	"crypto/subtle"
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -14,6 +15,7 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"net/smtp"
 	"os"
 	"strings"
 	"time"
@@ -63,6 +65,7 @@ type apiKeyIssueResponse struct {
 
 type emailDispatchResult struct {
 	Queued    bool   `json:"queued"`
+	Sent      bool   `json:"sent,omitempty"`
 	MessageID string `json:"message_id,omitempty"`
 	Error     string `json:"error,omitempty"`
 }
@@ -291,6 +294,10 @@ func (s *Server) respondClientError(w http.ResponseWriter, status int, message s
 }
 
 func (s *Server) enqueueEmail(ctx context.Context, to, subject, htmlBody, textBody string, metadata map[string]string) (*emailDispatchResult, error) {
+	return s.enqueueEmailWithAttachments(ctx, to, subject, htmlBody, textBody, metadata, nil)
+}
+
+func (s *Server) enqueueEmailWithAttachments(ctx context.Context, to, subject, htmlBody, textBody string, metadata map[string]string, attachments []*email.EmailAttachment) (*emailDispatchResult, error) {
 	to = strings.TrimSpace(to)
 	if to == "" {
 		return nil, fmt.Errorf("recipient email is required")
@@ -308,11 +315,256 @@ func (s *Server) enqueueEmail(ctx context.Context, to, subject, htmlBody, textBo
 		Status:       email.MessageStatusQueued,
 		MaxRetries:   3,
 		Metadata:     metadata,
+		Attachments:  attachments,
 	}
 	if err := storage.EnqueueEmail(ctx, msg); err != nil {
 		return nil, err
 	}
 	return &emailDispatchResult{Queued: true, MessageID: msg.ID}, nil
+}
+
+// sendEmailNow sends an email immediately using the first active SMTP provider
+func (s *Server) sendEmailNow(ctx context.Context, to, subject, htmlBody, textBody string, attachments []*email.EmailAttachment) (*emailDispatchResult, error) {
+	to = strings.TrimSpace(to)
+	if to == "" {
+		return nil, fmt.Errorf("recipient email is required")
+	}
+
+	storage := s.lm.Storage()
+	if storage == nil {
+		return nil, fmt.Errorf("storage backend unavailable")
+	}
+
+	// Get an active email provider
+	providers, err := storage.ListEmailProviders(ctx, false)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list email providers: %w", err)
+	}
+	if len(providers) == 0 {
+		return nil, fmt.Errorf("no active email providers configured")
+	}
+
+	// Use the first active SMTP provider
+	var provider *email.EmailProvider
+	for _, p := range providers {
+		if p.Type == email.ProviderTypeSMTP && p.Enabled {
+			provider = p
+			break
+		}
+	}
+	if provider == nil {
+		return nil, fmt.Errorf("no active SMTP provider found")
+	}
+
+	// Extract SMTP config
+	config := provider.Config
+	host := getConfigString(config, "host")
+	port := getConfigInt(config, "port", 587)
+	username := getConfigString(config, "username")
+	password := getConfigString(config, "password")
+	fromEmail := getConfigString(config, "from_email")
+	fromName := getConfigString(config, "from_name")
+	useTLS := getConfigBool(config, "use_tls")
+	startTLS := getConfigBool(config, "start_tls")
+	skipVerify := getConfigBool(config, "skip_tls_verify")
+	timeout := time.Duration(getConfigInt(config, "timeout_seconds", 30)) * time.Second
+
+	if host == "" {
+		return nil, fmt.Errorf("SMTP host not configured")
+	}
+	if fromEmail == "" {
+		return nil, fmt.Errorf("from_email not configured")
+	}
+
+	// Build the email message
+	msgID := uuid.New().String()
+	boundary := fmt.Sprintf("===%s===", msgID)
+
+	var msgBuilder strings.Builder
+
+	// Headers
+	if fromName != "" {
+		msgBuilder.WriteString(fmt.Sprintf("From: %s <%s>\r\n", fromName, fromEmail))
+	} else {
+		msgBuilder.WriteString(fmt.Sprintf("From: %s\r\n", fromEmail))
+	}
+	msgBuilder.WriteString(fmt.Sprintf("To: %s\r\n", to))
+	msgBuilder.WriteString(fmt.Sprintf("Subject: %s\r\n", subject))
+	msgBuilder.WriteString(fmt.Sprintf("Message-ID: <%s@%s>\r\n", msgID, host))
+	msgBuilder.WriteString("MIME-Version: 1.0\r\n")
+
+	hasAttachments := len(attachments) > 0
+
+	if hasAttachments {
+		msgBuilder.WriteString(fmt.Sprintf("Content-Type: multipart/mixed; boundary=\"%s\"\r\n", boundary))
+		msgBuilder.WriteString("\r\n")
+
+		// Text part
+		if textBody != "" {
+			msgBuilder.WriteString(fmt.Sprintf("--%s\r\n", boundary))
+			msgBuilder.WriteString("Content-Type: text/plain; charset=\"utf-8\"\r\n")
+			msgBuilder.WriteString("Content-Transfer-Encoding: quoted-printable\r\n\r\n")
+			msgBuilder.WriteString(textBody)
+			msgBuilder.WriteString("\r\n")
+		}
+
+		// HTML part
+		if htmlBody != "" {
+			msgBuilder.WriteString(fmt.Sprintf("--%s\r\n", boundary))
+			msgBuilder.WriteString("Content-Type: text/html; charset=\"utf-8\"\r\n")
+			msgBuilder.WriteString("Content-Transfer-Encoding: quoted-printable\r\n\r\n")
+			msgBuilder.WriteString(htmlBody)
+			msgBuilder.WriteString("\r\n")
+		}
+
+		// Attachments
+		for _, att := range attachments {
+			msgBuilder.WriteString(fmt.Sprintf("--%s\r\n", boundary))
+			msgBuilder.WriteString(fmt.Sprintf("Content-Type: %s; name=\"%s\"\r\n", att.ContentType, att.Filename))
+			msgBuilder.WriteString("Content-Transfer-Encoding: base64\r\n")
+			msgBuilder.WriteString(fmt.Sprintf("Content-Disposition: attachment; filename=\"%s\"\r\n\r\n", att.Filename))
+			msgBuilder.WriteString(base64.StdEncoding.EncodeToString(att.Data))
+			msgBuilder.WriteString("\r\n")
+		}
+
+		msgBuilder.WriteString(fmt.Sprintf("--%s--\r\n", boundary))
+	} else {
+		// Simple multipart/alternative for text+html
+		altBoundary := fmt.Sprintf("===alt%s===", msgID)
+		msgBuilder.WriteString(fmt.Sprintf("Content-Type: multipart/alternative; boundary=\"%s\"\r\n", altBoundary))
+		msgBuilder.WriteString("\r\n")
+
+		if textBody != "" {
+			msgBuilder.WriteString(fmt.Sprintf("--%s\r\n", altBoundary))
+			msgBuilder.WriteString("Content-Type: text/plain; charset=\"utf-8\"\r\n\r\n")
+			msgBuilder.WriteString(textBody)
+			msgBuilder.WriteString("\r\n")
+		}
+
+		if htmlBody != "" {
+			msgBuilder.WriteString(fmt.Sprintf("--%s\r\n", altBoundary))
+			msgBuilder.WriteString("Content-Type: text/html; charset=\"utf-8\"\r\n\r\n")
+			msgBuilder.WriteString(htmlBody)
+			msgBuilder.WriteString("\r\n")
+		}
+
+		msgBuilder.WriteString(fmt.Sprintf("--%s--\r\n", altBoundary))
+	}
+
+	// Connect to SMTP server
+	addr := fmt.Sprintf("%s:%d", host, port)
+	dialer := &net.Dialer{Timeout: timeout}
+
+	var conn net.Conn
+	if useTLS {
+		tlsCfg := &tls.Config{ServerName: host, InsecureSkipVerify: skipVerify}
+		conn, err = tls.DialWithDialer(dialer, "tcp", addr, tlsCfg)
+	} else {
+		conn, err = dialer.DialContext(ctx, "tcp", addr)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("SMTP dial failed: %w", err)
+	}
+	defer conn.Close()
+
+	client, err := smtp.NewClient(conn, host)
+	if err != nil {
+		return nil, fmt.Errorf("SMTP client init failed: %w", err)
+	}
+	defer client.Close()
+
+	// STARTTLS if needed
+	if !useTLS && startTLS {
+		if ok, _ := client.Extension("STARTTLS"); ok {
+			tlsCfg := &tls.Config{ServerName: host, InsecureSkipVerify: skipVerify}
+			if err := client.StartTLS(tlsCfg); err != nil {
+				log.Printf("Warning: STARTTLS failed: %v", err)
+			}
+		}
+	}
+
+	// Auth if credentials provided
+	if username != "" {
+		auth := smtp.PlainAuth("", username, password, host)
+		if err := client.Auth(auth); err != nil {
+			return nil, fmt.Errorf("SMTP auth failed: %w", err)
+		}
+	}
+
+	// Send the email
+	if err := client.Mail(fromEmail); err != nil {
+		return nil, fmt.Errorf("SMTP MAIL FROM failed: %w", err)
+	}
+	if err := client.Rcpt(to); err != nil {
+		return nil, fmt.Errorf("SMTP RCPT TO failed: %w", err)
+	}
+
+	wc, err := client.Data()
+	if err != nil {
+		return nil, fmt.Errorf("SMTP DATA failed: %w", err)
+	}
+
+	if _, err := io.WriteString(wc, msgBuilder.String()); err != nil {
+		wc.Close()
+		return nil, fmt.Errorf("SMTP write failed: %w", err)
+	}
+	if err := wc.Close(); err != nil {
+		return nil, fmt.Errorf("SMTP close data failed: %w", err)
+	}
+
+	client.Quit()
+
+	return &emailDispatchResult{Queued: false, Sent: true, MessageID: msgID}, nil
+}
+
+// Helper functions for config parsing
+func getConfigString(m map[string]any, key string) string {
+	if m == nil {
+		return ""
+	}
+	val, ok := m[key]
+	if !ok || val == nil {
+		return ""
+	}
+	if s, ok := val.(string); ok {
+		return strings.TrimSpace(s)
+	}
+	return fmt.Sprintf("%v", val)
+}
+
+func getConfigInt(m map[string]any, key string, defaultVal int) int {
+	if m == nil {
+		return defaultVal
+	}
+	val, ok := m[key]
+	if !ok || val == nil {
+		return defaultVal
+	}
+	switch v := val.(type) {
+	case int:
+		return v
+	case float64:
+		return int(v)
+	case string:
+		var i int
+		fmt.Sscanf(v, "%d", &i)
+		return i
+	}
+	return defaultVal
+}
+
+func getConfigBool(m map[string]any, key string) bool {
+	if m == nil {
+		return false
+	}
+	val, ok := m[key]
+	if !ok || val == nil {
+		return false
+	}
+	if b, ok := val.(bool); ok {
+		return b
+	}
+	return false
 }
 
 func (s *Server) decodeClientJSONBody(w http.ResponseWriter, r *http.Request, dst interface{}, limit int64) ([]byte, bool) {
@@ -785,86 +1037,75 @@ func (s *Server) handleProvisionLicense(w http.ResponseWriter, r *http.Request) 
 		s.respondError(w, http.StatusBadRequest, "invalid email address")
 		return
 	}
-	planSlugInput := strings.TrimSpace(req.PlanSlug)
-	if planSlugInput == "" {
-		s.respondError(w, http.StatusBadRequest, "plan_slug is required")
-		return
-	}
-	if req.DurationDays <= 0 {
-		s.respondError(w, http.StatusBadRequest, "duration_days must be greater than zero")
-		return
-	}
 
 	planID := strings.TrimSpace(req.PlanID)
 	productID := strings.TrimSpace(req.ProductID)
-	var (
-		plan    *Plan
-		planErr error
-	)
-	if planID != "" {
-		plan, planErr = s.lm.Storage().GetPlan(ctx, planID)
-		if planErr != nil {
-			s.respondError(w, http.StatusBadRequest, "plan not found")
-			return
-		}
-	} else {
-		plan, planErr = s.lm.Storage().FindPlanBySlug(ctx, planSlugInput)
-		if planErr != nil || plan == nil {
-			s.respondError(w, http.StatusBadRequest, "plan not found")
-			return
-		}
-		planID = plan.ID
+
+	// Validate that both product_id and plan_id are provided
+	if planID == "" {
+		s.respondError(w, http.StatusBadRequest, "plan_id is required")
+		return
+	}
+	if productID == "" {
+		s.respondError(w, http.StatusBadRequest, "product_id is required")
+		return
+	}
+
+	// Get the plan
+	plan, planErr := s.lm.Storage().GetPlan(ctx, planID)
+	if planErr != nil {
+		s.respondError(w, http.StatusBadRequest, "plan not found")
+		return
 	}
 	if !plan.IsActive {
 		s.respondError(w, http.StatusBadRequest, "plan is not active")
 		return
 	}
-	if planSlugInput != "" && planSlugInput != plan.Slug {
-		s.respondError(w, http.StatusBadRequest, "plan_slug does not match plan")
+
+	// Get the product
+	product, productErr := s.lm.Storage().GetProduct(ctx, productID)
+	if productErr != nil || product == nil {
+		s.respondError(w, http.StatusBadRequest, "product not found")
 		return
 	}
-	planSlug := plan.Slug
-	var (
-		product    *Product
-		productErr error
-	)
-	if productID != "" {
-		product, productErr = s.lm.Storage().GetProduct(ctx, productID)
-		if productErr != nil || product == nil {
-			s.respondError(w, http.StatusBadRequest, "product not found")
-			return
-		}
-		if plan.ProductID != "" && plan.ProductID != product.ID {
-			s.respondError(w, http.StatusBadRequest, "plan does not belong to specified product")
-			return
-		}
-	} else if plan.ProductID != "" {
-		productID = plan.ProductID
-		product, productErr = s.lm.Storage().GetProduct(ctx, productID)
-		if productErr != nil {
-			s.respondError(w, http.StatusBadRequest, "product not found")
-			return
-		}
+	if plan.ProductID != "" && plan.ProductID != product.ID {
+		s.respondError(w, http.StatusBadRequest, "plan does not belong to specified product")
+		return
 	}
 
-	maxDevices := req.MaxDevices
+	// Derive max_devices from plan
+	maxDevices := plan.MaxDevices
 	if maxDevices <= 0 {
+		// Fallback to min_devices if max_devices is not set
 		if plan.MinDevices > 0 {
 			maxDevices = plan.MinDevices
 		} else {
 			maxDevices = 1
 		}
 	}
-	duration := time.Duration(req.DurationDays) * 24 * time.Hour
-	modeInput := strings.TrimSpace(req.CheckMode)
-	mode := ParseLicenseCheckMode(modeInput)
-	interval := time.Duration(req.CheckIntervalSeconds) * time.Second
-	if modeInput == "" {
-		mode, interval = s.lm.DefaultCheckPolicy()
-	} else if mode == LicenseCheckModeCustom && interval <= 0 {
-		_, defaultInterval := s.lm.DefaultCheckPolicy()
-		interval = defaultInterval
+
+	// Derive duration from plan
+	var duration time.Duration
+	if plan.DurationDays > 0 {
+		duration = time.Duration(plan.DurationDays) * 24 * time.Hour
+	} else {
+		// Calculate duration based on billing cycle if duration_days not set
+		switch plan.BillingCycle {
+		case "monthly":
+			duration = 30 * 24 * time.Hour
+		case "yearly":
+			duration = 365 * 24 * time.Hour
+		case "lifetime":
+			duration = 100 * 365 * 24 * time.Hour // 100 years for lifetime
+		default:
+			duration = 365 * 24 * time.Hour // Default to yearly
+		}
 	}
+
+	// Use default check policy
+	mode, interval := s.lm.DefaultCheckPolicy()
+
+	planSlug := plan.Slug
 
 	client, err := s.lm.GetClientByEmail(ctx, emailAddr)
 	clientCreated := false
@@ -911,14 +1152,9 @@ func (s *Server) handleProvisionLicense(w http.ResponseWriter, r *http.Request) 
 	welcomeSubject := fmt.Sprintf("Welcome to %s", productLabel)
 	welcomeText := fmt.Sprintf("Hi %s,\n\nYou're now set up on the %s plan (%s). We'll send your license JSON in a separate email right away. Keep an eye on your inbox and store the JSON securely before activating devices.\n\nThanks,\nThe Licensing Team", clientLabel, planLabel, productLabel)
 	welcomeHTML := fmt.Sprintf("<p>Hi %s,</p><p>You're now set up on the <strong>%s</strong> plan for %s.</p><p>We'll send your license JSON in a separate email momentarily. Save it securely before activating devices.</p><p>Thanks,<br/>The Licensing Team</p>", html.EscapeString(clientLabel), html.EscapeString(planLabel), html.EscapeString(productLabel))
-	if res, err := s.enqueueEmail(ctx, client.Email, welcomeSubject, welcomeHTML, welcomeText, map[string]string{
-		"category":   "onboarding",
-		"template":   "client_welcome",
-		"plan_slug":  plan.Slug,
-		"product_id": productID,
-	}); err != nil {
-		emails["welcome"] = emailDispatchResult{Queued: false, Error: err.Error()}
-		log.Printf("failed to queue welcome email for %s: %v", client.Email, err)
+	if res, err := s.sendEmailNow(ctx, client.Email, welcomeSubject, welcomeHTML, welcomeText, nil); err != nil {
+		emails["welcome"] = emailDispatchResult{Sent: false, Error: err.Error()}
+		log.Printf("failed to send welcome email for %s: %v", client.Email, err)
 	} else {
 		emails["welcome"] = *res
 	}
@@ -942,16 +1178,20 @@ func (s *Server) handleProvisionLicense(w http.ResponseWriter, r *http.Request) 
 	}
 	licenseSubject := fmt.Sprintf("%s license credentials", productLabel)
 	jsonBody := string(licenseJSON)
-	licenseText := fmt.Sprintf("Hi %s,\n\nHere are the license credentials you can store as a JSON file before activating devices:\n\n%s\n\nKeep this file private.\n\nThanks,\nThe Licensing Team", clientLabel, jsonBody)
-	licenseHTML := fmt.Sprintf("<p>Hi %s,</p><p>Here are the license credentials you can store as a JSON file before activating devices:</p><pre style=\"padding:12px;background:#0f172a;color:#e2e8f0;border-radius:8px;white-space:pre-wrap;\">%s</pre><p>Keep this file private.</p><p>Thanks,<br/>The Licensing Team</p>", html.EscapeString(clientLabel), html.EscapeString(jsonBody))
-	if res, err := s.enqueueEmail(ctx, client.Email, licenseSubject, licenseHTML, licenseText, map[string]string{
-		"category":   "onboarding",
-		"template":   "license_payload",
-		"plan_slug":  plan.Slug,
-		"product_id": productID,
-	}); err != nil {
-		emails["license"] = emailDispatchResult{Queued: false, Error: err.Error()}
-		log.Printf("failed to queue license email for %s: %v", client.Email, err)
+	licenseText := fmt.Sprintf("Hi %s,\n\nHere are the license credentials. We have also attached the license.json file to this email for your convenience.\n\nKeep this file private and secure.\n\nThanks,\nThe Licensing Team", clientLabel)
+	licenseHTML := fmt.Sprintf("<p>Hi %s,</p><p>Here are the license credentials. We have also attached the <code>license.json</code> file to this email for your convenience.</p><pre style=\"padding:12px;background:#0f172a;color:#e2e8f0;border-radius:8px;white-space:pre-wrap;\">%s</pre><p>Keep this file private and secure.</p><p>Thanks,<br/>The Licensing Team</p>", html.EscapeString(clientLabel), html.EscapeString(jsonBody))
+
+	// Create the JSON file attachment
+	licenseAttachment := &email.EmailAttachment{
+		Filename:    "license.json",
+		ContentType: "application/json",
+		Data:        licenseJSON,
+		Size:        int64(len(licenseJSON)),
+	}
+
+	if res, err := s.sendEmailNow(ctx, client.Email, licenseSubject, licenseHTML, licenseText, []*email.EmailAttachment{licenseAttachment}); err != nil {
+		emails["license"] = emailDispatchResult{Sent: false, Error: err.Error()}
+		log.Printf("failed to send license email for %s: %v", client.Email, err)
 	} else {
 		emails["license"] = *res
 	}
@@ -1127,6 +1367,39 @@ func (s *Server) handleAdminAPIKeys(w http.ResponseWriter, r *http.Request) {
 			Metadata: newAPIKeyMetadata(record),
 		}
 		s.respondJSON(w, http.StatusCreated, resp)
+	default:
+		s.respondError(w, http.StatusMethodNotAllowed, "Method not allowed")
+	}
+}
+
+func (s *Server) handleAdminAPIKeyActions(w http.ResponseWriter, r *http.Request) {
+	if !s.enforceRateLimit(w, r) {
+		return
+	}
+	if !s.authorizeAdmin(w, r) {
+		return
+	}
+
+	// Extract the API key ID from the path: /api/admin/api-keys/{id}
+	path := strings.TrimPrefix(r.URL.Path, "/api/admin/api-keys/")
+	keyID := strings.TrimSpace(path)
+	if keyID == "" {
+		s.respondError(w, http.StatusBadRequest, "API key ID is required")
+		return
+	}
+
+	switch r.Method {
+	case http.MethodDelete:
+		err := s.lm.DeleteAPIKey(r.Context(), keyID)
+		if err != nil {
+			if errors.Is(err, errAPIKeyMissing) {
+				s.respondError(w, http.StatusNotFound, "API key not found")
+			} else {
+				s.respondError(w, http.StatusInternalServerError, err.Error())
+			}
+			return
+		}
+		s.respondJSON(w, http.StatusOK, map[string]string{"message": "API key deleted"})
 	default:
 		s.respondError(w, http.StatusMethodNotAllowed, "Method not allowed")
 	}
@@ -1373,6 +1646,7 @@ func (s *Server) Start() error {
 	mux.HandleFunc("/api/clients/", s.handleClientActions)
 	mux.HandleFunc("/api/admin/users", s.handleAdminUsers)
 	mux.HandleFunc("/api/admin/api-keys", s.handleAdminAPIKeys)
+	mux.HandleFunc("/api/admin/api-keys/", s.handleAdminAPIKeyActions)
 	mux.HandleFunc("/api/admin/licenses/provision", s.handleProvisionLicense)
 	mux.HandleFunc("/api/products", s.handleProducts)
 	mux.HandleFunc("/api/products/", s.handleProductActions)
