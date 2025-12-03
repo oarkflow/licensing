@@ -26,16 +26,17 @@ import (
 )
 
 type Server struct {
-	lm                 *LicenseManager
-	port               string
-	rateLimiter        *RateLimiter
-	legacyAPIKeyHashes [][]byte
-	tlsCertPath        string
-	tlsKeyPath         string
-	clientCAPath       string
-	allowInsecureHTTP  bool
-	webHandler         http.Handler     // Optional web UI handler
-	sessionValidator   SessionValidator // Optional session validator for cookie-based auth
+	lm                  *LicenseManager
+	port                string
+	rateLimiter         *RateLimiter
+	legacyAPIKeyHashes  [][]byte
+	tlsCertPath         string
+	tlsKeyPath          string
+	clientCAPath        string
+	allowInsecureHTTP   bool
+	webHandler          http.Handler     // Optional web UI handler
+	sessionValidator    SessionValidator // Optional session validator for cookie-based auth
+	emailTemplateLoader *EmailTemplateLoader
 }
 
 // SessionValidator validates session cookies for authentication
@@ -110,15 +111,22 @@ func NewServer(lm *LicenseManager, port string, apiKeys []string, limiter *RateL
 	if !allowInsecure && (strings.TrimSpace(tlsCertPath) == "" || strings.TrimSpace(tlsKeyPath) == "") {
 		return nil, fmt.Errorf("tls cert/key required unless allowInsecure HTTP is enabled")
 	}
+	// Initialize email template loader
+	emailTemplateLoader := NewEmailTemplateLoader()
+	if err := emailTemplateLoader.LoadTemplates(); err != nil {
+		return nil, fmt.Errorf("failed to load email templates: %w", err)
+	}
+
 	return &Server{
-		lm:                 lm,
-		port:               port,
-		rateLimiter:        limiter,
-		legacyAPIKeyHashes: hashes,
-		tlsCertPath:        tlsCertPath,
-		tlsKeyPath:         tlsKeyPath,
-		clientCAPath:       clientCAPath,
-		allowInsecureHTTP:  allowInsecure,
+		lm:                  lm,
+		port:                port,
+		rateLimiter:         limiter,
+		legacyAPIKeyHashes:  hashes,
+		tlsCertPath:         tlsCertPath,
+		tlsKeyPath:          tlsKeyPath,
+		clientCAPath:        clientCAPath,
+		allowInsecureHTTP:   allowInsecure,
+		emailTemplateLoader: emailTemplateLoader,
 	}, nil
 }
 
@@ -1150,8 +1158,24 @@ func (s *Server) handleProvisionLicense(w http.ResponseWriter, r *http.Request) 
 
 	emails := make(map[string]emailDispatchResult)
 	welcomeSubject := fmt.Sprintf("Welcome to %s", productLabel)
+
+	// Render welcome email using template
+	welcomeTemplateData := EmailTemplateData{
+		ClientName:  clientLabel,
+		PlanName:    planLabel,
+		ProductName: productLabel,
+		Email:       client.Email,
+		SupportURL:  "https://support.example.com",
+		DocsURL:     "https://docs.example.com",
+	}
+	welcomeHTML, err := s.emailTemplateLoader.RenderTemplate("welcome_email", welcomeTemplateData)
+	if err != nil {
+		log.Printf("failed to render welcome email template: %v", err)
+		// Fallback to simple text if template rendering fails
+		welcomeHTML = fmt.Sprintf("<p>Hi %s,</p><p>You're now set up on the <strong>%s</strong> plan for %s.</p><p>We'll send your license JSON in a separate email momentarily. Save it securely before activating devices.</p><p>Thanks,<br/>The Licensing Team</p>", html.EscapeString(clientLabel), html.EscapeString(planLabel), html.EscapeString(productLabel))
+	}
+
 	welcomeText := fmt.Sprintf("Hi %s,\n\nYou're now set up on the %s plan (%s). We'll send your license JSON in a separate email right away. Keep an eye on your inbox and store the JSON securely before activating devices.\n\nThanks,\nThe Licensing Team", clientLabel, planLabel, productLabel)
-	welcomeHTML := fmt.Sprintf("<p>Hi %s,</p><p>You're now set up on the <strong>%s</strong> plan for %s.</p><p>We'll send your license JSON in a separate email momentarily. Save it securely before activating devices.</p><p>Thanks,<br/>The Licensing Team</p>", html.EscapeString(clientLabel), html.EscapeString(planLabel), html.EscapeString(productLabel))
 	if res, err := s.sendEmailNow(ctx, client.Email, welcomeSubject, welcomeHTML, welcomeText, nil); err != nil {
 		emails["welcome"] = emailDispatchResult{Sent: false, Error: err.Error()}
 		log.Printf("failed to send welcome email for %s: %v", client.Email, err)
@@ -1178,8 +1202,24 @@ func (s *Server) handleProvisionLicense(w http.ResponseWriter, r *http.Request) 
 	}
 	licenseSubject := fmt.Sprintf("%s license credentials", productLabel)
 	jsonBody := string(licenseJSON)
+
+	// Render license email using template
+	licenseTemplateData := EmailTemplateData{
+		ClientName:  clientLabel,
+		ProductName: productLabel,
+		Email:       client.Email,
+		LicenseJSON: jsonBody,
+		SupportURL:  "https://support.example.com",
+		DocsURL:     "https://docs.example.com",
+	}
+	licenseHTML, err := s.emailTemplateLoader.RenderTemplate("license_email", licenseTemplateData)
+	if err != nil {
+		log.Printf("failed to render license email template: %v", err)
+		// Fallback to simple HTML if template rendering fails
+		licenseHTML = fmt.Sprintf("<p>Hi %s,</p><p>Here are the license credentials. We have also attached the <code>license.json</code> file to this email for your convenience.</p><pre style=\"padding:12px;background:#0f172a;color:#e2e8f0;border-radius:8px;white-space:pre-wrap;\">%s</pre><p>Keep this file private and secure.</p><p>Thanks,<br/>The Licensing Team</p>", html.EscapeString(clientLabel), html.EscapeString(jsonBody))
+	}
+
 	licenseText := fmt.Sprintf("Hi %s,\n\nHere are the license credentials. We have also attached the license.json file to this email for your convenience.\n\nKeep this file private and secure.\n\nThanks,\nThe Licensing Team", clientLabel)
-	licenseHTML := fmt.Sprintf("<p>Hi %s,</p><p>Here are the license credentials. We have also attached the <code>license.json</code> file to this email for your convenience.</p><pre style=\"padding:12px;background:#0f172a;color:#e2e8f0;border-radius:8px;white-space:pre-wrap;\">%s</pre><p>Keep this file private and secure.</p><p>Thanks,<br/>The Licensing Team</p>", html.EscapeString(clientLabel), html.EscapeString(jsonBody))
 
 	// Create the JSON file attachment
 	licenseAttachment := &email.EmailAttachment{
@@ -1656,6 +1696,14 @@ func (s *Server) Start() error {
 	// If web UI handler is set, use it for all other routes
 	if s.webHandler != nil {
 		mux.Handle("/", s.webHandler)
+	} else {
+		// If no web handler is set, try to serve static files from web/dist
+		distPath := "web/dist"
+		if _, err := os.Stat(distPath); err == nil {
+			// web/dist directory exists, serve static files
+			mux.Handle("/", http.FileServer(http.Dir(distPath)))
+			log.Printf("🖥️  Serving static web UI from %s", distPath)
+		}
 	}
 
 	server := &http.Server{

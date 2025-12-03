@@ -167,17 +167,16 @@ This is the recommended endpoint for integrations with payment processors, CRMs,
 ### Basic Provision Request
 
 ```bash
-curl -sSL -X POST "$BASE_URL/api/admin/licenses/provision" \
-  -H "X-API-Key: $ADMIN_KEY" \
+curl -sSL -X POST "http://localhost:8801/api/admin/licenses/provision" \
+  -H "X-API-Key: E111D02FDEE35B2BF12925A279E2BE6147354FBE772B5643" \
   -H 'Content-Type: application/json' \
   -H 'User-Agent: my-erp/2024.05' \
   -d '{
     "email": "customer@example.com",
     "name": "John Doe",
     "company_name": "Acme Corp",
-    "plan_slug": "pro",
-    "duration_days": 365,
-    "max_devices": 3
+    "product_id": "secretr",
+    "plan_id": "plan_secretr_solo"
   }'
 ```
 
