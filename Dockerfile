@@ -9,7 +9,7 @@ ENV CGO_ENABLED=0
 COPY backend/go.mod backend/go.sum ./
 RUN go mod download
 COPY backend/. .
-RUN go build -o /out/crm .
+RUN go build -o /out/crm ./cmd
 
 ########################
 # Backend runtime      #
@@ -19,7 +19,7 @@ RUN apk add --no-cache ca-certificates wget
 WORKDIR /srv
 COPY --from=backend-build /out/crm /usr/local/bin/crm
 COPY backend/templates ./templates
-COPY dist ./dist
+COPY backend/dist ./dist
 ENV PORT=6601
 EXPOSE 6601
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 CMD wget -qO- http://127.0.0.1:6601/api/health || exit 1

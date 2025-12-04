@@ -1,4 +1,5 @@
 import { Link, useLocation } from 'react-router-dom';
+import { useQuery } from '@tanstack/react-query';
 import {
     LayoutDashboard,
     Key,
@@ -34,6 +35,8 @@ import {
 } from '@/components/ui/collapsible';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import api from '@/services/api';
+import type { DashboardStats } from '@/types/api';
 
 const mainNavItems = [
     {
@@ -96,6 +99,24 @@ const settingsNavItems = [
 
 export function AppSidebar() {
     const location = useLocation();
+
+    const { data: statsResponse } = useQuery({
+        queryKey: ['dashboard-stats'],
+        queryFn: () => api.getDashboardStats(),
+    });
+
+    const stats: DashboardStats = statsResponse?.data || {
+        total_licenses: 0,
+        active_licenses: 0,
+        revoked_licenses: 0,
+        expired_licenses: 0,
+        total_clients: 0,
+        active_clients: 0,
+        banned_clients: 0,
+        total_products: 0,
+        total_admins: 0,
+        recent_licenses: [],
+    };
 
     const isActive = (url: string) => {
         if (url === '/') {
@@ -276,15 +297,15 @@ export function AppSidebar() {
                     <div className="space-y-2 text-sm">
                         <div className="flex items-center justify-between text-emerald-300">
                             <span className="status-dot">Active</span>
-                            <span className="font-semibold">82%</span>
+                            <span className="font-semibold">{stats.total_licenses > 0 ? Math.round((stats.active_licenses / stats.total_licenses) * 100) : 0}%</span>
                         </div>
                         <div className="flex items-center justify-between text-amber-200">
                             <span className="status-dot">Expiring</span>
-                            <span className="font-semibold">12%</span>
+                            <span className="font-semibold">{stats.total_licenses > 0 ? Math.round((stats.expired_licenses / stats.total_licenses) * 100) : 0}%</span>
                         </div>
                         <div className="flex items-center justify-between text-rose-300">
                             <span className="status-dot">Revoked</span>
-                            <span className="font-semibold">6%</span>
+                            <span className="font-semibold">{stats.total_licenses > 0 ? Math.round((stats.revoked_licenses / stats.total_licenses) * 100) : 0}%</span>
                         </div>
                     </div>
                     <Button

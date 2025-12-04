@@ -145,6 +145,7 @@ class ApiService {
                     ...options,
                     headers,
                     credentials: 'include',
+                    redirect: 'follow',
                 });
 
                 if (response.status === 401) {
@@ -176,6 +177,12 @@ class ApiService {
                 const data = JSON.parse(text);
 
                 if (!response.ok) {
+                    // Special handling for setup required
+                    if (data.error === "Require Setup before login") {
+                        window.location.href = '/setup';
+                        return { success: false, error: 'Setup required' };
+                    }
+
                     return {
                         success: false,
                         error: data.error || data.message || 'Request failed',

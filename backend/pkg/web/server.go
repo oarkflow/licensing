@@ -377,8 +377,7 @@ func (ws *WebServer) handleAPILogin(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if !ws.hasAdminUser(r.Context()) {
-		// Redirect to setup page instead of showing error
-		http.Redirect(w, r, "/setup", http.StatusSeeOther)
+		ws.respondAPIError(w, http.StatusBadRequest, "Require Setup before login")
 		return
 	}
 

@@ -11,8 +11,8 @@ import (
 	"time"
 
 	"github.com/oarkflow/licensing/pkg/licensing"
-	"github.com/oarkflow/licensing/pkg/licensing/web"
 	"github.com/oarkflow/licensing/pkg/utils"
+	"github.com/oarkflow/licensing/pkg/web"
 )
 
 // ==================== Main ====================

@@ -161,17 +161,17 @@ export function DashboardPage() {
                         <div className="grid gap-4 text-sm md:grid-cols-3">
                             <div className="rounded-2xl border border-white/20 bg-white/5 p-4">
                                 <p className="text-xs uppercase tracking-[0.3em] text-white/60">Active</p>
-                                <p className="mt-2 text-2xl font-semibold text-white">{stats.active_licenses}</p>
+                                <p className="mt-2 text-2xl font-semibold text-white">{stats.total_licenses > 0 ? Math.round((stats.active_licenses / stats.total_licenses) * 100) : 0}%</p>
                                 <p className="text-white/70">+12% this week</p>
                             </div>
                             <div className="rounded-2xl border border-white/20 bg-white/5 p-4">
                                 <p className="text-xs uppercase tracking-[0.3em] text-white/60">Expiring</p>
-                                <p className="mt-2 text-2xl font-semibold text-amber-200">{stats.expired_licenses}</p>
+                                <p className="mt-2 text-2xl font-semibold text-amber-200">{stats.total_licenses > 0 ? Math.round((stats.expired_licenses / stats.total_licenses) * 100) : 0}%</p>
                                 <p className="text-white/70">Review before renewal</p>
                             </div>
                             <div className="rounded-2xl border border-white/20 bg-white/5 p-4">
                                 <p className="text-xs uppercase tracking-[0.3em] text-white/60">Revoked</p>
-                                <p className="mt-2 text-2xl font-semibold text-rose-200">{stats.revoked_licenses}</p>
+                                <p className="mt-2 text-2xl font-semibold text-rose-200">{stats.total_licenses > 0 ? Math.round((stats.revoked_licenses / stats.total_licenses) * 100) : 0}%</p>
                                 <p className="text-white/70">Containment mode</p>
                             </div>
                         </div>
@@ -201,9 +201,9 @@ export function DashboardPage() {
                         <div>
                             <div className="mb-2 flex items-center justify-between text-sm">
                                 <span className="text-muted-foreground">Security events</span>
-                                <span className="font-semibold text-rose-200">3</span>
+                                <span className="font-semibold text-rose-200">{stats.revoked_licenses}</span>
                             </div>
-                            <Progress value={30} className="h-2 rounded-full bg-white/10" />
+                            <Progress value={stats.total_licenses > 0 ? (stats.revoked_licenses / stats.total_licenses) * 100 : 0} className="h-2 rounded-full bg-white/10" />
                         </div>
                     </CardContent>
                 </Card>
@@ -356,7 +356,7 @@ export function DashboardPage() {
                                 </div>
                                 <span className="font-semibold">{stats.total_clients - stats.banned_clients}</span>
                             </div>
-                            <Progress value={80} className="h-2 rounded-full bg-white/10" />
+                            <Progress value={stats.total_clients > 0 ? ((stats.total_clients - stats.banned_clients) / stats.total_clients) * 100 : 0} className="h-2 rounded-full bg-white/10" />
                         </div>
                         <div className="space-y-3">
                             <div className="flex items-center justify-between">
@@ -366,7 +366,7 @@ export function DashboardPage() {
                                 </div>
                                 <span className="font-semibold">{stats.expired_licenses}</span>
                             </div>
-                            <Progress value={40} className="h-2 rounded-full bg-white/10" />
+                            <Progress value={stats.total_licenses > 0 ? (stats.expired_licenses / stats.total_licenses) * 100 : 0} className="h-2 rounded-full bg-white/10" />
                         </div>
                         <div className="rounded-2xl border border-dashed border-white/20 p-4 text-center">
                             <p className="text-sm text-muted-foreground">Need help with license rollouts?</p>
