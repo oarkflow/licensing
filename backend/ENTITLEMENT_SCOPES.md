@@ -650,6 +650,26 @@ The `api` feature controls HTTP API access.
 }
 ```
 
+#### Transfer (Business+ - Secure device-to-device and cloud transfers)
+```json
+{
+  "transfer_devices_list": { "scope_id": "api_s070", "scope_slug": "transfer_devices_list", "permission": "allow" },
+  "transfer_devices_trust": { "scope_id": "api_s071", "scope_slug": "transfer_devices_trust", "permission": "allow" },
+  "transfer_devices_revoke": { "scope_id": "api_s072", "scope_slug": "transfer_devices_revoke", "permission": "allow" },
+  "transfer_device_initiate": { "scope_id": "api_s073", "scope_slug": "transfer_device_initiate", "permission": "allow" },
+  "transfer_device_status": { "scope_id": "api_s074", "scope_slug": "transfer_device_status", "permission": "allow" },
+  "transfer_cloud_config": { "scope_id": "api_s075", "scope_slug": "transfer_cloud_config", "permission": "allow" },
+  "transfer_cloud_upload": { "scope_id": "api_s076", "scope_slug": "transfer_cloud_upload", "permission": "allow" },
+  "transfer_cloud_download": { "scope_id": "api_s077", "scope_slug": "transfer_cloud_download", "permission": "allow" },
+  "transfer_history_list": { "scope_id": "api_s078", "scope_slug": "transfer_history_list", "permission": "allow" },
+  "transfer_history_detail": { "scope_id": "api_s079", "scope_slug": "transfer_history_detail", "permission": "allow" },
+  "transfer_schedules_list": { "scope_id": "api_s080", "scope_slug": "transfer_schedules_list", "permission": "allow" },
+  "transfer_schedules_create": { "scope_id": "api_s081", "scope_slug": "transfer_schedules_create", "permission": "allow" },
+  "transfer_schedules_update": { "scope_id": "api_s082", "scope_slug": "transfer_schedules_update", "permission": "allow" },
+  "transfer_schedules_delete": { "scope_id": "api_s083", "scope_slug": "transfer_schedules_delete", "permission": "allow" }
+}
+```
+
 ---
 
 ## 4. Plan-Based Feature Matrix
@@ -1183,9 +1203,10 @@ When `scopes` is an empty object `{}`, all operations within that feature are al
 | API Tenant Management | 6 | Business+ |
 | API Groups/Namespaces | 2 | Business+ |
 | API Export/Import | 2 | Personal+ |
-| **Total API Scopes** | **69** | |
+| API Transfer | 14 | Business+ |
+| **Total API Scopes** | **83** | |
 | | | |
-| **Grand Total** | **189** | |
+| **Grand Total** | **203** | |
 
 ---
 

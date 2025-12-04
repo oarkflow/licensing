@@ -5,7 +5,7 @@ deploy-docker:
 build-run: build run
 
 build:
-	pnpm build && rm -rf backend/dist && mv dist backend/dist
+	pnpm install && pnpm build && rm -rf backend/dist && mv dist backend/dist
 
 run:
 	cd backend && go run ./cmd/

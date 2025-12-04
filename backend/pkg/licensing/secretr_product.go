@@ -534,6 +534,22 @@ var apiFeature = secretrFeatureDefinition{
 		// Export/Import (Business+)
 		{ID: "api_s068", Name: "Export All", Slug: "export_all", Description: "Export all data via API", PlanRestrictions: businessAndUp()},
 		{ID: "api_s069", Name: "Import All", Slug: "import_all", Description: "Import all data via API", PlanRestrictions: businessAndUp()},
+
+		// Transfer (Business+ - Secure device-to-device and cloud transfers)
+		{ID: "api_s070", Name: "Transfer Devices List", Slug: "transfer_devices_list", Description: "List trusted devices", PlanRestrictions: businessAndUp()},
+		{ID: "api_s071", Name: "Transfer Devices Trust", Slug: "transfer_devices_trust", Description: "Trust a device", PlanRestrictions: businessAndUp()},
+		{ID: "api_s072", Name: "Transfer Devices Revoke", Slug: "transfer_devices_revoke", Description: "Revoke device trust", PlanRestrictions: businessAndUp()},
+		{ID: "api_s073", Name: "Transfer Device Initiate", Slug: "transfer_device_initiate", Description: "Initiate device transfer", PlanRestrictions: businessAndUp()},
+		{ID: "api_s074", Name: "Transfer Device Status", Slug: "transfer_device_status", Description: "Get device transfer status", PlanRestrictions: businessAndUp()},
+		{ID: "api_s075", Name: "Transfer Cloud Config", Slug: "transfer_cloud_config", Description: "Cloud transfer configuration", PlanRestrictions: businessAndUp()},
+		{ID: "api_s076", Name: "Transfer Cloud Upload", Slug: "transfer_cloud_upload", Description: "Upload to cloud storage", PlanRestrictions: businessAndUp()},
+		{ID: "api_s077", Name: "Transfer Cloud Download", Slug: "transfer_cloud_download", Description: "Download from cloud storage", PlanRestrictions: businessAndUp()},
+		{ID: "api_s078", Name: "Transfer History List", Slug: "transfer_history_list", Description: "List transfer history", PlanRestrictions: businessAndUp()},
+		{ID: "api_s079", Name: "Transfer History Detail", Slug: "transfer_history_detail", Description: "Get transfer details", PlanRestrictions: businessAndUp()},
+		{ID: "api_s080", Name: "Transfer Schedules List", Slug: "transfer_schedules_list", Description: "List transfer schedules", PlanRestrictions: businessAndUp()},
+		{ID: "api_s081", Name: "Transfer Schedules Create", Slug: "transfer_schedules_create", Description: "Create transfer schedule", PlanRestrictions: businessAndUp()},
+		{ID: "api_s082", Name: "Transfer Schedules Update", Slug: "transfer_schedules_update", Description: "Update transfer schedule", PlanRestrictions: businessAndUp()},
+		{ID: "api_s083", Name: "Transfer Schedules Delete", Slug: "transfer_schedules_delete", Description: "Delete transfer schedule", PlanRestrictions: businessAndUp()},
 	},
 }
 
@@ -1047,4 +1063,55 @@ func GetDeniedScopesForPlan(planSlug string) map[string][]string {
 	sort.Strings(result["api"])
 
 	return result
+}
+
+// MigrateTransferScopes adds the transfer feature scopes to the API feature if they don't already exist.
+// This is a migration function that can be called to ensure the transfer scopes are present
+// without requiring a full bootstrap. It's idempotent and safe to call multiple times.
+func MigrateTransferScopes(ctx context.Context, storage Storage) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	now := time.Now()
+
+	// Transfer scopes to migrate (Business+ plan required)
+	transferScopes := []secretrScopeDefinition{
+		{ID: "api_s070", Name: "Transfer Devices List", Slug: "transfer_devices_list", Description: "List trusted devices", PlanRestrictions: businessAndUp()},
+		{ID: "api_s071", Name: "Transfer Devices Trust", Slug: "transfer_devices_trust", Description: "Trust a device", PlanRestrictions: businessAndUp()},
+		{ID: "api_s072", Name: "Transfer Devices Revoke", Slug: "transfer_devices_revoke", Description: "Revoke device trust", PlanRestrictions: businessAndUp()},
+		{ID: "api_s073", Name: "Transfer Device Initiate", Slug: "transfer_device_initiate", Description: "Initiate device transfer", PlanRestrictions: businessAndUp()},
+		{ID: "api_s074", Name: "Transfer Device Status", Slug: "transfer_device_status", Description: "Get device transfer status", PlanRestrictions: businessAndUp()},
+		{ID: "api_s075", Name: "Transfer Cloud Config", Slug: "transfer_cloud_config", Description: "Cloud transfer configuration", PlanRestrictions: businessAndUp()},
+		{ID: "api_s076", Name: "Transfer Cloud Upload", Slug: "transfer_cloud_upload", Description: "Upload to cloud storage", PlanRestrictions: businessAndUp()},
+		{ID: "api_s077", Name: "Transfer Cloud Download", Slug: "transfer_cloud_download", Description: "Download from cloud storage", PlanRestrictions: businessAndUp()},
+		{ID: "api_s078", Name: "Transfer History List", Slug: "transfer_history_list", Description: "List transfer history", PlanRestrictions: businessAndUp()},
+		{ID: "api_s079", Name: "Transfer History Detail", Slug: "transfer_history_detail", Description: "Get transfer details", PlanRestrictions: businessAndUp()},
+		{ID: "api_s080", Name: "Transfer Schedules List", Slug: "transfer_schedules_list", Description: "List transfer schedules", PlanRestrictions: businessAndUp()},
+		{ID: "api_s081", Name: "Transfer Schedules Create", Slug: "transfer_schedules_create", Description: "Create transfer schedule", PlanRestrictions: businessAndUp()},
+		{ID: "api_s082", Name: "Transfer Schedules Update", Slug: "transfer_schedules_update", Description: "Update transfer schedule", PlanRestrictions: businessAndUp()},
+		{ID: "api_s083", Name: "Transfer Schedules Delete", Slug: "transfer_schedules_delete", Description: "Delete transfer schedule", PlanRestrictions: businessAndUp()},
+	}
+
+	// API feature ID from secretr_product.go definitions
+	const apiFeatureID = "feat_api_001"
+
+	for _, scopeDef := range transferScopes {
+		scope := &FeatureScope{
+			ID:         scopeDef.ID,
+			FeatureID:  apiFeatureID,
+			Name:       scopeDef.Name,
+			Slug:       scopeDef.Slug,
+			Permission: ScopePermissionAllow,
+			Metadata: map[string]string{
+				"description": scopeDef.Description,
+			},
+			CreatedAt: now,
+			UpdatedAt: now,
+		}
+		if err := upsertFeatureScope(ctx, storage, scope); err != nil {
+			return fmt.Errorf("migrate transfer scope %s: %w", scopeDef.Slug, err)
+		}
+	}
+
+	return nil
 }
