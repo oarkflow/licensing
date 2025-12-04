@@ -1,38 +1,32 @@
 services:
-  licensing-server:
+  crm:
     build:
       context: .
-    container_name: licensing-server
+    container_name: crm
     restart: unless-stopped
 
     # Expose port properly
     ports:
-      - "8801:8801"
+      - "6601:6601"
 
     environment:
-      LICENSE_SERVER_HTTP_ADDR: ":8801"
+      LICENSE_SERVER_HTTP_ADDR: ":6601"
       LICENSE_SERVER_STORAGE: "sqlite"
       LICENSE_SERVER_STORAGE_SQLITE_PATH: "/data/licensing.db"
 
     volumes:
-      - licensing-data:/data
-      - ./templates:/templates
-      - ./dist:/dist
+      - crm-data:/data
 
     networks:
-      - processgate
+      - crm
 
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://127.0.0.1:8801/health"]
+      test: [ "CMD", "curl", "-f", "http://127.0.0.1:6601/health" ]
       interval: 30s
       timeout: 5s
       retries: 3
       start_period: 15s
 
-volumes:
-  licensing-data:
-    external: true
-
 networks:
-  processgate:
+  crm:
     driver: bridge

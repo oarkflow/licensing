@@ -1,0 +1,206 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Definition of the design system. All colors, gradients, fonts, etc should be defined here.
+All colors MUST be HSL.
+*/
+
+@layer base {
+  :root {
+    /* Midnight badge palette with holographic accents */
+    --background: 232 47% 6%;
+    --foreground: 210 40% 96%;
+
+    --card: 233 42% 10%;
+    --card-foreground: 210 40% 96%;
+
+    --popover: 233 42% 8%;
+    --popover-foreground: 210 40% 96%;
+
+    --primary: 193 95% 58%;
+    --primary-foreground: 232 47% 6%;
+    --primary-hover: 193 95% 52%;
+
+    --secondary: 266 83% 63%;
+    --secondary-foreground: 232 47% 6%;
+    --secondary-hover: 266 83% 58%;
+
+    --muted: 232 32% 18%;
+    --muted-foreground: 214 18% 74%;
+
+    --accent: 164 71% 45%;
+    --accent-foreground: 232 47% 6%;
+
+    --destructive: 4 82% 58%;
+    --destructive-foreground: 210 40% 96%;
+
+    --border: 232 28% 18%;
+    --input: 232 28% 20%;
+    --ring: 193 95% 58%;
+
+    --radius: 0.9rem;
+
+    --shadow-sm: 0 20px 40px -24px hsl(210 40% 2% / 0.8);
+    --shadow-md: 0 30px 60px -24px hsl(210 40% 2% / 0.7);
+    --shadow-lg: 0 60px 90px -35px hsl(210 40% 2% / 0.75);
+    --shadow-warm: 0 30px 60px -30px hsl(266 83% 63% / 0.5);
+    --shadow-card: 0 20px 60px -30px hsl(210 40% 2% / 0.9);
+
+    --sidebar-background: 235 41% 8%;
+    --sidebar-foreground: 214 20% 82%;
+    --sidebar-primary: 193 95% 58%;
+    --sidebar-primary-foreground: 232 47% 6%;
+    --sidebar-accent: 233 34% 14%;
+    --sidebar-accent-foreground: 210 40% 96%;
+    --sidebar-border: 231 21% 19%;
+    --sidebar-ring: 164 71% 45%;
+  }
+
+  .dark {
+    --background: 232 51% 3%;
+    --foreground: 0 0% 100%;
+
+    --card: 232 52% 6%;
+    --card-foreground: 0 0% 100%;
+
+    --popover: 232 52% 6%;
+    --popover-foreground: 0 0% 100%;
+
+    --primary: 193 93% 62%;
+    --primary-foreground: 232 51% 3%;
+    --primary-hover: 193 93% 57%;
+
+    --secondary: 267 83% 66%;
+    --secondary-foreground: 232 51% 3%;
+    --secondary-hover: 267 83% 61%;
+
+    --muted: 231 41% 14%;
+    --muted-foreground: 214 20% 78%;
+
+    --accent: 164 72% 48%;
+    --accent-foreground: 232 51% 3%;
+
+    --destructive: 6 90% 56%;
+    --destructive-foreground: 0 0% 100%;
+
+    --border: 232 38% 16%;
+    --input: 232 38% 16%;
+    --ring: 193 93% 62%;
+
+    --shadow-sm: 0 35px 70px -40px hsl(210 40% 2% / 0.9);
+    --shadow-md: 0 60px 120px -50px hsl(210 40% 2% / 0.85);
+    --shadow-lg: 0 100px 160px -60px hsl(210 40% 2% / 0.8);
+    --shadow-warm: 0 50px 120px -60px hsl(266 83% 63% / 0.65);
+    --shadow-card: 0 45px 110px -70px hsl(210 40% 2% / 0.9);
+    --sidebar-background: 232 48% 4%;
+    --sidebar-foreground: 214 20% 88%;
+    --sidebar-primary: 193 93% 62%;
+    --sidebar-primary-foreground: 232 51% 3%;
+    --sidebar-accent: 233 35% 12%;
+    --sidebar-accent-foreground: 214 20% 88%;
+    --sidebar-border: 233 32% 14%;
+    --sidebar-ring: 164 72% 48%;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+
+  body {
+    @apply bg-background text-foreground antialiased;
+    font-family: 'Inter', 'Sora', 'Space Grotesk', sans-serif;
+    min-height: 100vh;
+    background-image:
+      radial-gradient(circle at 20% 20%, hsl(193 95% 58% / 0.25), transparent 40%),
+      radial-gradient(circle at 80% 0%, hsl(266 83% 63% / 0.2), transparent 45%),
+      radial-gradient(circle at 50% 120%, hsl(164 71% 45% / 0.2), transparent 50%),
+      linear-gradient(135deg, hsl(234 45% 6%), hsl(232 47% 6%));
+    position: relative;
+  }
+
+  body::before {
+    content: '';
+    position: fixed;
+    inset: 0;
+    background-image:
+      linear-gradient(0deg, transparent 24%, rgba(255, 255, 255, 0.03) 25%, rgba(255, 255, 255, 0.03) 26%, transparent 27%, transparent 74%, rgba(255, 255, 255, 0.03) 75%, rgba(255, 255, 255, 0.03) 76%, transparent 77%),
+      linear-gradient(90deg, transparent 24%, rgba(255, 255, 255, 0.03) 25%, rgba(255, 255, 255, 0.03) 26%, transparent 27%, transparent 74%, rgba(255, 255, 255, 0.03) 75%, rgba(255, 255, 255, 0.03) 76%, transparent 77%);
+    background-size: 50px 50px;
+    opacity: 0.4;
+    pointer-events: none;
+    z-index: -1;
+  }
+
+  h1, h2, h3, h4, h5, h6 {
+    font-family: 'Space Grotesk', 'Playfair Display', serif;
+    letter-spacing: -0.02em;
+  }
+}
+
+@layer utilities {
+  .shadow-sm {
+    box-shadow: var(--shadow-sm);
+  }
+
+  .shadow-md {
+    box-shadow: var(--shadow-md);
+  }
+
+  .shadow-lg {
+    box-shadow: var(--shadow-lg);
+  }
+
+  .shadow-warm {
+    box-shadow: var(--shadow-warm);
+  }
+
+  .shadow-card {
+    box-shadow: var(--shadow-card);
+  }
+
+  .glass-panel {
+    background: hsl(var(--card) / 0.65);
+    border: 1px solid hsl(var(--border) / 0.5);
+    backdrop-filter: blur(16px);
+    box-shadow: var(--shadow-card);
+  }
+
+  .neo-grid {
+    background-image:
+      radial-gradient(circle at 1px 1px, rgba(255, 255, 255, 0.08) 1px, transparent 0);
+    background-size: 24px 24px;
+  }
+
+  .gradient-border {
+    position: relative;
+  }
+
+  .gradient-border::before {
+    content: '';
+    position: absolute;
+    inset: -1px;
+    border-radius: inherit;
+    padding: 1px;
+    background: linear-gradient(135deg, hsl(193 95% 58%), hsl(266 83% 63%), hsl(164 71% 45%));
+    -webkit-mask:
+      linear-gradient(#000 0 0) content-box,
+      linear-gradient(#000 0 0);
+    -webkit-mask-composite: xor;
+    mask-composite: exclude;
+    pointer-events: none;
+  }
+
+  .status-dot::before {
+    content: '';
+    display: inline-block;
+    width: 0.5rem;
+    height: 0.5rem;
+    margin-right: 0.5rem;
+    border-radius: 9999px;
+    background: currentColor;
+    box-shadow: 0 0 12px currentColor;
+  }
+}
