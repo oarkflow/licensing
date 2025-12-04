@@ -438,6 +438,39 @@ func (lm *LicenseManager) ChangeAdminPassword(ctx context.Context, userID, curre
 	return lm.storage.UpdateAdminUser(ctx, user)
 }
 
+// UpdateAdminUser updates the username for an admin user
+func (lm *LicenseManager) UpdateAdminUser(ctx context.Context, userID, username string) (*AdminUser, error) {
+	username = strings.TrimSpace(username)
+	if username == "" {
+		return nil, fmt.Errorf("username is required")
+	}
+	user, err := lm.storage.GetAdminUser(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
+	if strings.EqualFold(user.Username, username) {
+		return user, nil
+	}
+	user.Username = username
+	user.UpdatedAt = time.Now()
+	if err := lm.storage.UpdateAdminUser(ctx, user); err != nil {
+		return nil, err
+	}
+	return user, nil
+}
+
+// DeleteAdminUser removes an admin user unless it is the last remaining account
+func (lm *LicenseManager) DeleteAdminUser(ctx context.Context, userID string) error {
+	users, err := lm.storage.ListAdminUsers(ctx)
+	if err != nil {
+		return err
+	}
+	if len(users) <= 1 {
+		return fmt.Errorf("cannot delete the last admin user")
+	}
+	return lm.storage.DeleteAdminUser(ctx, userID)
+}
+
 func (lm *LicenseManager) GenerateAPIKey(ctx context.Context, userID string) (string, *APIKeyRecord, error) {
 	if _, err := lm.storage.GetAdminUser(ctx, userID); err != nil {
 		return "", nil, err

@@ -1,380 +1,325 @@
 package web
 
 import (
+	"encoding/json"
 	"net/http"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/oarkflow/licensing/pkg/licensing"
 )
 
-// Admin User handlers
-
-func (ws *WebServer) handleUsers(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
-
-	users, err := ws.lm.ListAdminUsers(ctx)
-	if err != nil {
-		ws.renderError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-
-	// Sort by created date descending
-	sort.Slice(users, func(i, j int) bool {
-		return users[i].CreatedAt.After(users[j].CreatedAt)
-	})
-
-	// Get API key counts for each user
-	userKeyCount := make(map[string]int)
-	for _, user := range users {
-		keys, _ := ws.lm.ListAPIKeysByUser(ctx, user.ID)
-		userKeyCount[user.ID] = len(keys)
-	}
-
-	data := map[string]interface{}{
-		"Users":        users,
-		"UserKeyCount": userKeyCount,
-	}
-
-	ws.render(w, "admin_users.html", TemplateData{
-		Title:       "Admin Users",
-		CurrentPath: "/admin/users",
-		User:        ws.getSessionFromContext(r),
-		Data:        data,
-	})
+type adminUserResponse struct {
+	ID        string `json:"id"`
+	Username  string `json:"username"`
+	CreatedAt string `json:"created_at"`
+	UpdatedAt string `json:"updated_at"`
 }
 
-func (ws *WebServer) handleNewUser(w http.ResponseWriter, r *http.Request) {
+type apiKeyResponse struct {
+	ID        string `json:"id"`
+	UserID    string `json:"user_id"`
+	Prefix    string `json:"prefix"`
+	CreatedAt string `json:"created_at"`
+	LastUsed  string `json:"last_used_at,omitempty"`
+}
+
+func sanitizeAdminUser(user *licensing.AdminUser) adminUserResponse {
+	return adminUserResponse{
+		ID:        user.ID,
+		Username:  user.Username,
+		CreatedAt: user.CreatedAt.Format(time.RFC3339),
+		UpdatedAt: user.UpdatedAt.Format(time.RFC3339),
+	}
+}
+
+func sanitizeAPIKey(key *licensing.APIKeyRecord) apiKeyResponse {
+	resp := apiKeyResponse{
+		ID:        key.ID,
+		UserID:    key.UserID,
+		Prefix:    key.Prefix,
+		CreatedAt: key.CreatedAt.Format(time.RFC3339),
+	}
+	if !key.LastUsed.IsZero() {
+		resp.LastUsed = key.LastUsed.Format(time.RFC3339)
+	}
+	return resp
+}
+
+func (ws *WebServer) handleAPIAdminUsers(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-
-	if r.Method == http.MethodPost {
-		if !ws.validateCSRF(r) {
-			ws.renderError(w, http.StatusForbidden, "Invalid CSRF token")
-			return
-		}
-
-		username := strings.TrimSpace(r.FormValue("username"))
-		password := strings.TrimSpace(r.FormValue("password"))
-		confirmPassword := strings.TrimSpace(r.FormValue("confirm_password"))
-
-		if username == "" || password == "" {
-			ws.render(w, "admin_user_new.html", TemplateData{
-				Title:       "New Admin User",
-				CurrentPath: "/admin/users",
-				User:        ws.getSessionFromContext(r),
-				Error:       "Username and password are required",
-			})
-			return
-		}
-
-		if password != confirmPassword {
-			ws.render(w, "admin_user_new.html", TemplateData{
-				Title:       "New Admin User",
-				CurrentPath: "/admin/users",
-				User:        ws.getSessionFromContext(r),
-				Error:       "Passwords do not match",
-			})
-			return
-		}
-
-		if len(password) < 8 {
-			ws.render(w, "admin_user_new.html", TemplateData{
-				Title:       "New Admin User",
-				CurrentPath: "/admin/users",
-				User:        ws.getSessionFromContext(r),
-				Error:       "Password must be at least 8 characters",
-			})
-			return
-		}
-
-		_, err := ws.lm.CreateAdminUser(ctx, username, password)
+	switch r.Method {
+	case http.MethodGet:
+		users, err := ws.lm.ListAdminUsers(ctx)
 		if err != nil {
-			ws.render(w, "admin_user_new.html", TemplateData{
-				Title:       "New Admin User",
-				CurrentPath: "/admin/users",
-				User:        ws.getSessionFromContext(r),
-				Error:       err.Error(),
-			})
+			ws.respondAPIError(w, http.StatusInternalServerError, err.Error())
 			return
 		}
 
-		http.Redirect(w, r, "/admin/users", http.StatusSeeOther)
-		return
-	}
-
-	ws.render(w, "admin_user_new.html", TemplateData{
-		Title:       "New Admin User",
-		CurrentPath: "/admin/users",
-		User:        ws.getSessionFromContext(r),
-	})
-}
-
-func (ws *WebServer) handleUserDetail(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
-
-	path := strings.TrimPrefix(r.URL.Path, "/admin/users/")
-	parts := strings.Split(path, "/")
-	userID := parts[0]
-
-	if userID == "" {
-		http.NotFound(w, r)
-		return
-	}
-
-	user, err := ws.lm.GetAdminUser(ctx, userID)
-	if err != nil {
-		ws.renderError(w, http.StatusNotFound, "User not found")
-		return
-	}
-
-	// Handle API key generation
-	if len(parts) > 1 && parts[1] == "api-keys" && r.Method == http.MethodPost && ws.validateCSRF(r) {
-		action := r.FormValue("action")
-
-		switch action {
-		case "generate":
-			token, _, err := ws.lm.GenerateAPIKey(ctx, userID)
-			if err != nil {
-				ws.renderError(w, http.StatusBadRequest, err.Error())
-				return
-			}
-			// Show the generated token once
-			keys, _ := ws.lm.ListAPIKeysByUser(ctx, userID)
-			ws.render(w, "admin_user_edit.html", TemplateData{
-				Title:       user.Username,
-				CurrentPath: "/admin/users",
-				User:        ws.getSessionFromContext(r),
-				Data: map[string]interface{}{
-					"AdminUser":   user,
-					"APIKeys":     keys,
-					"NewAPIToken": token,
-				},
-			})
-			return
-		case "revoke":
-			keyID := r.FormValue("key_id")
-			err := ws.lm.RevokeAPIKey(ctx, keyID)
-			if err != nil {
-				ws.renderError(w, http.StatusBadRequest, err.Error())
-				return
-			}
-		}
-
-		http.Redirect(w, r, "/admin/users/"+userID, http.StatusSeeOther)
-		return
-	}
-
-	// Handle password change
-	if len(parts) > 1 && parts[1] == "password" && r.Method == http.MethodPost && ws.validateCSRF(r) {
-		currentPassword := strings.TrimSpace(r.FormValue("current_password"))
-		newPassword := strings.TrimSpace(r.FormValue("new_password"))
-		confirmPassword := strings.TrimSpace(r.FormValue("confirm_password"))
-
-		if newPassword != confirmPassword {
-			ws.render(w, "admin_user_edit.html", TemplateData{
-				Title:       user.Username,
-				CurrentPath: "/admin/users",
-				User:        ws.getSessionFromContext(r),
-				Data:        map[string]interface{}{"AdminUser": user},
-				Error:       "Passwords do not match",
-			})
-			return
-		}
-
-		err := ws.lm.ChangeAdminPassword(ctx, userID, currentPassword, newPassword)
-		if err != nil {
-			ws.render(w, "admin_user_edit.html", TemplateData{
-				Title:       user.Username,
-				CurrentPath: "/admin/users",
-				User:        ws.getSessionFromContext(r),
-				Data:        map[string]interface{}{"AdminUser": user},
-				Error:       err.Error(),
-			})
-			return
-		}
-
-		http.Redirect(w, r, "/admin/users/"+userID, http.StatusSeeOther)
-		return
-	}
-
-	keys, _ := ws.lm.ListAPIKeysByUser(ctx, userID)
-
-	data := map[string]interface{}{
-		"AdminUser": user,
-		"APIKeys":   keys,
-	}
-
-	ws.render(w, "admin_user_edit.html", TemplateData{
-		Title:       user.Username,
-		CurrentPath: "/admin/users",
-		User:        ws.getSessionFromContext(r),
-		Data:        data,
-	})
-}
-
-// API Keys list handler
-func (ws *WebServer) handleAPIKeys(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
-
-	users, err := ws.lm.ListAdminUsers(ctx)
-	if err != nil {
-		ws.renderError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-
-	type keyWithUser struct {
-		Key  *licensing.APIKeyRecord
-		User *licensing.AdminUser
-	}
-
-	var allKeys []keyWithUser
-	userMap := make(map[string]*licensing.AdminUser)
-
-	for _, user := range users {
-		userMap[user.ID] = user
-		keys, _ := ws.lm.ListAPIKeysByUser(ctx, user.ID)
-		for _, key := range keys {
-			allKeys = append(allKeys, keyWithUser{Key: key, User: user})
-		}
-	}
-
-	// Sort by created date descending
-	sort.Slice(allKeys, func(i, j int) bool {
-		return allKeys[i].Key.CreatedAt.After(allKeys[j].Key.CreatedAt)
-	})
-
-	data := map[string]interface{}{
-		"Keys":    allKeys,
-		"UserMap": userMap,
-	}
-
-	ws.render(w, "admin_api_keys.html", TemplateData{
-		Title:       "API Keys",
-		CurrentPath: "/admin/api-keys",
-		User:        ws.getSessionFromContext(r),
-		Data:        data,
-	})
-}
-
-// handleNewAPIKey handles generating new API keys
-func (ws *WebServer) handleNewAPIKey(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
-	session := ws.getSessionFromContext(r)
-
-	if r.Method == http.MethodPost {
-		if !ws.validateCSRF(r) {
-			ws.renderError(w, http.StatusForbidden, "Invalid CSRF token")
-			return
-		}
-
-		name := strings.TrimSpace(r.FormValue("name"))
-		description := strings.TrimSpace(r.FormValue("description"))
-		_ = name        // Will be used in future
-		_ = description // Will be used in future
-
-		// Generate API key for the current user
-		token, _, err := ws.lm.GenerateAPIKey(ctx, session.UserID)
-		if err != nil {
-			ws.renderError(w, http.StatusBadRequest, err.Error())
-			return
-		}
-
-		// Show the created key page with the raw token
-		keys, _ := ws.lm.ListAPIKeysByUser(ctx, session.UserID)
-		var newKey *licensing.APIKeyRecord
-		for _, k := range keys {
-			if len(keys) > 0 {
-				newKey = k
-				break
-			}
-		}
-
-		ws.render(w, "admin_api_key_created.html", TemplateData{
-			Title:       "API Key Created",
-			CurrentPath: "/admin/api-keys",
-			User:        session,
-			Data: map[string]interface{}{
-				"APIKey":  newKey,
-				"RawKey":  token,
-				"BaseURL": "http://localhost:8080",
-			},
+		sort.Slice(users, func(i, j int) bool {
+			return users[i].CreatedAt.After(users[j].CreatedAt)
 		})
-		return
-	}
 
-	ws.render(w, "admin_api_key_new.html", TemplateData{
-		Title:       "Generate API Key",
-		CurrentPath: "/admin/api-keys",
-		User:        session,
-	})
+		resp := make([]adminUserResponse, 0, len(users))
+		for _, user := range users {
+			resp = append(resp, sanitizeAdminUser(user))
+		}
+		ws.respondJSON(w, http.StatusOK, resp)
+	case http.MethodPost:
+		var req struct {
+			Username        string `json:"username"`
+			Password        string `json:"password"`
+			ConfirmPassword string `json:"confirm_password"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			ws.respondAPIError(w, http.StatusBadRequest, "Invalid request body")
+			return
+		}
+
+		if strings.TrimSpace(req.Username) == "" || strings.TrimSpace(req.Password) == "" {
+			ws.respondAPIError(w, http.StatusBadRequest, "Username and password are required")
+			return
+		}
+		if req.ConfirmPassword != "" && req.Password != req.ConfirmPassword {
+			ws.respondAPIError(w, http.StatusBadRequest, "Passwords do not match")
+			return
+		}
+
+		user, err := ws.lm.CreateAdminUser(ctx, req.Username, req.Password)
+		if err != nil {
+			ws.respondAPIError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		ws.respondJSON(w, http.StatusCreated, sanitizeAdminUser(user))
+	default:
+		ws.respondAPIError(w, http.StatusMethodNotAllowed, "Method not allowed")
+	}
 }
 
-// handleProfile handles the user profile page
-func (ws *WebServer) handleProfile(w http.ResponseWriter, r *http.Request) {
+func (ws *WebServer) handleAPIAdminUserDetail(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
+	path := strings.TrimPrefix(r.URL.Path, "/api/admin/users/")
+	if path == "" || path == r.URL.Path {
+		ws.respondAPIError(w, http.StatusNotFound, "User ID is required")
+		return
+	}
+	parts := strings.Split(path, "/")
+	userID := strings.TrimSpace(parts[0])
+	if userID == "" {
+		ws.respondAPIError(w, http.StatusNotFound, "User ID is required")
+		return
+	}
+
+	if len(parts) > 1 {
+		switch parts[1] {
+		case "password":
+			if r.Method != http.MethodPost {
+				ws.respondAPIError(w, http.StatusMethodNotAllowed, "Method not allowed")
+				return
+			}
+			var req struct {
+				CurrentPassword string `json:"currentPassword"`
+				NewPassword     string `json:"newPassword"`
+				ConfirmPassword string `json:"confirmPassword"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				ws.respondAPIError(w, http.StatusBadRequest, "Invalid request body")
+				return
+			}
+			if req.NewPassword == "" || req.CurrentPassword == "" {
+				ws.respondAPIError(w, http.StatusBadRequest, "Current and new passwords are required")
+				return
+			}
+			if req.ConfirmPassword != "" && req.NewPassword != req.ConfirmPassword {
+				ws.respondAPIError(w, http.StatusBadRequest, "Passwords do not match")
+				return
+			}
+			if err := ws.lm.ChangeAdminPassword(ctx, userID, req.CurrentPassword, req.NewPassword); err != nil {
+				ws.respondAPIError(w, http.StatusBadRequest, err.Error())
+				return
+			}
+			ws.respondJSON(w, http.StatusOK, map[string]string{"message": "Password updated"})
+		default:
+			ws.respondAPIError(w, http.StatusNotFound, "Unknown user action")
+		}
+		return
+	}
+
+	switch r.Method {
+	case http.MethodGet:
+		user, err := ws.lm.GetAdminUser(ctx, userID)
+		if err != nil {
+			ws.respondAPIError(w, http.StatusNotFound, "User not found")
+			return
+		}
+		ws.respondJSON(w, http.StatusOK, sanitizeAdminUser(user))
+	case http.MethodPut:
+		var req struct {
+			Username string `json:"username"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			ws.respondAPIError(w, http.StatusBadRequest, "Invalid request body")
+			return
+		}
+		if strings.TrimSpace(req.Username) == "" {
+			ws.respondAPIError(w, http.StatusBadRequest, "Username is required")
+			return
+		}
+		user, err := ws.lm.UpdateAdminUser(ctx, userID, req.Username)
+		if err != nil {
+			ws.respondAPIError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		ws.respondJSON(w, http.StatusOK, sanitizeAdminUser(user))
+	case http.MethodDelete:
+		if err := ws.lm.DeleteAdminUser(ctx, userID); err != nil {
+			ws.respondAPIError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	default:
+		ws.respondAPIError(w, http.StatusMethodNotAllowed, "Method not allowed")
+	}
+}
+
+func (ws *WebServer) handleAPIAdminAPIKeys(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	switch r.Method {
+	case http.MethodGet:
+		userID := strings.TrimSpace(r.URL.Query().Get("user_id"))
+		if userID == "" {
+			ws.respondAPIError(w, http.StatusBadRequest, "user_id query parameter is required")
+			return
+		}
+		keys, err := ws.lm.ListAPIKeysByUser(ctx, userID)
+		if err != nil {
+			ws.respondAPIError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		sort.Slice(keys, func(i, j int) bool {
+			return keys[i].CreatedAt.After(keys[j].CreatedAt)
+		})
+		resp := make([]apiKeyResponse, 0, len(keys))
+		for _, key := range keys {
+			resp = append(resp, sanitizeAPIKey(key))
+		}
+		ws.respondJSON(w, http.StatusOK, resp)
+	case http.MethodPost:
+		var req struct {
+			UserID string `json:"user_id"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			ws.respondAPIError(w, http.StatusBadRequest, "Invalid request body")
+			return
+		}
+		if strings.TrimSpace(req.UserID) == "" {
+			ws.respondAPIError(w, http.StatusBadRequest, "user_id is required")
+			return
+		}
+		token, metadata, err := ws.lm.GenerateAPIKey(ctx, req.UserID)
+		if err != nil {
+			ws.respondAPIError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		ws.respondJSON(w, http.StatusCreated, map[string]interface{}{
+			"token":    token,
+			"metadata": sanitizeAPIKey(metadata),
+		})
+	default:
+		ws.respondAPIError(w, http.StatusMethodNotAllowed, "Method not allowed")
+	}
+}
+
+func (ws *WebServer) handleAPIAdminAPIKeyDetail(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodDelete {
+		ws.respondAPIError(w, http.StatusMethodNotAllowed, "Method not allowed")
+		return
+	}
+	ctx := r.Context()
+	keyID := strings.TrimPrefix(r.URL.Path, "/api/admin/api-keys/")
+	keyID = strings.TrimSpace(keyID)
+	if keyID == "" || keyID == r.URL.Path {
+		ws.respondAPIError(w, http.StatusNotFound, "API key ID is required")
+		return
+	}
+	if err := ws.lm.DeleteAPIKey(ctx, keyID); err != nil {
+		ws.respondAPIError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (ws *WebServer) handleAPIProfile(w http.ResponseWriter, r *http.Request) {
 	session := ws.getSessionFromContext(r)
-
-	user, err := ws.lm.GetAdminUser(ctx, session.UserID)
-	if err != nil {
-		ws.renderError(w, http.StatusInternalServerError, "Failed to load user data")
+	if session == nil {
+		ws.respondAPIError(w, http.StatusUnauthorized, "Authentication required")
 		return
 	}
-
-	if r.Method == http.MethodPost {
-		if !ws.validateCSRF(r) {
-			ws.renderError(w, http.StatusForbidden, "Invalid CSRF token")
+	ctx := r.Context()
+	switch r.Method {
+	case http.MethodGet:
+		user, err := ws.lm.GetAdminUser(ctx, session.UserID)
+		if err != nil {
+			ws.respondAPIError(w, http.StatusInternalServerError, err.Error())
 			return
 		}
-
-		action := r.URL.Path
-		if strings.HasSuffix(action, "/password") {
-			// Handle password change
-			currentPassword := strings.TrimSpace(r.FormValue("current_password"))
-			newPassword := strings.TrimSpace(r.FormValue("new_password"))
-			confirmPassword := strings.TrimSpace(r.FormValue("confirm_password"))
-
-			if newPassword != confirmPassword {
-				ws.render(w, "profile.html", TemplateData{
-					Title:       "Profile",
-					CurrentPath: "/profile",
-					User:        session,
-					Error:       "Passwords do not match",
-				})
-				return
-			}
-
-			err := ws.lm.ChangeAdminPassword(ctx, user.ID, currentPassword, newPassword)
-			if err != nil {
-				ws.render(w, "profile.html", TemplateData{
-					Title:       "Profile",
-					CurrentPath: "/profile",
-					User:        session,
-					Error:       err.Error(),
-				})
-				return
-			}
-
-			http.Redirect(w, r, "/profile", http.StatusSeeOther)
+		ws.respondJSON(w, http.StatusOK, sanitizeAdminUser(user))
+	case http.MethodPut:
+		var req struct {
+			Username string `json:"username"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			ws.respondAPIError(w, http.StatusBadRequest, "Invalid request body")
 			return
 		}
-
-		// Handle username update
-		username := strings.TrimSpace(r.FormValue("username"))
-		if username != "" && username != user.Username {
-			// For now, just redirect since we need to add update method
-			// TODO: Add UpdateAdminUser to LicenseManager
+		if strings.TrimSpace(req.Username) == "" {
+			ws.respondAPIError(w, http.StatusBadRequest, "Username is required")
+			return
 		}
+		user, err := ws.lm.UpdateAdminUser(ctx, session.UserID, req.Username)
+		if err != nil {
+			ws.respondAPIError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		session.Username = user.Username
+		ws.respondJSON(w, http.StatusOK, sanitizeAdminUser(user))
+	default:
+		ws.respondAPIError(w, http.StatusMethodNotAllowed, "Method not allowed")
+	}
+}
 
-		http.Redirect(w, r, "/profile", http.StatusSeeOther)
+func (ws *WebServer) handleAPIProfilePassword(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		ws.respondAPIError(w, http.StatusMethodNotAllowed, "Method not allowed")
 		return
 	}
-
-	ws.render(w, "profile.html", TemplateData{
-		Title:       "Profile",
-		CurrentPath: "/profile",
-		User:        session,
-		Data: map[string]interface{}{
-			"AdminUser": user,
-		},
-	})
+	session := ws.getSessionFromContext(r)
+	if session == nil {
+		ws.respondAPIError(w, http.StatusUnauthorized, "Authentication required")
+		return
+	}
+	ctx := r.Context()
+	var req struct {
+		CurrentPassword string `json:"currentPassword"`
+		NewPassword     string `json:"newPassword"`
+		ConfirmPassword string `json:"confirmPassword"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		ws.respondAPIError(w, http.StatusBadRequest, "Invalid request body")
+		return
+	}
+	if req.NewPassword == "" || req.CurrentPassword == "" {
+		ws.respondAPIError(w, http.StatusBadRequest, "Current and new passwords are required")
+		return
+	}
+	if req.ConfirmPassword != "" && req.NewPassword != req.ConfirmPassword {
+		ws.respondAPIError(w, http.StatusBadRequest, "Passwords do not match")
+		return
+	}
+	if err := ws.lm.ChangeAdminPassword(ctx, session.UserID, req.CurrentPassword, req.NewPassword); err != nil {
+		ws.respondAPIError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	ws.respondJSON(w, http.StatusOK, map[string]string{"message": "Password updated"})
 }

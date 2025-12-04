@@ -31,7 +31,7 @@ func main() {
 	fmt.Println("║    Hardware-Secured Licensing System      ║")
 	fmt.Println("╚═══════════════════════════════════════════╝")
 	fmt.Println()
-	os.Setenv("LICENSE_SERVER_BOOTSTRAP_DEMO", "true")
+	// os.Setenv("LICENSE_SERVER_BOOTSTRAP_DEMO", "true")
 	// Initialize storage + License Manager
 	ctx := context.Background()
 	storage, storageMode, err := licensing.BuildStorageFromEnv()

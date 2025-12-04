@@ -6,7 +6,6 @@ import (
 	"html/template"
 	"os"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"time"
 )
@@ -41,15 +40,8 @@ func NewEmailTemplateLoader() *EmailTemplateLoader {
 
 // LoadTemplates loads email templates from the templates directory
 func (etl *EmailTemplateLoader) LoadTemplates() error {
-	// Get the directory of the current file
-	_, currentFile, _, ok := runtime.Caller(0)
-	if !ok {
-		return fmt.Errorf("failed to get current file path")
-	}
-
-	// Navigate to the email_templates directory
-	templatesDir := filepath.Join(filepath.Dir(currentFile), "email_templates")
-
+	// Navigate to the templates/email directory from project root
+	templatesDir := filepath.Join("templates", "email")
 	// Read all HTML files from the templates directory
 	files, err := os.ReadDir(templatesDir)
 	if err != nil {

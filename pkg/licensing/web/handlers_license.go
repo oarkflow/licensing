@@ -1,6 +1,8 @@
 package web
 
 import (
+	"context"
+	"encoding/json"
 	"net/http"
 	"sort"
 	"strings"
@@ -9,436 +11,364 @@ import (
 	"github.com/oarkflow/licensing/pkg/licensing"
 )
 
-// License handlers
+// ==================== License APIs ====================
 
-func (ws *WebServer) handleLicenses(w http.ResponseWriter, r *http.Request) {
+func (ws *WebServer) handleAPILicenses(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-
-	if r.Method == http.MethodPost {
-		action := r.FormValue("action")
-		licenseID := r.FormValue("license_id")
-
-		if !ws.validateCSRF(r) {
-			ws.renderError(w, http.StatusForbidden, "Invalid CSRF token")
+	switch r.Method {
+	case http.MethodGet:
+		licenses, err := ws.lm.ListLicenses(ctx)
+		if err != nil {
+			ws.respondAPIError(w, http.StatusInternalServerError, err.Error())
 			return
 		}
-
-		switch action {
-		case "revoke":
-			reason := strings.TrimSpace(r.FormValue("reason"))
-			_, err := ws.lm.RevokeLicense(ctx, licenseID, reason)
-			if err != nil {
-				ws.renderError(w, http.StatusBadRequest, err.Error())
-				return
-			}
-		case "reinstate":
-			_, err := ws.lm.ReinstateLicense(ctx, licenseID)
-			if err != nil {
-				ws.renderError(w, http.StatusBadRequest, err.Error())
-				return
+		filtered := filterLicensesByQuery(licenses, r.URL.Query().Get("filter"))
+		sort.Slice(filtered, func(i, j int) bool {
+			return filtered[i].IssuedAt.After(filtered[j].IssuedAt)
+		})
+		ws.respondJSON(w, http.StatusOK, filtered)
+	case http.MethodPost:
+		var req struct {
+			ClientID            string `json:"client_id"`
+			ProductID           string `json:"product_id"`
+			PlanID              string `json:"plan_id"`
+			PlanSlug            string `json:"plan_slug"`
+			DurationDays        int    `json:"duration_days"`
+			MaxDevices          int    `json:"max_devices"`
+			CheckMode           string `json:"check_mode"`
+			CheckIntervalSecond int64  `json:"check_interval_seconds"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			ws.respondAPIError(w, http.StatusBadRequest, "Invalid request body")
+			return
+		}
+		if strings.TrimSpace(req.ClientID) == "" || strings.TrimSpace(req.PlanSlug) == "" {
+			ws.respondAPIError(w, http.StatusBadRequest, "client_id and plan_slug are required")
+			return
+		}
+		if req.DurationDays <= 0 {
+			req.DurationDays = 365
+		}
+		if req.MaxDevices <= 0 {
+			req.MaxDevices = 1
+		}
+		mode := licensing.ParseLicenseCheckMode(req.CheckMode)
+		interval := time.Duration(req.CheckIntervalSecond) * time.Second
+		var opts *licensing.GenerateLicenseOptions
+		if strings.TrimSpace(req.ProductID) != "" || strings.TrimSpace(req.PlanID) != "" {
+			opts = &licensing.GenerateLicenseOptions{
+				ProductID: req.ProductID,
+				PlanID:    req.PlanID,
 			}
 		}
+		license, err := ws.lm.GenerateLicenseWithOptions(
+			ctx,
+			req.ClientID,
+			time.Duration(req.DurationDays)*24*time.Hour,
+			req.MaxDevices,
+			req.PlanSlug,
+			mode,
+			interval,
+			opts,
+		)
+		if err != nil {
+			ws.respondAPIError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		ws.respondJSON(w, http.StatusCreated, license)
+	default:
+		ws.respondAPIError(w, http.StatusMethodNotAllowed, "Method not allowed")
+	}
+}
 
-		http.Redirect(w, r, "/licenses", http.StatusSeeOther)
+func (ws *WebServer) handleAPILicenseDetail(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	path := strings.TrimPrefix(r.URL.Path, "/api/licenses/")
+	if path == "" || path == r.URL.Path {
+		ws.respondAPIError(w, http.StatusNotFound, "License ID is required")
 		return
 	}
+	parts := strings.Split(path, "/")
+	licenseID := strings.TrimSpace(parts[0])
+	if licenseID == "" {
+		ws.respondAPIError(w, http.StatusNotFound, "License ID is required")
+		return
+	}
+	if len(parts) == 1 {
+		if r.Method != http.MethodGet {
+			ws.respondAPIError(w, http.StatusMethodNotAllowed, "Method not allowed")
+			return
+		}
+		license, err := ws.lm.Storage().GetLicense(ctx, licenseID)
+		if err != nil {
+			ws.respondAPIError(w, http.StatusNotFound, "License not found")
+			return
+		}
+		ws.respondJSON(w, http.StatusOK, license)
+		return
+	}
+	action := parts[1]
+	switch action {
+	case "revoke":
+		ws.handleAPILicenseRevoke(w, r, ctx, licenseID)
+	case "reinstate":
+		ws.handleAPILicenseReinstate(w, r, ctx, licenseID)
+	case "deactivate-device":
+		ws.handleAPILicenseDeactivateDevice(w, r, ctx, licenseID)
+	case "activations":
+		ws.handleAPILicenseActivations(w, r, ctx, licenseID)
+	default:
+		ws.respondAPIError(w, http.StatusNotFound, "Invalid license action")
+	}
+}
 
+func (ws *WebServer) handleAPILicenseRevoke(w http.ResponseWriter, r *http.Request, ctx context.Context, licenseID string) {
+	if r.Method != http.MethodPost {
+		ws.respondAPIError(w, http.StatusMethodNotAllowed, "Method not allowed")
+		return
+	}
+	var req struct {
+		Reason string `json:"reason"`
+	}
+	_ = json.NewDecoder(r.Body).Decode(&req)
+	license, err := ws.lm.RevokeLicense(ctx, licenseID, strings.TrimSpace(req.Reason))
+	if err != nil {
+		ws.respondAPIError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	ws.respondJSON(w, http.StatusOK, license)
+}
+
+func (ws *WebServer) handleAPILicenseReinstate(w http.ResponseWriter, r *http.Request, ctx context.Context, licenseID string) {
+	if r.Method != http.MethodPost {
+		ws.respondAPIError(w, http.StatusMethodNotAllowed, "Method not allowed")
+		return
+	}
+	license, err := ws.lm.ReinstateLicense(ctx, licenseID)
+	if err != nil {
+		ws.respondAPIError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	ws.respondJSON(w, http.StatusOK, license)
+}
+
+func (ws *WebServer) handleAPILicenseDeactivateDevice(w http.ResponseWriter, r *http.Request, ctx context.Context, licenseID string) {
+	if r.Method != http.MethodPost {
+		ws.respondAPIError(w, http.StatusMethodNotAllowed, "Method not allowed")
+		return
+	}
+	var req struct {
+		Fingerprint string `json:"fingerprint"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		ws.respondAPIError(w, http.StatusBadRequest, "Invalid request body")
+		return
+	}
+	if strings.TrimSpace(req.Fingerprint) == "" {
+		ws.respondAPIError(w, http.StatusBadRequest, "fingerprint is required")
+		return
+	}
+	if err := ws.lm.DeactivateDevice(ctx, licenseID, req.Fingerprint); err != nil {
+		ws.respondAPIError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	ws.respondJSON(w, http.StatusOK, map[string]string{"message": "Device deactivated"})
+}
+
+func (ws *WebServer) handleAPILicenseActivations(w http.ResponseWriter, r *http.Request, ctx context.Context, licenseID string) {
+	if r.Method != http.MethodGet {
+		ws.respondAPIError(w, http.StatusMethodNotAllowed, "Method not allowed")
+		return
+	}
+	records, err := ws.lm.ListActivations(ctx, licenseID)
+	if err != nil {
+		ws.respondAPIError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	ws.respondJSON(w, http.StatusOK, records)
+}
+
+func filterLicensesByQuery(licenses []*licensing.License, filter string) []*licensing.License {
+	switch strings.ToLower(strings.TrimSpace(filter)) {
+	case "active":
+		now := time.Now()
+		var filtered []*licensing.License
+		for _, lic := range licenses {
+			if !lic.IsRevoked && lic.ExpiresAt.After(now) {
+				filtered = append(filtered, lic)
+			}
+		}
+		return filtered
+	case "revoked":
+		var filtered []*licensing.License
+		for _, lic := range licenses {
+			if lic.IsRevoked {
+				filtered = append(filtered, lic)
+			}
+		}
+		return filtered
+	case "expired":
+		now := time.Now()
+		var filtered []*licensing.License
+		for _, lic := range licenses {
+			if !lic.IsRevoked && lic.ExpiresAt.Before(now) {
+				filtered = append(filtered, lic)
+			}
+		}
+		return filtered
+	default:
+		return licenses
+	}
+}
+
+// ==================== Client APIs ====================
+
+func (ws *WebServer) handleAPIClients(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	switch r.Method {
+	case http.MethodGet:
+		clients, err := ws.lm.ListClients(ctx)
+		if err != nil {
+			ws.respondAPIError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		filtered := filterClientsByQuery(clients, r.URL.Query().Get("filter"))
+		sort.Slice(filtered, func(i, j int) bool {
+			return filtered[i].CreatedAt.After(filtered[j].CreatedAt)
+		})
+		ws.respondJSON(w, http.StatusOK, filtered)
+	case http.MethodPost:
+		var req struct {
+			Email string `json:"email"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			ws.respondAPIError(w, http.StatusBadRequest, "Invalid request body")
+			return
+		}
+		if strings.TrimSpace(req.Email) == "" {
+			ws.respondAPIError(w, http.StatusBadRequest, "email is required")
+			return
+		}
+		client, err := ws.lm.CreateClient(ctx, req.Email)
+		if err != nil {
+			ws.respondAPIError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		ws.respondJSON(w, http.StatusCreated, client)
+	default:
+		ws.respondAPIError(w, http.StatusMethodNotAllowed, "Method not allowed")
+	}
+}
+
+func (ws *WebServer) handleAPIClientDetail(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	clientID := strings.TrimPrefix(r.URL.Path, "/api/clients/")
+	if clientID == "" || clientID == r.URL.Path {
+		ws.respondAPIError(w, http.StatusNotFound, "Client ID is required")
+		return
+	}
+	parts := strings.Split(clientID, "/")
+	id := strings.TrimSpace(parts[0])
+	if id == "" {
+		ws.respondAPIError(w, http.StatusNotFound, "Client ID is required")
+		return
+	}
+	if len(parts) > 1 {
+		switch parts[1] {
+		case "ban":
+			ws.handleAPIClientBan(w, r, id)
+		case "unban":
+			ws.handleAPIClientUnban(w, r, id)
+		case "licenses":
+			ws.handleAPIClientLicenses(w, r, id)
+		default:
+			ws.respondAPIError(w, http.StatusNotFound, "Unknown client action")
+		}
+		return
+	}
+	if r.Method != http.MethodGet {
+		ws.respondAPIError(w, http.StatusMethodNotAllowed, "Method not allowed")
+		return
+	}
+	client, err := ws.lm.GetClient(ctx, id)
+	if err != nil {
+		ws.respondAPIError(w, http.StatusNotFound, "Client not found")
+		return
+	}
+	ws.respondJSON(w, http.StatusOK, client)
+}
+
+func (ws *WebServer) handleAPIClientBan(w http.ResponseWriter, r *http.Request, clientID string) {
+	if r.Method != http.MethodPost {
+		ws.respondAPIError(w, http.StatusMethodNotAllowed, "Method not allowed")
+		return
+	}
+	ctx := r.Context()
+	var req struct {
+		Reason string `json:"reason"`
+	}
+	_ = json.NewDecoder(r.Body).Decode(&req)
+	client, err := ws.lm.BanClient(ctx, clientID, strings.TrimSpace(req.Reason))
+	if err != nil {
+		ws.respondAPIError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	ws.respondJSON(w, http.StatusOK, client)
+}
+
+func (ws *WebServer) handleAPIClientUnban(w http.ResponseWriter, r *http.Request, clientID string) {
+	if r.Method != http.MethodPost {
+		ws.respondAPIError(w, http.StatusMethodNotAllowed, "Method not allowed")
+		return
+	}
+	ctx := r.Context()
+	client, err := ws.lm.UnbanClient(ctx, clientID)
+	if err != nil {
+		ws.respondAPIError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	ws.respondJSON(w, http.StatusOK, client)
+}
+
+func (ws *WebServer) handleAPIClientLicenses(w http.ResponseWriter, r *http.Request, clientID string) {
+	if r.Method != http.MethodGet {
+		ws.respondAPIError(w, http.StatusMethodNotAllowed, "Method not allowed")
+		return
+	}
+	ctx := r.Context()
 	licenses, err := ws.lm.ListLicenses(ctx)
 	if err != nil {
-		ws.renderError(w, http.StatusInternalServerError, err.Error())
+		ws.respondAPIError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-
-	// Sort by issued date descending
-	sort.Slice(licenses, func(i, j int) bool {
-		return licenses[i].IssuedAt.After(licenses[j].IssuedAt)
-	})
-
-	// Get filter from query
-	filter := r.URL.Query().Get("filter")
-	now := time.Now()
-
-	var filteredLicenses []*licensing.License
-	for _, lic := range licenses {
-		switch filter {
-		case "active":
-			if !lic.IsRevoked && lic.ExpiresAt.After(now) {
-				filteredLicenses = append(filteredLicenses, lic)
-			}
-		case "revoked":
-			if lic.IsRevoked {
-				filteredLicenses = append(filteredLicenses, lic)
-			}
-		case "expired":
-			if !lic.IsRevoked && lic.ExpiresAt.Before(now) {
-				filteredLicenses = append(filteredLicenses, lic)
-			}
-		default:
-			filteredLicenses = append(filteredLicenses, lic)
-		}
-	}
-
-	data := map[string]interface{}{
-		"Licenses":      filteredLicenses,
-		"TotalCount":    len(licenses),
-		"CurrentFilter": filter,
-	}
-
-	ws.render(w, "licenses.html", TemplateData{
-		Title:       "Licenses",
-		CurrentPath: "/licenses",
-		User:        ws.getSessionFromContext(r),
-		Data:        data,
-	})
-}
-
-func (ws *WebServer) handleNewLicense(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
-
-	if r.Method == http.MethodPost {
-		if !ws.validateCSRF(r) {
-			ws.renderError(w, http.StatusForbidden, "Invalid CSRF token")
-			return
-		}
-
-		clientID := strings.TrimSpace(r.FormValue("client_id"))
-		productID := strings.TrimSpace(r.FormValue("product_id"))
-		planID := strings.TrimSpace(r.FormValue("plan_id"))
-		planSlug := strings.TrimSpace(r.FormValue("plan_slug"))
-		durationDays := parseInt(r.FormValue("duration_days"), 365)
-		maxDevices := parseInt(r.FormValue("max_devices"), 1)
-		checkMode := strings.TrimSpace(r.FormValue("check_mode"))
-
-		if clientID == "" || planSlug == "" {
-			ws.renderError(w, http.StatusBadRequest, "Client and plan are required")
-			return
-		}
-
-		mode := licensing.ParseLicenseCheckMode(checkMode)
-		duration := time.Duration(durationDays) * 24 * time.Hour
-
-		opts := &licensing.GenerateLicenseOptions{
-			ProductID: productID,
-			PlanID:    planID,
-		}
-
-		_, err := ws.lm.GenerateLicenseWithOptions(ctx, clientID, duration, maxDevices, planSlug, mode, 0, opts)
-		if err != nil {
-			ws.renderError(w, http.StatusBadRequest, err.Error())
-			return
-		}
-
-		http.Redirect(w, r, "/licenses", http.StatusSeeOther)
-		return
-	}
-
-	// GET - show form
-	clients, _ := ws.lm.ListClients(ctx)
-	products, _ := ws.lm.Storage().ListProducts(ctx)
-
-	// Build plans map per product
-	productPlans := make(map[string][]*licensing.Plan)
-	for _, prod := range products {
-		plans, _ := ws.lm.Storage().ListPlansByProduct(ctx, prod.ID)
-		productPlans[prod.ID] = plans
-	}
-
-	data := map[string]interface{}{
-		"Clients":      clients,
-		"Products":     products,
-		"ProductPlans": productPlans,
-		"CheckModes": []string{
-			string(licensing.LicenseCheckModeNone),
-			string(licensing.LicenseCheckModeEachRun),
-			string(licensing.LicenseCheckModeMonthly),
-			string(licensing.LicenseCheckModeYearly),
-			string(licensing.LicenseCheckModeCustom),
-		},
-	}
-
-	ws.render(w, "license_new.html", TemplateData{
-		Title:       "New License",
-		CurrentPath: "/licenses",
-		User:        ws.getSessionFromContext(r),
-		Data:        data,
-	})
-}
-
-func (ws *WebServer) handleLicenseDetail(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
-
-	// Extract license ID from path
-	path := strings.TrimPrefix(r.URL.Path, "/licenses/")
-	parts := strings.Split(path, "/")
-	licenseID := parts[0]
-
-	if licenseID == "" {
-		http.NotFound(w, r)
-		return
-	}
-
-	// Handle actions
-	if len(parts) > 1 {
-		action := parts[1]
-		if r.Method == http.MethodPost && ws.validateCSRF(r) {
-			switch action {
-			case "revoke":
-				reason := strings.TrimSpace(r.FormValue("reason"))
-				_, err := ws.lm.RevokeLicense(ctx, licenseID, reason)
-				if err != nil {
-					ws.renderError(w, http.StatusBadRequest, err.Error())
-					return
-				}
-			case "reinstate":
-				_, err := ws.lm.ReinstateLicense(ctx, licenseID)
-				if err != nil {
-					ws.renderError(w, http.StatusBadRequest, err.Error())
-					return
-				}
-			case "deactivate-device":
-				fingerprint := strings.TrimSpace(r.FormValue("fingerprint"))
-				err := ws.lm.DeactivateDevice(ctx, licenseID, fingerprint)
-				if err != nil {
-					ws.renderError(w, http.StatusBadRequest, err.Error())
-					return
-				}
-			}
-			http.Redirect(w, r, "/licenses/"+licenseID, http.StatusSeeOther)
-			return
-		}
-	}
-
-	license, err := ws.lm.Storage().GetLicense(ctx, licenseID)
-	if err != nil {
-		ws.renderError(w, http.StatusNotFound, "License not found")
-		return
-	}
-
-	activations, _ := ws.lm.ListActivations(ctx, licenseID)
-
-	// Get client info
-	var client *licensing.Client
-	if license.ClientID != "" {
-		client, _ = ws.lm.GetClient(ctx, license.ClientID)
-	}
-
-	// Get product and plan info
-	var product *licensing.Product
-	var plan *licensing.Plan
-	if license.ProductID != "" {
-		product, _ = ws.lm.Storage().GetProduct(ctx, license.ProductID)
-	}
-	if license.PlanID != "" {
-		plan, _ = ws.lm.Storage().GetPlan(ctx, license.PlanID)
-	}
-
-	data := map[string]interface{}{
-		"License":     license,
-		"Client":      client,
-		"Product":     product,
-		"Plan":        plan,
-		"Activations": activations,
-	}
-
-	ws.render(w, "license_detail.html", TemplateData{
-		Title:       "License Details",
-		CurrentPath: "/licenses",
-		User:        ws.getSessionFromContext(r),
-		Data:        data,
-	})
-}
-
-// Client handlers
-
-func (ws *WebServer) handleClients(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
-
-	if r.Method == http.MethodPost {
-		if !ws.validateCSRF(r) {
-			ws.renderError(w, http.StatusForbidden, "Invalid CSRF token")
-			return
-		}
-
-		action := r.FormValue("action")
-		clientID := r.FormValue("client_id")
-
-		switch action {
-		case "ban":
-			reason := strings.TrimSpace(r.FormValue("reason"))
-			_, err := ws.lm.BanClient(ctx, clientID, reason)
-			if err != nil {
-				ws.renderError(w, http.StatusBadRequest, err.Error())
-				return
-			}
-		case "unban":
-			_, err := ws.lm.UnbanClient(ctx, clientID)
-			if err != nil {
-				ws.renderError(w, http.StatusBadRequest, err.Error())
-				return
-			}
-		}
-
-		http.Redirect(w, r, "/clients", http.StatusSeeOther)
-		return
-	}
-
-	clients, err := ws.lm.ListClients(ctx)
-	if err != nil {
-		ws.renderError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-
-	// Sort by created date descending
-	sort.Slice(clients, func(i, j int) bool {
-		return clients[i].CreatedAt.After(clients[j].CreatedAt)
-	})
-
-	filter := r.URL.Query().Get("filter")
-	var filteredClients []*licensing.Client
-	for _, client := range clients {
-		switch filter {
-		case "active":
-			if client.Status == licensing.ClientStatusActive {
-				filteredClients = append(filteredClients, client)
-			}
-		case "banned":
-			if client.Status == licensing.ClientStatusBanned {
-				filteredClients = append(filteredClients, client)
-			}
-		default:
-			filteredClients = append(filteredClients, client)
-		}
-	}
-
-	data := map[string]interface{}{
-		"Clients":       filteredClients,
-		"TotalCount":    len(clients),
-		"CurrentFilter": filter,
-	}
-
-	ws.render(w, "clients.html", TemplateData{
-		Title:       "Clients",
-		CurrentPath: "/clients",
-		User:        ws.getSessionFromContext(r),
-		Data:        data,
-	})
-}
-
-func (ws *WebServer) handleNewClient(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
-
-	if r.Method == http.MethodPost {
-		if !ws.validateCSRF(r) {
-			ws.renderError(w, http.StatusForbidden, "Invalid CSRF token")
-			return
-		}
-
-		email := strings.TrimSpace(r.FormValue("email"))
-		if email == "" {
-			ws.render(w, "client_new.html", TemplateData{
-				Title:       "New Client",
-				CurrentPath: "/clients",
-				User:        ws.getSessionFromContext(r),
-				Error:       "Email is required",
-			})
-			return
-		}
-
-		_, err := ws.lm.CreateClient(ctx, email)
-		if err != nil {
-			ws.render(w, "client_new.html", TemplateData{
-				Title:       "New Client",
-				CurrentPath: "/clients",
-				User:        ws.getSessionFromContext(r),
-				Error:       err.Error(),
-			})
-			return
-		}
-
-		http.Redirect(w, r, "/clients", http.StatusSeeOther)
-		return
-	}
-
-	ws.render(w, "client_new.html", TemplateData{
-		Title:       "New Client",
-		CurrentPath: "/clients",
-		User:        ws.getSessionFromContext(r),
-	})
-}
-
-func (ws *WebServer) handleClientDetail(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
-
-	clientID := strings.TrimPrefix(r.URL.Path, "/clients/")
-	parts := strings.Split(clientID, "/")
-	clientID = parts[0]
-
-	if clientID == "" {
-		http.NotFound(w, r)
-		return
-	}
-
-	// Handle actions
-	if len(parts) > 1 && r.Method == http.MethodPost && ws.validateCSRF(r) {
-		action := parts[1]
-		switch action {
-		case "ban":
-			reason := strings.TrimSpace(r.FormValue("reason"))
-			_, err := ws.lm.BanClient(ctx, clientID, reason)
-			if err != nil {
-				ws.renderError(w, http.StatusBadRequest, err.Error())
-				return
-			}
-		case "unban":
-			_, err := ws.lm.UnbanClient(ctx, clientID)
-			if err != nil {
-				ws.renderError(w, http.StatusBadRequest, err.Error())
-				return
-			}
-		}
-		http.Redirect(w, r, "/clients/"+clientID, http.StatusSeeOther)
-		return
-	}
-
-	client, err := ws.lm.GetClient(ctx, clientID)
-	if err != nil {
-		ws.renderError(w, http.StatusNotFound, "Client not found")
-		return
-	}
-
-	// Get client's licenses
-	allLicenses, _ := ws.lm.ListLicenses(ctx)
 	var clientLicenses []*licensing.License
-	for _, lic := range allLicenses {
+	for _, lic := range licenses {
 		if lic.ClientID == clientID {
 			clientLicenses = append(clientLicenses, lic)
 		}
 	}
-
-	data := map[string]interface{}{
-		"Client":   client,
-		"Licenses": clientLicenses,
-	}
-
-	ws.render(w, "client_detail.html", TemplateData{
-		Title:       "Client Details",
-		CurrentPath: "/clients",
-		User:        ws.getSessionFromContext(r),
-		Data:        data,
-	})
+	ws.respondJSON(w, http.StatusOK, clientLicenses)
 }
 
-// Helper to parse int with default
-func parseInt(s string, defaultVal int) int {
-	if s == "" {
-		return defaultVal
-	}
-	var val int
-	for _, c := range s {
-		if c < '0' || c > '9' {
-			return defaultVal
+func filterClientsByQuery(clients []*licensing.Client, filter string) []*licensing.Client {
+	switch strings.ToLower(strings.TrimSpace(filter)) {
+	case "active":
+		var filtered []*licensing.Client
+		for _, client := range clients {
+			if client.Status == licensing.ClientStatusActive {
+				filtered = append(filtered, client)
+			}
 		}
-		val = val*10 + int(c-'0')
+		return filtered
+	case "banned":
+		var filtered []*licensing.Client
+		for _, client := range clients {
+			if client.Status == licensing.ClientStatusBanned {
+				filtered = append(filtered, client)
+			}
+		}
+		return filtered
+	default:
+		return clients
 	}
-	return val
 }

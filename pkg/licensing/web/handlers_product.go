@@ -1,6 +1,9 @@
 package web
 
 import (
+	"context"
+	"encoding/json"
+	"log"
 	"net/http"
 	"sort"
 	"strings"
@@ -10,996 +13,734 @@ import (
 	"github.com/oarkflow/licensing/pkg/licensing"
 )
 
-// Product handlers
-
-func (ws *WebServer) handleProducts(w http.ResponseWriter, r *http.Request) {
+func (ws *WebServer) handleAPIProducts(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-
-	if r.Method == http.MethodPost {
-		if !ws.validateCSRF(r) {
-			ws.renderError(w, http.StatusForbidden, "Invalid CSRF token")
+	switch r.Method {
+	case http.MethodGet:
+		products, err := ws.lm.Storage().ListProducts(ctx)
+		if err != nil {
+			ws.respondAPIError(w, http.StatusInternalServerError, err.Error())
 			return
 		}
-
-		action := r.FormValue("action")
-		productID := r.FormValue("product_id")
-
-		if action == "delete" {
-			err := ws.lm.Storage().DeleteProduct(ctx, productID)
-			if err != nil {
-				ws.renderError(w, http.StatusBadRequest, err.Error())
-				return
-			}
+		sort.Slice(products, func(i, j int) bool {
+			return products[i].CreatedAt.After(products[j].CreatedAt)
+		})
+		ws.respondJSON(w, http.StatusOK, products)
+	case http.MethodPost:
+		var req struct {
+			Name        string `json:"name"`
+			Slug        string `json:"slug"`
+			Description string `json:"description"`
+			LogoURL     string `json:"logo_url"`
 		}
-
-		http.Redirect(w, r, "/products", http.StatusSeeOther)
-		return
-	}
-
-	products, err := ws.lm.Storage().ListProducts(ctx)
-	if err != nil {
-		ws.renderError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-
-	// Sort by created date descending
-	sort.Slice(products, func(i, j int) bool {
-		return products[i].CreatedAt.After(products[j].CreatedAt)
-	})
-
-	// Get plan counts for each product
-	productStats := make(map[string]map[string]int)
-	for _, prod := range products {
-		plans, _ := ws.lm.Storage().ListPlansByProduct(ctx, prod.ID)
-		features, _ := ws.lm.Storage().ListFeaturesByProduct(ctx, prod.ID)
-		productStats[prod.ID] = map[string]int{
-			"plans":    len(plans),
-			"features": len(features),
-		}
-	}
-
-	data := map[string]interface{}{
-		"Products":     products,
-		"ProductStats": productStats,
-	}
-
-	ws.render(w, "products.html", TemplateData{
-		Title:       "Products",
-		CurrentPath: "/products",
-		User:        ws.getSessionFromContext(r),
-		Data:        data,
-	})
-}
-
-func (ws *WebServer) handleNewProduct(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
-
-	if r.Method == http.MethodPost {
-		if !ws.validateCSRF(r) {
-			ws.renderError(w, http.StatusForbidden, "Invalid CSRF token")
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			ws.respondAPIError(w, http.StatusBadRequest, "Invalid request body")
 			return
 		}
-
-		name := strings.TrimSpace(r.FormValue("name"))
-		slug := strings.TrimSpace(r.FormValue("slug"))
-		description := strings.TrimSpace(r.FormValue("description"))
-		logoURL := strings.TrimSpace(r.FormValue("logo_url"))
-
-		if name == "" || slug == "" {
-			ws.render(w, "product_new.html", TemplateData{
-				Title:       "New Product",
-				CurrentPath: "/products",
-				User:        ws.getSessionFromContext(r),
-				Error:       "Name and slug are required",
-			})
+		if strings.TrimSpace(req.Name) == "" || strings.TrimSpace(req.Slug) == "" {
+			ws.respondAPIError(w, http.StatusBadRequest, "name and slug are required")
 			return
 		}
-
 		now := time.Now()
 		product := &licensing.Product{
 			ID:          uuid.New().String(),
-			Name:        name,
-			Slug:        slug,
-			Description: description,
-			LogoURL:     logoURL,
+			Name:        strings.TrimSpace(req.Name),
+			Slug:        strings.TrimSpace(req.Slug),
+			Description: strings.TrimSpace(req.Description),
+			LogoURL:     strings.TrimSpace(req.LogoURL),
 			CreatedAt:   now,
 			UpdatedAt:   now,
 		}
-
 		if err := ws.lm.Storage().SaveProduct(ctx, product); err != nil {
-			ws.render(w, "product_new.html", TemplateData{
-				Title:       "New Product",
-				CurrentPath: "/products",
-				User:        ws.getSessionFromContext(r),
-				Error:       err.Error(),
-			})
+			ws.respondAPIError(w, http.StatusBadRequest, err.Error())
 			return
 		}
-
-		http.Redirect(w, r, "/products/"+product.ID, http.StatusSeeOther)
-		return
+		ws.respondJSON(w, http.StatusCreated, product)
+	default:
+		ws.respondAPIError(w, http.StatusMethodNotAllowed, "Method not allowed")
 	}
-
-	ws.render(w, "product_new.html", TemplateData{
-		Title:       "New Product",
-		CurrentPath: "/products",
-		User:        ws.getSessionFromContext(r),
-	})
 }
 
-func (ws *WebServer) handleProductDetail(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
-
-	path := strings.TrimPrefix(r.URL.Path, "/products/")
-	parts := strings.Split(path, "/")
-	productID := parts[0]
-
+func (ws *WebServer) handleAPIProductRoute(w http.ResponseWriter, r *http.Request) {
+	path := strings.TrimPrefix(r.URL.Path, "/api/products/")
+	if path == "" || path == r.URL.Path {
+		ws.respondAPIError(w, http.StatusNotFound, "Product ID is required")
+		return
+	}
+	segments := strings.Split(path, "/")
+	productID := strings.TrimSpace(segments[0])
 	if productID == "" {
-		http.NotFound(w, r)
+		ws.respondAPIError(w, http.StatusNotFound, "Product ID is required")
 		return
 	}
 
-	// Handle sub-resources
-	if len(parts) > 1 {
-		switch parts[1] {
-		case "plans":
-			ws.handleProductPlans(w, r, productID, parts[2:])
-			return
-		case "features":
-			ws.handleProductFeatures(w, r, productID, parts[2:])
-			return
-		case "edit":
-			ws.handleProductEdit(w, r, productID)
-			return
-		case "delete":
-			if r.Method == http.MethodPost && ws.validateCSRF(r) {
-				err := ws.lm.Storage().DeleteProduct(ctx, productID)
-				if err != nil {
-					ws.renderError(w, http.StatusBadRequest, err.Error())
-					return
-				}
-				http.Redirect(w, r, "/products", http.StatusSeeOther)
-				return
-			}
-		}
+	if len(segments) == 1 {
+		ws.handleAPIProductDetail(w, r, productID)
+		return
 	}
 
+	switch segments[1] {
+	case "stats":
+		ws.handleAPIProductStats(w, r, productID)
+	case "plans":
+		ws.handleAPIProductPlans(w, r, productID, segments[2:])
+	case "features":
+		ws.handleAPIProductFeatures(w, r, productID, segments[2:])
+	default:
+		ws.respondAPIError(w, http.StatusNotFound, "Invalid product endpoint")
+	}
+}
+
+func (ws *WebServer) handleAPIProductDetail(w http.ResponseWriter, r *http.Request, productID string) {
+	ctx := r.Context()
 	product, err := ws.lm.Storage().GetProduct(ctx, productID)
-	if err != nil || product == nil {
-		ws.renderError(w, http.StatusNotFound, "Product not found")
+	if err != nil {
+		ws.respondAPIError(w, http.StatusNotFound, "Product not found")
 		return
 	}
 
+	switch r.Method {
+	case http.MethodGet:
+		ws.respondJSON(w, http.StatusOK, product)
+	case http.MethodPut:
+		var req struct {
+			Name        string `json:"name"`
+			Slug        string `json:"slug"`
+			Description string `json:"description"`
+			LogoURL     string `json:"logo_url"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			ws.respondAPIError(w, http.StatusBadRequest, "Invalid request body")
+			return
+		}
+		if strings.TrimSpace(req.Name) != "" {
+			product.Name = strings.TrimSpace(req.Name)
+		}
+		if strings.TrimSpace(req.Slug) != "" {
+			product.Slug = strings.TrimSpace(req.Slug)
+		}
+		product.Description = strings.TrimSpace(req.Description)
+		product.LogoURL = strings.TrimSpace(req.LogoURL)
+		product.UpdatedAt = time.Now()
+		if err := ws.lm.Storage().UpdateProduct(ctx, product); err != nil {
+			ws.respondAPIError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		ws.respondJSON(w, http.StatusOK, product)
+	case http.MethodDelete:
+		if err := ws.lm.Storage().DeleteProduct(ctx, productID); err != nil {
+			ws.respondAPIError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	default:
+		ws.respondAPIError(w, http.StatusMethodNotAllowed, "Method not allowed")
+	}
+}
+
+func (ws *WebServer) handleAPIProductStats(w http.ResponseWriter, r *http.Request, productID string) {
+	if r.Method != http.MethodGet {
+		ws.respondAPIError(w, http.StatusMethodNotAllowed, "Method not allowed")
+		return
+	}
+	ctx := r.Context()
 	plans, _ := ws.lm.Storage().ListPlansByProduct(ctx, productID)
 	features, _ := ws.lm.Storage().ListFeaturesByProduct(ctx, productID)
-
-	data := map[string]interface{}{
-		"Product":  product,
-		"Plans":    plans,
-		"Features": features,
+	stats := map[string]int{
+		"plans":    len(plans),
+		"features": len(features),
 	}
-
-	ws.render(w, "product_detail.html", TemplateData{
-		Title:       product.Name,
-		CurrentPath: "/products",
-		User:        ws.getSessionFromContext(r),
-		Data:        data,
-	})
+	ws.respondJSON(w, http.StatusOK, stats)
 }
 
-func (ws *WebServer) handleProductEdit(w http.ResponseWriter, r *http.Request, productID string) {
+func (ws *WebServer) handleAPIProductPlans(w http.ResponseWriter, r *http.Request, productID string, segments []string) {
 	ctx := r.Context()
-
-	product, err := ws.lm.Storage().GetProduct(ctx, productID)
-	if err != nil {
-		ws.renderError(w, http.StatusNotFound, "Product not found")
-		return
-	}
-
-	if r.Method == http.MethodPost {
-		if !ws.validateCSRF(r) {
-			ws.renderError(w, http.StatusForbidden, "Invalid CSRF token")
-			return
-		}
-
-		name := strings.TrimSpace(r.FormValue("name"))
-		slug := strings.TrimSpace(r.FormValue("slug"))
-		description := strings.TrimSpace(r.FormValue("description"))
-		logoURL := strings.TrimSpace(r.FormValue("logo_url"))
-
-		if name != "" {
-			product.Name = name
-		}
-		if slug != "" {
-			product.Slug = slug
-		}
-		product.Description = description
-		product.LogoURL = logoURL
-		product.UpdatedAt = time.Now()
-
-		if err := ws.lm.Storage().UpdateProduct(ctx, product); err != nil {
-			ws.render(w, "product_edit.html", TemplateData{
-				Title:       "Edit Product",
-				CurrentPath: "/products",
-				User:        ws.getSessionFromContext(r),
-				Data:        map[string]interface{}{"Product": product},
-				Error:       err.Error(),
+	if len(segments) == 0 || segments[0] == "" {
+		switch r.Method {
+		case http.MethodGet:
+			plans, err := ws.lm.Storage().ListPlansByProduct(ctx, productID)
+			if err != nil {
+				ws.respondAPIError(w, http.StatusInternalServerError, err.Error())
+				return
+			}
+			sort.Slice(plans, func(i, j int) bool {
+				if plans[i].DisplayOrder == plans[j].DisplayOrder {
+					return plans[i].CreatedAt.After(plans[j].CreatedAt)
+				}
+				return plans[i].DisplayOrder < plans[j].DisplayOrder
 			})
-			return
+			ws.respondJSON(w, http.StatusOK, plans)
+		case http.MethodPost:
+			ws.createPlan(w, r, ctx, productID)
+		default:
+			ws.respondAPIError(w, http.StatusMethodNotAllowed, "Method not allowed")
 		}
-
-		http.Redirect(w, r, "/products/"+productID, http.StatusSeeOther)
 		return
 	}
-
-	ws.render(w, "product_edit.html", TemplateData{
-		Title:       "Edit Product",
-		CurrentPath: "/products",
-		User:        ws.getSessionFromContext(r),
-		Data:        map[string]interface{}{"Product": product},
-	})
+	planID := segments[0]
+	ws.handleAPIPlanDetail(w, r, productID, planID, segments[1:])
 }
 
-func (ws *WebServer) handleProductPlans(w http.ResponseWriter, r *http.Request, productID string, pathParts []string) {
+func (ws *WebServer) createPlan(w http.ResponseWriter, r *http.Request, ctx context.Context, productID string) {
+	var req struct {
+		Name           string            `json:"name"`
+		Slug           string            `json:"slug"`
+		Description    string            `json:"description"`
+		Price          int64             `json:"price"`
+		MinDevices     int               `json:"min_devices"`
+		MaxDevices     int               `json:"max_devices"`
+		DurationDays   int               `json:"duration_days"`
+		PricePerDevice int64             `json:"price_per_device"`
+		Currency       string            `json:"currency"`
+		BillingCycle   string            `json:"billing_cycle"`
+		TrialDays      int               `json:"trial_days"`
+		IsTrial        bool              `json:"is_trial"`
+		IsActive       bool              `json:"is_active"`
+		DisplayOrder   int               `json:"display_order"`
+		Metadata       map[string]string `json:"metadata"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		ws.respondAPIError(w, http.StatusBadRequest, "Invalid request body")
+		return
+	}
+	if strings.TrimSpace(req.Name) == "" || strings.TrimSpace(req.Slug) == "" {
+		ws.respondAPIError(w, http.StatusBadRequest, "name and slug are required")
+		return
+	}
+	if req.Currency == "" {
+		req.Currency = "USD"
+	}
+	if req.BillingCycle == "" {
+		req.BillingCycle = "monthly"
+	}
+	if req.MinDevices < 0 {
+		req.MinDevices = 0
+	}
+	if req.MaxDevices < 0 {
+		req.MaxDevices = 0
+	}
+	if req.IsTrial {
+		if existing, _ := ws.lm.Storage().GetTrialPlanForProduct(ctx, productID); existing != nil {
+			ws.respondAPIError(w, http.StatusBadRequest, "A trial plan already exists for this product")
+			return
+		}
+	}
+	now := time.Now()
+	plan := &licensing.Plan{
+		ID:             uuid.New().String(),
+		ProductID:      productID,
+		Name:           strings.TrimSpace(req.Name),
+		Slug:           strings.TrimSpace(req.Slug),
+		Description:    strings.TrimSpace(req.Description),
+		Price:          req.Price,
+		MinDevices:     req.MinDevices,
+		MaxDevices:     req.MaxDevices,
+		DurationDays:   req.DurationDays,
+		PricePerDevice: req.PricePerDevice,
+		Currency:       strings.ToUpper(req.Currency),
+		BillingCycle:   strings.TrimSpace(req.BillingCycle),
+		TrialDays:      req.TrialDays,
+		IsTrial:        req.IsTrial,
+		IsActive:       req.IsActive,
+		DisplayOrder:   req.DisplayOrder,
+		Metadata:       req.Metadata,
+		CreatedAt:      now,
+		UpdatedAt:      now,
+	}
+	if err := ws.lm.Storage().SavePlan(ctx, plan); err != nil {
+		ws.respondAPIError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if plan.IsTrial {
+		ws.seedTrialPlanFeatures(ctx, plan)
+	}
+	ws.respondJSON(w, http.StatusCreated, plan)
+}
+
+func (ws *WebServer) handleAPIPlanDetail(w http.ResponseWriter, r *http.Request, productID, planID string, segments []string) {
 	ctx := r.Context()
-
-	product, err := ws.lm.Storage().GetProduct(ctx, productID)
-	if err != nil {
-		ws.renderError(w, http.StatusNotFound, "Product not found")
-		return
-	}
-
-	// New plan
-	if len(pathParts) == 0 || (len(pathParts) == 1 && pathParts[0] == "new") {
-		if r.Method == http.MethodPost {
-			if !ws.validateCSRF(r) {
-				ws.renderError(w, http.StatusForbidden, "Invalid CSRF token")
-				return
-			}
-
-			name := strings.TrimSpace(r.FormValue("name"))
-			slug := strings.TrimSpace(r.FormValue("slug"))
-			description := strings.TrimSpace(r.FormValue("description"))
-			price := int64(parseInt(r.FormValue("price"), 0) * 100) // Convert dollars to cents
-			currency := strings.TrimSpace(r.FormValue("currency"))
-			billingCycle := strings.TrimSpace(r.FormValue("billing_cycle"))
-			trialDays := parseInt(r.FormValue("trial_days"), 0)
-			displayOrder := parseInt(r.FormValue("display_order"), 0)
-			isActive := r.FormValue("is_active") == "on"
-			isTrial := r.FormValue("is_trial") == "on"
-
-			if name == "" || slug == "" {
-				ws.renderError(w, http.StatusBadRequest, "Name and slug are required")
-				return
-			}
-
-			// If this is a trial plan, check if product already has one
-			if isTrial {
-				existingTrialPlan, _ := ws.lm.Storage().GetTrialPlanForProduct(ctx, productID)
-				if existingTrialPlan != nil {
-					ws.renderError(w, http.StatusBadRequest, "This product already has a trial plan: "+existingTrialPlan.Name)
-					return
-				}
-				// Trial plans must have price of 0 and trial days > 0
-				price = 0
-				if trialDays <= 0 {
-					trialDays = 14 // Default to 14 days
-				}
-			}
-
-			if currency == "" {
-				currency = "USD"
-			}
-			if billingCycle == "" {
-				billingCycle = "monthly"
-			}
-
-			now := time.Now()
-			plan := &licensing.Plan{
-				ID:           uuid.New().String(),
-				ProductID:    productID,
-				Name:         name,
-				Slug:         slug,
-				Description:  description,
-				Price:        price,
-				Currency:     currency,
-				BillingCycle: billingCycle,
-				TrialDays:    trialDays,
-				IsTrial:      isTrial,
-				DisplayOrder: displayOrder,
-				IsActive:     isActive,
-				CreatedAt:    now,
-				UpdatedAt:    now,
-			}
-
-			if err := ws.lm.Storage().SavePlan(ctx, plan); err != nil {
-				ws.renderError(w, http.StatusBadRequest, err.Error())
-				return
-			}
-
-			// If this is a trial plan, automatically assign all product features with all scopes
-			if isTrial {
-				allFeatures, _ := ws.lm.Storage().ListFeaturesByProduct(ctx, productID)
-				for _, feature := range allFeatures {
-					// Create plan feature with all scopes enabled
-					pf := &licensing.PlanFeature{
-						ID:        uuid.New().String(),
-						PlanID:    plan.ID,
-						FeatureID: feature.ID,
-						Enabled:   true,
-						CreatedAt: now,
-						UpdatedAt: now,
-					}
-
-					// Get all scopes for this feature and add them as overrides with "allow" permission
-					scopes, _ := ws.lm.Storage().ListFeatureScopes(ctx, feature.ID)
-					if len(scopes) > 0 {
-						scopeOverrides := make(map[string]licensing.ScopeOverride)
-						for _, scope := range scopes {
-							scopeOverrides[scope.Slug] = licensing.ScopeOverride{
-								Permission: licensing.ScopePermissionAllow,
-								Limit:      scope.Limit,
-							}
-						}
-						pf.ScopeOverrides = scopeOverrides
-					}
-
-					ws.lm.Storage().SavePlanFeature(ctx, pf)
-				}
-			}
-
-			http.Redirect(w, r, "/products/"+productID, http.StatusSeeOther)
-			return
-		}
-
-		ws.render(w, "plan_new.html", TemplateData{
-			Title:       "New Plan",
-			CurrentPath: "/products",
-			User:        ws.getSessionFromContext(r),
-			Data:        map[string]interface{}{"Product": product},
-		})
-		return
-	}
-
-	planID := pathParts[0]
-	if planID == "" {
-		http.NotFound(w, r)
-		return
-	}
-
 	plan, err := ws.lm.Storage().GetPlan(ctx, planID)
-	if err != nil {
-		ws.renderError(w, http.StatusNotFound, "Plan not found")
+	if err != nil || plan.ProductID != productID {
+		ws.respondAPIError(w, http.StatusNotFound, "Plan not found")
 		return
 	}
-
-	// Handle plan sub-actions
-	if len(pathParts) > 1 {
-		switch pathParts[1] {
-		case "edit":
-			ws.handlePlanEdit(w, r, productID, plan)
-			return
-		case "delete":
-			if r.Method == http.MethodPost && ws.validateCSRF(r) {
-				err := ws.lm.Storage().DeletePlan(ctx, planID)
-				if err != nil {
-					ws.renderError(w, http.StatusBadRequest, err.Error())
-					return
-				}
-				http.Redirect(w, r, "/products/"+productID, http.StatusSeeOther)
-				return
-			}
+	if len(segments) > 0 && segments[0] != "" {
+		switch segments[0] {
 		case "features":
-			ws.handlePlanFeatures(w, r, productID, planID, pathParts[2:])
+			ws.handleAPIPlanFeatures(w, r, productID, planID, segments[1:])
+		default:
+			ws.respondAPIError(w, http.StatusNotFound, "Invalid plan endpoint")
+		}
+		return
+	}
+	switch r.Method {
+	case http.MethodGet:
+		ws.respondJSON(w, http.StatusOK, plan)
+	case http.MethodPut:
+		var req struct {
+			Name           string            `json:"name"`
+			Slug           string            `json:"slug"`
+			Description    string            `json:"description"`
+			Price          *int64            `json:"price"`
+			MinDevices     *int              `json:"min_devices"`
+			MaxDevices     *int              `json:"max_devices"`
+			DurationDays   *int              `json:"duration_days"`
+			PricePerDevice *int64            `json:"price_per_device"`
+			Currency       string            `json:"currency"`
+			BillingCycle   string            `json:"billing_cycle"`
+			TrialDays      *int              `json:"trial_days"`
+			IsTrial        *bool             `json:"is_trial"`
+			IsActive       *bool             `json:"is_active"`
+			DisplayOrder   *int              `json:"display_order"`
+			Metadata       map[string]string `json:"metadata"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			ws.respondAPIError(w, http.StatusBadRequest, "Invalid request body")
 			return
 		}
+		if strings.TrimSpace(req.Name) != "" {
+			plan.Name = strings.TrimSpace(req.Name)
+		}
+		if strings.TrimSpace(req.Slug) != "" {
+			plan.Slug = strings.TrimSpace(req.Slug)
+		}
+		if req.Price != nil {
+			plan.Price = *req.Price
+		}
+		if req.MinDevices != nil {
+			plan.MinDevices = *req.MinDevices
+		}
+		if req.MaxDevices != nil {
+			plan.MaxDevices = *req.MaxDevices
+		}
+		if req.DurationDays != nil {
+			plan.DurationDays = *req.DurationDays
+		}
+		if req.PricePerDevice != nil {
+			plan.PricePerDevice = *req.PricePerDevice
+		}
+		if strings.TrimSpace(req.Currency) != "" {
+			plan.Currency = strings.ToUpper(strings.TrimSpace(req.Currency))
+		}
+		if strings.TrimSpace(req.BillingCycle) != "" {
+			plan.BillingCycle = strings.TrimSpace(req.BillingCycle)
+		}
+		if req.TrialDays != nil {
+			plan.TrialDays = *req.TrialDays
+		}
+		if req.IsTrial != nil {
+			plan.IsTrial = *req.IsTrial
+		}
+		if req.IsActive != nil {
+			plan.IsActive = *req.IsActive
+		}
+		if req.DisplayOrder != nil {
+			plan.DisplayOrder = *req.DisplayOrder
+		}
+		if req.Metadata != nil {
+			plan.Metadata = req.Metadata
+		}
+		plan.Description = strings.TrimSpace(req.Description)
+		plan.UpdatedAt = time.Now()
+		if err := ws.lm.Storage().UpdatePlan(ctx, plan); err != nil {
+			ws.respondAPIError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		ws.respondJSON(w, http.StatusOK, plan)
+	case http.MethodDelete:
+		if err := ws.lm.Storage().DeletePlan(ctx, planID); err != nil {
+			ws.respondAPIError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	default:
+		ws.respondAPIError(w, http.StatusMethodNotAllowed, "Method not allowed")
 	}
+}
 
-	// Show plan detail
-	planFeatures, _ := ws.lm.Storage().ListPlanFeatures(ctx, planID)
-	allFeatures, _ := ws.lm.Storage().ListFeaturesByProduct(ctx, productID)
+func (ws *WebServer) handleAPIPlanFeatures(w http.ResponseWriter, r *http.Request, productID, planID string, segments []string) {
+	ctx := r.Context()
+	if len(segments) == 0 || segments[0] == "" {
+		switch r.Method {
+		case http.MethodGet:
+			ws.listPlanFeatures(w, ctx, productID, planID)
+		case http.MethodPost:
+			ws.addPlanFeature(w, r, ctx, productID, planID)
+		default:
+			ws.respondAPIError(w, http.StatusMethodNotAllowed, "Method not allowed")
+		}
+		return
+	}
+	featureID := segments[0]
+	ws.handleAPIPlanFeatureDetail(w, r, ctx, planID, featureID)
+}
 
-	// Map features for easy lookup
+type planFeatureResponse struct {
+	*licensing.PlanFeature
+	Feature *licensing.Feature        `json:"feature,omitempty"`
+	Scopes  []*licensing.FeatureScope `json:"scopes,omitempty"`
+}
+
+func (ws *WebServer) listPlanFeatures(w http.ResponseWriter, ctx context.Context, productID, planID string) {
+	features, err := ws.lm.Storage().ListPlanFeatures(ctx, planID)
+	if err != nil {
+		ws.respondAPIError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	productFeatures, err := ws.lm.Storage().ListFeaturesByProduct(ctx, productID)
+	if err != nil {
+		ws.respondAPIError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
 	featureMap := make(map[string]*licensing.Feature)
-	for _, f := range allFeatures {
+	for _, f := range productFeatures {
 		featureMap[f.ID] = f
 	}
-
-	featureScopes := make(map[string][]*licensing.FeatureScope)
-	for _, pf := range planFeatures {
-		if _, ok := featureScopes[pf.FeatureID]; ok {
-			continue
+	resp := make([]planFeatureResponse, 0, len(features))
+	for _, pf := range features {
+		item := planFeatureResponse{PlanFeature: pf}
+		if feature, ok := featureMap[pf.FeatureID]; ok {
+			item.Feature = feature
 		}
 		scopes, err := ws.lm.Storage().ListFeatureScopes(ctx, pf.FeatureID)
+		if err == nil {
+			item.Scopes = scopes
+		}
+		resp = append(resp, item)
+	}
+	ws.respondJSON(w, http.StatusOK, resp)
+}
+
+func (ws *WebServer) addPlanFeature(w http.ResponseWriter, r *http.Request, ctx context.Context, productID, planID string) {
+	var req struct {
+		FeatureID      string                             `json:"feature_id"`
+		Enabled        bool                               `json:"enabled"`
+		ScopeOverrides map[string]licensing.ScopeOverride `json:"scope_overrides"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		ws.respondAPIError(w, http.StatusBadRequest, "Invalid request body")
+		return
+	}
+	if strings.TrimSpace(req.FeatureID) == "" {
+		ws.respondAPIError(w, http.StatusBadRequest, "feature_id is required")
+		return
+	}
+	feature, err := ws.lm.Storage().GetFeature(ctx, req.FeatureID)
+	if err != nil || feature.ProductID != productID {
+		ws.respondAPIError(w, http.StatusBadRequest, "Feature not found for product")
+		return
+	}
+	now := time.Now()
+	pf := &licensing.PlanFeature{
+		ID:             uuid.New().String(),
+		PlanID:         planID,
+		FeatureID:      req.FeatureID,
+		Enabled:        req.Enabled,
+		ScopeOverrides: req.ScopeOverrides,
+		CreatedAt:      now,
+		UpdatedAt:      now,
+	}
+	if err := ws.lm.Storage().SavePlanFeature(ctx, pf); err != nil {
+		ws.respondAPIError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	ws.respondJSON(w, http.StatusCreated, pf)
+}
+
+func (ws *WebServer) handleAPIPlanFeatureDetail(w http.ResponseWriter, r *http.Request, ctx context.Context, planID, featureID string) {
+	switch r.Method {
+	case http.MethodGet:
+		pf, err := ws.lm.Storage().GetPlanFeature(ctx, planID, featureID)
 		if err != nil {
-			continue
-		}
-		featureScopes[pf.FeatureID] = scopes
-	}
-
-	data := map[string]interface{}{
-		"Product":       product,
-		"Plan":          plan,
-		"PlanFeatures":  planFeatures,
-		"AllFeatures":   allFeatures,
-		"FeatureMap":    featureMap,
-		"FeatureScopes": featureScopes,
-	}
-
-	ws.render(w, "plan_detail.html", TemplateData{
-		Title:       plan.Name,
-		CurrentPath: "/products",
-		User:        ws.getSessionFromContext(r),
-		Data:        data,
-	})
-}
-
-func (ws *WebServer) handlePlanEdit(w http.ResponseWriter, r *http.Request, productID string, plan *licensing.Plan) {
-	ctx := r.Context()
-
-	if r.Method == http.MethodPost {
-		if !ws.validateCSRF(r) {
-			ws.renderError(w, http.StatusForbidden, "Invalid CSRF token")
+			ws.respondAPIError(w, http.StatusNotFound, "Plan feature not found")
 			return
 		}
-
-		name := strings.TrimSpace(r.FormValue("name"))
-		slug := strings.TrimSpace(r.FormValue("slug"))
-		description := strings.TrimSpace(r.FormValue("description"))
-		price := int64(parseInt(r.FormValue("price"), 0) * 100)
-		currency := strings.TrimSpace(r.FormValue("currency"))
-		billingCycle := strings.TrimSpace(r.FormValue("billing_cycle"))
-		trialDays := parseInt(r.FormValue("trial_days"), 0)
-		displayOrder := parseInt(r.FormValue("display_order"), 0)
-		isActive := r.FormValue("is_active") == "on"
-		isTrial := r.FormValue("is_trial") == "on"
-
-		// If enabling trial on this plan, check if product already has a different trial plan
-		if isTrial && !plan.IsTrial {
-			existingTrialPlan, _ := ws.lm.Storage().GetTrialPlanForProduct(ctx, productID)
-			if existingTrialPlan != nil && existingTrialPlan.ID != plan.ID {
-				ws.renderError(w, http.StatusBadRequest, "This product already has a trial plan: "+existingTrialPlan.Name)
-				return
-			}
-		}
-
-		// If this is a trial plan, enforce price of 0 and trial days > 0
-		if isTrial {
-			price = 0
-			if trialDays <= 0 {
-				trialDays = 14
-			}
-		}
-
-		if name != "" {
-			plan.Name = name
-		}
-		if slug != "" {
-			plan.Slug = slug
-		}
-		plan.Description = description
-		plan.Price = price
-		if currency != "" {
-			plan.Currency = currency
-		}
-		if billingCycle != "" {
-			plan.BillingCycle = billingCycle
-		}
-		// Track if we're newly enabling trial mode (before updating the plan)
-		wasTrialBefore := plan.IsTrial
-		becomingTrial := isTrial && !wasTrialBefore
-
-		plan.TrialDays = trialDays
-		plan.IsTrial = isTrial
-		plan.DisplayOrder = displayOrder
-		plan.IsActive = isActive
-		plan.UpdatedAt = time.Now()
-
-		if err := ws.lm.Storage().UpdatePlan(ctx, plan); err != nil {
-			ws.renderError(w, http.StatusBadRequest, err.Error())
+		ws.respondJSON(w, http.StatusOK, pf)
+	case http.MethodPut:
+		pf, err := ws.lm.Storage().GetPlanFeature(ctx, planID, featureID)
+		if err != nil {
+			ws.respondAPIError(w, http.StatusNotFound, "Plan feature not found")
 			return
 		}
-
-		// If plan is becoming a trial plan, assign all features with all scopes
-		if becomingTrial {
-			allFeatures, _ := ws.lm.Storage().ListFeaturesByProduct(ctx, productID)
-			existingPlanFeatures, _ := ws.lm.Storage().ListPlanFeatures(ctx, plan.ID)
-
-			// Map existing plan features
-			existingFeatureMap := make(map[string]*licensing.PlanFeature)
-			for _, pf := range existingPlanFeatures {
-				existingFeatureMap[pf.FeatureID] = pf
-			}
-
-			now := time.Now()
-			for _, feature := range allFeatures {
-				// Get all scopes for this feature
-				scopes, _ := ws.lm.Storage().ListFeatureScopes(ctx, feature.ID)
-				scopeOverrides := make(map[string]licensing.ScopeOverride)
-				for _, scope := range scopes {
-					scopeOverrides[scope.Slug] = licensing.ScopeOverride{
-						Permission: licensing.ScopePermissionAllow,
-						Limit:      scope.Limit,
-					}
-				}
-
-				if existingPF, exists := existingFeatureMap[feature.ID]; exists {
-					// Update existing plan feature to enable all scopes
-					existingPF.Enabled = true
-					existingPF.ScopeOverrides = scopeOverrides
-					existingPF.UpdatedAt = now
-					ws.lm.Storage().UpdatePlanFeature(ctx, existingPF)
-				} else {
-					// Create new plan feature
-					pf := &licensing.PlanFeature{
-						ID:             uuid.New().String(),
-						PlanID:         plan.ID,
-						FeatureID:      feature.ID,
-						Enabled:        true,
-						ScopeOverrides: scopeOverrides,
-						CreatedAt:      now,
-						UpdatedAt:      now,
-					}
-					ws.lm.Storage().SavePlanFeature(ctx, pf)
-				}
-			}
+		var req struct {
+			Enabled        *bool                              `json:"enabled"`
+			ScopeOverrides map[string]licensing.ScopeOverride `json:"scope_overrides"`
 		}
-
-		http.Redirect(w, r, "/products/"+productID+"/plans/"+plan.ID, http.StatusSeeOther)
-		return
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			ws.respondAPIError(w, http.StatusBadRequest, "Invalid request body")
+			return
+		}
+		if req.Enabled != nil {
+			pf.Enabled = *req.Enabled
+		}
+		if req.ScopeOverrides != nil {
+			pf.ScopeOverrides = req.ScopeOverrides
+		}
+		pf.UpdatedAt = time.Now()
+		if err := ws.lm.Storage().UpdatePlanFeature(ctx, pf); err != nil {
+			ws.respondAPIError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		ws.respondJSON(w, http.StatusOK, pf)
+	case http.MethodDelete:
+		if err := ws.lm.Storage().DeletePlanFeature(ctx, planID, featureID); err != nil {
+			ws.respondAPIError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	default:
+		ws.respondAPIError(w, http.StatusMethodNotAllowed, "Method not allowed")
 	}
-
-	product, _ := ws.lm.Storage().GetProduct(ctx, productID)
-
-	ws.render(w, "plan_edit.html", TemplateData{
-		Title:       "Edit Plan",
-		CurrentPath: "/products",
-		User:        ws.getSessionFromContext(r),
-		Data:        map[string]interface{}{"Product": product, "Plan": plan},
-	})
 }
 
-func (ws *WebServer) handlePlanFeatures(w http.ResponseWriter, r *http.Request, productID, planID string, pathParts []string) {
+func (ws *WebServer) handleAPIProductFeatures(w http.ResponseWriter, r *http.Request, productID string, segments []string) {
 	ctx := r.Context()
-
-	plan, err := ws.lm.Storage().GetPlan(ctx, planID)
-	if err != nil {
-		ws.renderError(w, http.StatusNotFound, "Plan not found")
-		return
-	}
-
-	// Add feature to plan
-	if r.Method == http.MethodPost && ws.validateCSRF(r) {
-		action := r.FormValue("action")
-		featureID := r.FormValue("feature_id")
-
-		switch action {
-		case "add":
-			enabled := r.FormValue("enabled") == "on"
-			now := time.Now()
-			pf := &licensing.PlanFeature{
-				ID:        uuid.New().String(),
-				PlanID:    planID,
-				FeatureID: featureID,
-				Enabled:   enabled,
-				CreatedAt: now,
-				UpdatedAt: now,
-			}
-			if err := ws.lm.Storage().SavePlanFeature(ctx, pf); err != nil {
-				ws.renderError(w, http.StatusBadRequest, err.Error())
-				return
-			}
-		case "remove":
-			if err := ws.lm.Storage().DeletePlanFeature(ctx, planID, featureID); err != nil {
-				ws.renderError(w, http.StatusBadRequest, err.Error())
-				return
-			}
-		case "toggle":
-			pf, err := ws.lm.Storage().GetPlanFeature(ctx, planID, featureID)
+	if len(segments) == 0 || segments[0] == "" {
+		switch r.Method {
+		case http.MethodGet:
+			features, err := ws.lm.Storage().ListFeaturesByProduct(ctx, productID)
 			if err != nil {
-				ws.renderError(w, http.StatusBadRequest, err.Error())
+				ws.respondAPIError(w, http.StatusInternalServerError, err.Error())
 				return
 			}
-			pf.Enabled = !pf.Enabled
-			pf.UpdatedAt = time.Now()
-			if err := ws.lm.Storage().UpdatePlanFeature(ctx, pf); err != nil {
-				ws.renderError(w, http.StatusBadRequest, err.Error())
+			sort.Slice(features, func(i, j int) bool {
+				return features[i].CreatedAt.After(features[j].CreatedAt)
+			})
+			ws.respondJSON(w, http.StatusOK, features)
+		case http.MethodPost:
+			var req struct {
+				Name        string `json:"name"`
+				Slug        string `json:"slug"`
+				Description string `json:"description"`
+				Category    string `json:"category"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				ws.respondAPIError(w, http.StatusBadRequest, "Invalid request body")
 				return
 			}
-		}
-
-		http.Redirect(w, r, "/products/"+productID+"/plans/"+planID, http.StatusSeeOther)
-		return
-	}
-
-	product, _ := ws.lm.Storage().GetProduct(ctx, productID)
-	allFeatures, _ := ws.lm.Storage().ListFeaturesByProduct(ctx, productID)
-	planFeatures, _ := ws.lm.Storage().ListPlanFeatures(ctx, planID)
-
-	// Find features not yet assigned to plan
-	assignedFeatures := make(map[string]bool)
-	for _, pf := range planFeatures {
-		assignedFeatures[pf.FeatureID] = true
-	}
-
-	var availableFeatures []*licensing.Feature
-	for _, f := range allFeatures {
-		if !assignedFeatures[f.ID] {
-			availableFeatures = append(availableFeatures, f)
-		}
-	}
-
-	data := map[string]interface{}{
-		"Product":           product,
-		"Plan":              plan,
-		"AvailableFeatures": availableFeatures,
-		"PlanFeatures":      planFeatures,
-	}
-
-	ws.render(w, "plan_features.html", TemplateData{
-		Title:       "Plan Features",
-		CurrentPath: "/products",
-		User:        ws.getSessionFromContext(r),
-		Data:        data,
-	})
-}
-
-func (ws *WebServer) handleProductFeatures(w http.ResponseWriter, r *http.Request, productID string, pathParts []string) {
-	ctx := r.Context()
-
-	product, err := ws.lm.Storage().GetProduct(ctx, productID)
-	if err != nil {
-		ws.renderError(w, http.StatusNotFound, "Product not found")
-		return
-	}
-
-	// New feature
-	if len(pathParts) == 0 || (len(pathParts) == 1 && pathParts[0] == "new") {
-		if r.Method == http.MethodPost {
-			if !ws.validateCSRF(r) {
-				ws.renderError(w, http.StatusForbidden, "Invalid CSRF token")
+			if strings.TrimSpace(req.Name) == "" || strings.TrimSpace(req.Slug) == "" {
+				ws.respondAPIError(w, http.StatusBadRequest, "name and slug are required")
 				return
 			}
-
-			name := strings.TrimSpace(r.FormValue("name"))
-			slug := strings.TrimSpace(r.FormValue("slug"))
-			description := strings.TrimSpace(r.FormValue("description"))
-			category := strings.TrimSpace(r.FormValue("category"))
-
-			if name == "" || slug == "" {
-				ws.renderError(w, http.StatusBadRequest, "Name and slug are required")
-				return
-			}
-
 			now := time.Now()
 			feature := &licensing.Feature{
 				ID:          uuid.New().String(),
 				ProductID:   productID,
-				Name:        name,
-				Slug:        slug,
-				Description: description,
-				Category:    category,
+				Name:        strings.TrimSpace(req.Name),
+				Slug:        strings.TrimSpace(req.Slug),
+				Description: strings.TrimSpace(req.Description),
+				Category:    strings.TrimSpace(req.Category),
 				CreatedAt:   now,
 				UpdatedAt:   now,
 			}
-
 			if err := ws.lm.Storage().SaveFeature(ctx, feature); err != nil {
-				ws.renderError(w, http.StatusBadRequest, err.Error())
+				ws.respondAPIError(w, http.StatusBadRequest, err.Error())
 				return
 			}
-
-			http.Redirect(w, r, "/products/"+productID, http.StatusSeeOther)
-			return
+			ws.respondJSON(w, http.StatusCreated, feature)
+		default:
+			ws.respondAPIError(w, http.StatusMethodNotAllowed, "Method not allowed")
 		}
-
-		ws.render(w, "feature_new.html", TemplateData{
-			Title:       "New Feature",
-			CurrentPath: "/products",
-			User:        ws.getSessionFromContext(r),
-			Data:        map[string]interface{}{"Product": product},
-		})
 		return
 	}
+	featureID := segments[0]
+	ws.handleAPIProductFeatureDetail(w, r, productID, featureID, segments[1:])
+}
 
-	featureID := pathParts[0]
-	if featureID == "" {
-		http.NotFound(w, r)
-		return
-	}
-
+func (ws *WebServer) handleAPIProductFeatureDetail(w http.ResponseWriter, r *http.Request, productID, featureID string, segments []string) {
+	ctx := r.Context()
 	feature, err := ws.lm.Storage().GetFeature(ctx, featureID)
-	if err != nil || feature == nil {
-		ws.renderError(w, http.StatusNotFound, "Feature not found")
+	if err != nil || feature.ProductID != productID {
+		ws.respondAPIError(w, http.StatusNotFound, "Feature not found")
 		return
 	}
-
-	// Handle feature sub-actions
-	if len(pathParts) > 1 {
-		switch pathParts[1] {
-		case "edit":
-			ws.handleFeatureEdit(w, r, productID, feature)
-			return
-		case "delete":
-			if r.Method == http.MethodPost && ws.validateCSRF(r) {
-				err := ws.lm.Storage().DeleteFeature(ctx, featureID)
-				if err != nil {
-					ws.renderError(w, http.StatusBadRequest, err.Error())
-					return
-				}
-				http.Redirect(w, r, "/products/"+productID, http.StatusSeeOther)
-				return
-			}
+	if len(segments) > 0 && segments[0] != "" {
+		switch segments[0] {
 		case "scopes":
-			ws.handleFeatureScopes(w, r, productID, featureID, pathParts[2:])
+			ws.handleAPIProductFeatureScopes(w, r, featureID, segments[1:])
+		default:
+			ws.respondAPIError(w, http.StatusNotFound, "Invalid feature endpoint")
+		}
+		return
+	}
+	switch r.Method {
+	case http.MethodGet:
+		ws.respondJSON(w, http.StatusOK, feature)
+	case http.MethodPut:
+		var req struct {
+			Name        string `json:"name"`
+			Slug        string `json:"slug"`
+			Description string `json:"description"`
+			Category    string `json:"category"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			ws.respondAPIError(w, http.StatusBadRequest, "Invalid request body")
 			return
 		}
-	}
-
-	// Show feature detail
-	scopes, _ := ws.lm.Storage().ListFeatureScopes(ctx, featureID)
-
-	data := map[string]interface{}{
-		"Product": product,
-		"Feature": feature,
-		"Scopes":  scopes,
-	}
-
-	ws.render(w, "feature_detail.html", TemplateData{
-		Title:       feature.Name,
-		CurrentPath: "/products",
-		User:        ws.getSessionFromContext(r),
-		Data:        data,
-	})
-}
-
-func (ws *WebServer) handleFeatureEdit(w http.ResponseWriter, r *http.Request, productID string, feature *licensing.Feature) {
-	ctx := r.Context()
-
-	if r.Method == http.MethodPost {
-		if !ws.validateCSRF(r) {
-			ws.renderError(w, http.StatusForbidden, "Invalid CSRF token")
-			return
+		if strings.TrimSpace(req.Name) != "" {
+			feature.Name = strings.TrimSpace(req.Name)
 		}
-
-		name := strings.TrimSpace(r.FormValue("name"))
-		slug := strings.TrimSpace(r.FormValue("slug"))
-		description := strings.TrimSpace(r.FormValue("description"))
-		category := strings.TrimSpace(r.FormValue("category"))
-
-		if name != "" {
-			feature.Name = name
+		if strings.TrimSpace(req.Slug) != "" {
+			feature.Slug = strings.TrimSpace(req.Slug)
 		}
-		if slug != "" {
-			feature.Slug = slug
-		}
-		feature.Description = description
-		feature.Category = category
+		feature.Description = strings.TrimSpace(req.Description)
+		feature.Category = strings.TrimSpace(req.Category)
 		feature.UpdatedAt = time.Now()
-
 		if err := ws.lm.Storage().UpdateFeature(ctx, feature); err != nil {
-			ws.renderError(w, http.StatusBadRequest, err.Error())
+			ws.respondAPIError(w, http.StatusBadRequest, err.Error())
 			return
 		}
-
-		http.Redirect(w, r, "/products/"+productID+"/features/"+feature.ID, http.StatusSeeOther)
-		return
+		ws.respondJSON(w, http.StatusOK, feature)
+	case http.MethodDelete:
+		if err := ws.lm.Storage().DeleteFeature(ctx, featureID); err != nil {
+			ws.respondAPIError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	default:
+		ws.respondAPIError(w, http.StatusMethodNotAllowed, "Method not allowed")
 	}
-
-	product, err := ws.lm.Storage().GetProduct(ctx, productID)
-	if err != nil {
-		ws.renderError(w, http.StatusNotFound, "Product not found")
-		return
-	}
-
-	ws.render(w, "feature_edit.html", TemplateData{
-		Title:       "Edit Feature",
-		CurrentPath: "/products",
-		User:        ws.getSessionFromContext(r),
-		Data:        map[string]interface{}{"Product": product, "Feature": feature},
-	})
 }
 
-func (ws *WebServer) handleFeatureScopes(w http.ResponseWriter, r *http.Request, productID, featureID string, pathParts []string) {
+func (ws *WebServer) handleAPIProductFeatureScopes(w http.ResponseWriter, r *http.Request, featureID string, segments []string) {
 	ctx := r.Context()
-
-	feature, err := ws.lm.Storage().GetFeature(ctx, featureID)
-	if err != nil {
-		ws.renderError(w, http.StatusNotFound, "Feature not found")
-		return
-	}
-
-	// Handle empty path - redirect to feature detail
-	if len(pathParts) == 0 {
-		http.Redirect(w, r, "/products/"+productID+"/features/"+featureID, http.StatusSeeOther)
-		return
-	}
-
-	// New scope
-	if len(pathParts) == 1 && pathParts[0] == "new" {
-		if r.Method == http.MethodPost {
-			if !ws.validateCSRF(r) {
-				ws.renderError(w, http.StatusForbidden, "Invalid CSRF token")
+	if len(segments) == 0 || segments[0] == "" {
+		switch r.Method {
+		case http.MethodGet:
+			scopes, err := ws.lm.Storage().ListFeatureScopes(ctx, featureID)
+			if err != nil {
+				ws.respondAPIError(w, http.StatusInternalServerError, err.Error())
 				return
 			}
-
-			name := strings.TrimSpace(r.FormValue("name"))
-			slug := strings.TrimSpace(r.FormValue("slug"))
-			permission := strings.TrimSpace(r.FormValue("permission"))
-			limit := parseInt(r.FormValue("limit"), 0)
-			description := strings.TrimSpace(r.FormValue("description"))
-
-			if name == "" || slug == "" {
-				ws.renderError(w, http.StatusBadRequest, "Name and slug are required")
+			ws.respondJSON(w, http.StatusOK, scopes)
+		case http.MethodPost:
+			var req struct {
+				Name       string            `json:"name"`
+				Slug       string            `json:"slug"`
+				Permission string            `json:"permission"`
+				Limit      int               `json:"limit"`
+				Metadata   map[string]string `json:"metadata"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				ws.respondAPIError(w, http.StatusBadRequest, "Invalid request body")
 				return
 			}
-
+			if strings.TrimSpace(req.Name) == "" || strings.TrimSpace(req.Slug) == "" {
+				ws.respondAPIError(w, http.StatusBadRequest, "name and slug are required")
+				return
+			}
 			now := time.Now()
 			scope := &licensing.FeatureScope{
 				ID:         uuid.New().String(),
 				FeatureID:  featureID,
-				Name:       name,
-				Slug:       slug,
-				Permission: licensing.ScopePermission(permission),
-				Limit:      limit,
+				Name:       strings.TrimSpace(req.Name),
+				Slug:       strings.TrimSpace(req.Slug),
+				Permission: licensing.ScopePermission(strings.TrimSpace(req.Permission)),
+				Limit:      req.Limit,
+				Metadata:   req.Metadata,
 				CreatedAt:  now,
 				UpdatedAt:  now,
 			}
-
-			if description != "" {
-				scope.Metadata = map[string]string{"description": description}
+			if scope.Permission == "" {
+				scope.Permission = licensing.ScopePermissionAllow
 			}
-
 			if err := ws.lm.Storage().SaveFeatureScope(ctx, scope); err != nil {
-				ws.renderError(w, http.StatusBadRequest, err.Error())
+				ws.respondAPIError(w, http.StatusBadRequest, err.Error())
 				return
 			}
-
-			http.Redirect(w, r, "/products/"+productID+"/features/"+featureID, http.StatusSeeOther)
-			return
+			ws.respondJSON(w, http.StatusCreated, scope)
+		default:
+			ws.respondAPIError(w, http.StatusMethodNotAllowed, "Method not allowed")
 		}
-
-		product, err := ws.lm.Storage().GetProduct(ctx, productID)
-		if err != nil || product == nil {
-			ws.renderError(w, http.StatusNotFound, "Product not found")
-			return
-		}
-
-		ws.render(w, "scope_new.html", TemplateData{
-			Title:       "New Scope",
-			CurrentPath: "/products",
-			User:        ws.getSessionFromContext(r),
-			Data:        map[string]interface{}{"Product": product, "Feature": feature},
-		})
 		return
 	}
-
-	scopeID := pathParts[0]
-	if scopeID == "" {
-		http.NotFound(w, r)
-		return
-	}
-
-	// Handle scope actions
-	if len(pathParts) > 1 {
-		switch pathParts[1] {
-		case "edit":
-			scope, err := ws.lm.Storage().GetFeatureScope(ctx, scopeID)
-			if err != nil {
-				ws.renderError(w, http.StatusNotFound, "Scope not found")
-				return
-			}
-			ws.handleScopeEdit(w, r, productID, featureID, scope)
-			return
-		case "delete":
-			if r.Method == http.MethodPost && ws.validateCSRF(r) {
-				err := ws.lm.Storage().DeleteFeatureScope(ctx, scopeID)
-				if err != nil {
-					ws.renderError(w, http.StatusBadRequest, err.Error())
-					return
-				}
-				http.Redirect(w, r, "/products/"+productID+"/features/"+featureID, http.StatusSeeOther)
-				return
-			}
-		}
-	}
-
-	http.NotFound(w, r)
+	scopeID := segments[0]
+	ws.handleAPIProductFeatureScopeDetail(w, r, featureID, scopeID)
 }
 
-func (ws *WebServer) handleScopeEdit(w http.ResponseWriter, r *http.Request, productID, featureID string, scope *licensing.FeatureScope) {
+func (ws *WebServer) handleAPIProductFeatureScopeDetail(w http.ResponseWriter, r *http.Request, featureID, scopeID string) {
 	ctx := r.Context()
-
-	if r.Method == http.MethodPost {
-		if !ws.validateCSRF(r) {
-			ws.renderError(w, http.StatusForbidden, "Invalid CSRF token")
+	scope, err := ws.lm.Storage().GetFeatureScope(ctx, scopeID)
+	if err != nil || scope.FeatureID != featureID {
+		ws.respondAPIError(w, http.StatusNotFound, "Scope not found")
+		return
+	}
+	switch r.Method {
+	case http.MethodGet:
+		ws.respondJSON(w, http.StatusOK, scope)
+	case http.MethodPut:
+		var req struct {
+			Name       string            `json:"name"`
+			Slug       string            `json:"slug"`
+			Permission string            `json:"permission"`
+			Limit      *int              `json:"limit"`
+			Metadata   map[string]string `json:"metadata"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			ws.respondAPIError(w, http.StatusBadRequest, "Invalid request body")
 			return
 		}
-
-		name := strings.TrimSpace(r.FormValue("name"))
-		slug := strings.TrimSpace(r.FormValue("slug"))
-		permission := strings.TrimSpace(r.FormValue("permission"))
-		limit := parseInt(r.FormValue("limit"), 0)
-		description := strings.TrimSpace(r.FormValue("description"))
-
-		if name != "" {
-			scope.Name = name
+		if strings.TrimSpace(req.Name) != "" {
+			scope.Name = strings.TrimSpace(req.Name)
 		}
-		if slug != "" {
-			scope.Slug = slug
+		if strings.TrimSpace(req.Slug) != "" {
+			scope.Slug = strings.TrimSpace(req.Slug)
 		}
-		scope.Permission = licensing.ScopePermission(permission)
-		scope.Limit = limit
-		if scope.Metadata == nil && description != "" {
-			scope.Metadata = make(map[string]string)
+		if strings.TrimSpace(req.Permission) != "" {
+			scope.Permission = licensing.ScopePermission(strings.TrimSpace(req.Permission))
 		}
-		if scope.Metadata != nil {
-			if description != "" {
-				scope.Metadata["description"] = description
-			} else {
-				delete(scope.Metadata, "description")
-				if len(scope.Metadata) == 0 {
-					scope.Metadata = nil
-				}
-			}
+		if req.Limit != nil {
+			scope.Limit = *req.Limit
+		}
+		if req.Metadata != nil {
+			scope.Metadata = req.Metadata
 		}
 		scope.UpdatedAt = time.Now()
-
 		if err := ws.lm.Storage().UpdateFeatureScope(ctx, scope); err != nil {
-			ws.renderError(w, http.StatusBadRequest, err.Error())
+			ws.respondAPIError(w, http.StatusBadRequest, err.Error())
 			return
 		}
-
-		http.Redirect(w, r, "/products/"+productID+"/features/"+featureID, http.StatusSeeOther)
-		return
+		ws.respondJSON(w, http.StatusOK, scope)
+	case http.MethodDelete:
+		if err := ws.lm.Storage().DeleteFeatureScope(ctx, scopeID); err != nil {
+			ws.respondAPIError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	default:
+		ws.respondAPIError(w, http.StatusMethodNotAllowed, "Method not allowed")
 	}
-
-	product, err := ws.lm.Storage().GetProduct(ctx, productID)
-	if err != nil || product == nil {
-		ws.renderError(w, http.StatusNotFound, "Product not found")
-		return
-	}
-	feature, err := ws.lm.Storage().GetFeature(ctx, featureID)
-	if err != nil || feature == nil {
-		ws.renderError(w, http.StatusNotFound, "Feature not found")
-		return
-	}
-
-	ws.render(w, "scope_edit.html", TemplateData{
-		Title:       "Edit Scope",
-		CurrentPath: "/products",
-		User:        ws.getSessionFromContext(r),
-		Data:        map[string]interface{}{"Product": product, "Feature": feature, "Scope": scope},
-	})
 }
 
-// handlePlanDetail handles /plans/{id} routes
-func (ws *WebServer) handlePlanDetail(w http.ResponseWriter, r *http.Request) {
-	// This is just a redirect to the proper product/plan path
-	ctx := r.Context()
-	planID := strings.TrimPrefix(r.URL.Path, "/plans/")
-	planID = strings.Split(planID, "/")[0]
-
-	plan, err := ws.lm.Storage().GetPlan(ctx, planID)
+func (ws *WebServer) seedTrialPlanFeatures(ctx context.Context, plan *licensing.Plan) {
+	features, err := ws.lm.Storage().ListFeaturesByProduct(ctx, plan.ProductID)
 	if err != nil {
-		ws.renderError(w, http.StatusNotFound, "Plan not found")
+		log.Printf("failed to list features for trial plan: %v", err)
 		return
 	}
-
-	http.Redirect(w, r, "/products/"+plan.ProductID+"/plans/"+planID, http.StatusSeeOther)
-}
-
-// handleFeatureDetail handles /features/{id} routes
-func (ws *WebServer) handleFeatureDetail(w http.ResponseWriter, r *http.Request) {
-	// This is just a redirect to the proper product/feature path
-	ctx := r.Context()
-	featureID := strings.TrimPrefix(r.URL.Path, "/features/")
-	featureID = strings.Split(featureID, "/")[0]
-
-	feature, err := ws.lm.Storage().GetFeature(ctx, featureID)
-	if err != nil {
-		ws.renderError(w, http.StatusNotFound, "Feature not found")
-		return
+	now := time.Now()
+	for _, feature := range features {
+		pf := &licensing.PlanFeature{
+			ID:        uuid.New().String(),
+			PlanID:    plan.ID,
+			FeatureID: feature.ID,
+			Enabled:   true,
+			CreatedAt: now,
+			UpdatedAt: now,
+		}
+		scopes, err := ws.lm.Storage().ListFeatureScopes(ctx, feature.ID)
+		if err == nil && len(scopes) > 0 {
+			overrides := make(map[string]licensing.ScopeOverride, len(scopes))
+			for _, scope := range scopes {
+				overrides[scope.Slug] = licensing.ScopeOverride{
+					Permission: licensing.ScopePermissionAllow,
+					Limit:      scope.Limit,
+				}
+			}
+			pf.ScopeOverrides = overrides
+		}
+		if err := ws.lm.Storage().SavePlanFeature(ctx, pf); err != nil {
+			log.Printf("failed to seed trial plan feature %s: %v", feature.ID, err)
+		}
 	}
-
-	http.Redirect(w, r, "/products/"+feature.ProductID+"/features/"+featureID, http.StatusSeeOther)
 }

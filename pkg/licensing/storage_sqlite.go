@@ -1169,6 +1169,21 @@ func (s *SQLiteStorage) ListAdminUsers(ctx context.Context) ([]*AdminUser, error
 	return users, rows.Err()
 }
 
+func (s *SQLiteStorage) DeleteAdminUser(ctx context.Context, userID string) error {
+	if strings.TrimSpace(userID) == "" {
+		return fmt.Errorf("user id is required")
+	}
+	query := `DELETE FROM admin_users WHERE id = ?`
+	res, err := s.db.ExecContext(ctx, query, userID)
+	if err != nil {
+		return err
+	}
+	if rows, err := res.RowsAffected(); err == nil && rows == 0 {
+		return errUserMissing
+	}
+	return nil
+}
+
 func (s *SQLiteStorage) SaveAPIKey(ctx context.Context, key *APIKeyRecord) error {
 	if key == nil {
 		return fmt.Errorf("api key is nil")

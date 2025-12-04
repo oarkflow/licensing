@@ -30,6 +30,7 @@ type Storage interface {
 	ListActivations(ctx context.Context, licenseID string) ([]*ActivationRecord, error)
 	CreateAdminUser(ctx context.Context, user *AdminUser) error
 	UpdateAdminUser(ctx context.Context, user *AdminUser) error
+	DeleteAdminUser(ctx context.Context, userID string) error
 	GetAdminUser(ctx context.Context, userID string) (*AdminUser, error)
 	GetAdminUserByUsername(ctx context.Context, username string) (*AdminUser, error)
 	ListAdminUsers(ctx context.Context) ([]*AdminUser, error)
@@ -475,10 +476,43 @@ func (s *InMemoryStorage) UpdateAdminUser(_ context.Context, user *AdminUser) er
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if _, exists := s.adminUsers[user.ID]; !exists {
+	oldUser, exists := s.adminUsers[user.ID]
+	if !exists {
 		return errUserMissing
 	}
+	oldKey := strings.ToLower(strings.TrimSpace(oldUser.Username))
+	newKey := strings.ToLower(strings.TrimSpace(user.Username))
+	if newKey == "" {
+		return fmt.Errorf("username is required")
+	}
+	if existingID, taken := s.adminByName[newKey]; taken && existingID != user.ID {
+		return errUserExists
+	}
+	delete(s.adminByName, oldKey)
 	s.adminUsers[user.ID] = cloneAdminUser(user)
+	s.adminByName[newKey] = user.ID
+	return nil
+}
+
+func (s *InMemoryStorage) DeleteAdminUser(_ context.Context, userID string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	user, exists := s.adminUsers[userID]
+	if !exists {
+		return errUserMissing
+	}
+	usernameKey := strings.ToLower(strings.TrimSpace(user.Username))
+	delete(s.adminUsers, userID)
+	delete(s.adminByName, usernameKey)
+	if keyIDs, ok := s.apiKeysByUser[userID]; ok {
+		for keyID := range keyIDs {
+			if key, exists := s.apiKeys[keyID]; exists {
+				delete(s.apiKeysByHash, key.Hash)
+			}
+			delete(s.apiKeys, keyID)
+		}
+		delete(s.apiKeysByUser, userID)
+	}
 	return nil
 }
 
@@ -1226,6 +1260,13 @@ func (ps *PersistentStorage) CreateAdminUser(ctx context.Context, user *AdminUse
 
 func (ps *PersistentStorage) UpdateAdminUser(ctx context.Context, user *AdminUser) error {
 	if err := ps.backend.UpdateAdminUser(ctx, user); err != nil {
+		return err
+	}
+	return ps.persist()
+}
+
+func (ps *PersistentStorage) DeleteAdminUser(ctx context.Context, userID string) error {
+	if err := ps.backend.DeleteAdminUser(ctx, userID); err != nil {
 		return err
 	}
 	return ps.persist()

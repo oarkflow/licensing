@@ -16,6 +16,8 @@ services:
 
     volumes:
       - licensing-data:/data
+      - ./templates:/templates
+      - ./dist:/dist
 
     networks:
       - processgate
