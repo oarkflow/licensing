@@ -374,13 +374,18 @@ func (s *Server) sendEmailNow(ctx context.Context, to, subject, htmlBody, textBo
 		return nil, fmt.Errorf("storage backend unavailable")
 	}
 
-	// Get an active email provider
+	// Get an active email provider (only enabled ones)
 	providers, err := storage.ListEmailProviders(ctx, false)
 	if err != nil {
 		return nil, fmt.Errorf("failed to list email providers: %w", err)
 	}
-	log.Printf("📧 Found %d email providers", len(providers))
+	log.Printf("📧 Found %d enabled email providers", len(providers))
 	if len(providers) == 0 {
+		// Check if any providers exist but are disabled
+		allProviders, checkErr := storage.ListEmailProviders(ctx, true)
+		if checkErr == nil && len(allProviders) > 0 {
+			return nil, fmt.Errorf("email provider(s) exist but none are enabled - please enable an SMTP provider in /messaging/providers")
+		}
 		return nil, fmt.Errorf("no email providers configured - please configure an SMTP provider in /messaging/providers")
 	}
 

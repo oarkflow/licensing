@@ -147,7 +147,6 @@ class ApiService {
                     credentials: 'include',
                     redirect: 'follow',
                 });
-
                 if (response.status === 401) {
                     const currentPath = window.location.pathname;
                     if (currentPath !== '/login' && currentPath !== '/setup') {
@@ -178,7 +177,7 @@ class ApiService {
 
                 if (!response.ok) {
                     // Special handling for setup required
-                    if (data.error === "Require Setup before login") {
+                    if (data.error === "Require Setup before login" || data.error?.message === "Require Setup before login") {
                         window.location.href = '/setup';
                         return { success: false, error: 'Setup required' };
                     }
