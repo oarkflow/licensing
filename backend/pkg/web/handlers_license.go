@@ -441,8 +441,13 @@ func (ws *WebServer) sendLicenseEmail(ctx context.Context, clientID string, lice
 	}
 	log.Printf("📧 Got product info: %s", product.Name)
 
-	// Prepare license data for email
-	licenseJSON, err := json.MarshalIndent(license, "", "  ")
+	// Prepare minimal license data for email (only essential fields)
+	minimalLicenseData := map[string]string{
+		"email":       client.Email,
+		"license_key": license.LicenseKey,
+		"client_id":   license.ClientID,
+	}
+	licenseJSON, err := json.MarshalIndent(minimalLicenseData, "", "  ")
 	if err != nil {
 		log.Printf("failed to marshal license JSON for email: %v", err)
 		return
