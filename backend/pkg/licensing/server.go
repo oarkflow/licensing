@@ -352,6 +352,16 @@ func (s *Server) enqueueEmailWithAttachments(ctx context.Context, to, subject, h
 	return &emailDispatchResult{Queued: true, MessageID: msg.ID}, nil
 }
 
+// SendEmailNow sends an email immediately using the first active SMTP provider
+func (s *Server) SendEmailNow(ctx context.Context, to, subject, htmlBody, textBody string, attachments []*email.EmailAttachment) (*emailDispatchResult, error) {
+	return s.sendEmailNow(ctx, to, subject, htmlBody, textBody, attachments)
+}
+
+// EmailTemplateLoader returns the email template loader
+func (s *Server) EmailTemplateLoader() *EmailTemplateLoader {
+	return s.emailTemplateLoader
+}
+
 // sendEmailNow sends an email immediately using the first active SMTP provider
 func (s *Server) sendEmailNow(ctx context.Context, to, subject, htmlBody, textBody string, attachments []*email.EmailAttachment) (*emailDispatchResult, error) {
 	to = strings.TrimSpace(to)

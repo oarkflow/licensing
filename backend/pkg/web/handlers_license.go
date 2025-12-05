@@ -3,11 +3,15 @@ package web
 import (
 	"context"
 	"encoding/json"
+	"fmt"
+	"html"
+	"log"
 	"net/http"
 	"sort"
 	"strings"
 	"time"
 
+	email "github.com/oarkflow/licensing/pkg/email"
 	"github.com/oarkflow/licensing/pkg/licensing"
 )
 
@@ -94,6 +98,10 @@ func (ws *WebServer) handleAPILicenses(w http.ResponseWriter, r *http.Request) {
 			})
 			return
 		}
+
+		// Send license email to client
+		go ws.sendLicenseEmail(ctx, req.ClientID, license)
+
 		ws.respondJSON(w, http.StatusCreated, license)
 	default:
 		ws.respondAPIError(w, http.StatusMethodNotAllowed, "Method not allowed")
@@ -405,5 +413,82 @@ func filterClientsByQuery(clients []*licensing.Client, filter string) []*licensi
 		return filtered
 	default:
 		return clients
+	}
+}
+
+// sendLicenseEmail sends a license email to the client asynchronously
+func (ws *WebServer) sendLicenseEmail(ctx context.Context, clientID string, license *licensing.License) {
+	if ws.server == nil {
+		log.Printf("server reference not set, cannot send license email")
+		return
+	}
+
+	// Get client information
+	client, err := ws.lm.GetClient(ctx, clientID)
+	if err != nil {
+		log.Printf("failed to get client %s for license email: %v", clientID, err)
+		return
+	}
+
+	// Get product information
+	product, err := ws.lm.Storage().GetProduct(ctx, license.ProductID)
+	if err != nil {
+		log.Printf("failed to get product %s for license email: %v", license.ProductID, err)
+		return
+	}
+
+	// Prepare license data for email
+	licenseJSON, err := json.MarshalIndent(license, "", "  ")
+	if err != nil {
+		log.Printf("failed to marshal license JSON for email: %v", err)
+		return
+	}
+
+	// Prepare email template data
+	clientLabel := client.Name
+	if clientLabel == "" {
+		clientLabel = client.Email
+	}
+
+	productLabel := product.Name
+	if productLabel == "" {
+		productLabel = product.Slug
+	}
+
+	licenseSubject := fmt.Sprintf("%s license credentials", productLabel)
+	jsonBody := string(licenseJSON)
+
+	// Render license email using template
+	licenseTemplateData := licensing.EmailTemplateData{
+		ClientName:  clientLabel,
+		ProductName: productLabel,
+		Email:       client.Email,
+		LicenseJSON: jsonBody,
+		SupportURL:  "https://support.example.com",
+		DocsURL:     "https://docs.example.com",
+	}
+
+	licenseHTML, err := ws.server.EmailTemplateLoader().RenderTemplate("license_email", licenseTemplateData)
+	if err != nil {
+		log.Printf("failed to render license email template: %v", err)
+		// Fallback to simple HTML if template rendering fails
+		licenseHTML = fmt.Sprintf("<p>Hi %s,</p><p>Here are the license credentials for %s. We have also attached the <code>license.json</code> file to this email for your convenience.</p><pre style=\"padding:12px;background:#0f172a;color:#e2e8f0;border-radius:8px;white-space:pre-wrap;\">%s</pre><p>Keep this file private and secure.</p><p>Thanks,<br/>The Licensing Team</p>", html.EscapeString(clientLabel), html.EscapeString(productLabel), html.EscapeString(jsonBody))
+	}
+
+	licenseText := fmt.Sprintf("Hi %s,\n\nHere are the license credentials for %s. We have also attached the license.json file to this email for your convenience.\n\nKeep this file private and secure.\n\nThanks,\nThe Licensing Team", clientLabel, productLabel)
+
+	// Create the JSON file attachment
+	licenseAttachment := &email.EmailAttachment{
+		Filename:    "license.json",
+		ContentType: "application/json",
+		Data:        licenseJSON,
+		Size:        int64(len(licenseJSON)),
+	}
+
+	if res, err := ws.server.SendEmailNow(ctx, client.Email, licenseSubject, licenseHTML, licenseText, []*email.EmailAttachment{licenseAttachment}); err != nil {
+		log.Printf("failed to send license email for %s: %v", client.Email, err)
+	} else {
+		log.Printf("license email sent successfully to %s", client.Email)
+		_ = res // We could log more details if needed
 	}
 }

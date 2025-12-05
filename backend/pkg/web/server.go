@@ -36,6 +36,7 @@ type SessionStore interface {
 // WebServer handles the admin UI
 type WebServer struct {
 	lm            *licensing.LicenseManager
+	server        *licensing.Server   // Reference to the main server for email functionality
 	sessions      map[string]*Session // In-memory cache for fast lookups
 	sessionsMu    sync.RWMutex
 	sessionMaxAge time.Duration
@@ -77,6 +78,11 @@ func NewWebServer(lm *licensing.LicenseManager) (*WebServer, error) {
 	go ws.cleanupSessions()
 
 	return ws, nil
+}
+
+// SetServer sets the reference to the main licensing server for email functionality
+func (ws *WebServer) SetServer(server *licensing.Server) {
+	ws.server = server
 }
 
 // loadSessionsFromStorage loads non-expired sessions from persistent storage

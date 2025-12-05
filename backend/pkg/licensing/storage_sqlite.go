@@ -1490,3 +1490,38 @@ func (s *SQLiteStorage) ListSessionsByUser(ctx context.Context, userID string) (
 	}
 	return sessions, rows.Err()
 }
+
+// ResetTables drops and recreates product-related tables (products, plans, features, scopes)
+// This is used for the reset command to clear seeded data
+func (s *SQLiteStorage) ResetTables(ctx context.Context) error {
+	// Disable foreign key constraints temporarily
+	if _, err := s.db.ExecContext(ctx, "PRAGMA foreign_keys = OFF"); err != nil {
+		return fmt.Errorf("failed to disable foreign keys: %w", err)
+	}
+	defer func() {
+		// Re-enable foreign keys
+		s.db.ExecContext(context.Background(), "PRAGMA foreign_keys = ON")
+	}()
+
+	tables := []string{
+		"plan_features",
+		"plans",
+		"feature_scopes",
+		"features",
+		"products",
+	}
+
+	// Drop tables (order doesn't matter when foreign keys are disabled)
+	for _, table := range tables {
+		if _, err := s.db.ExecContext(ctx, fmt.Sprintf("DROP TABLE IF EXISTS %s", table)); err != nil {
+			return fmt.Errorf("failed to drop table %s: %w", table, err)
+		}
+	}
+
+	// Recreate the schema
+	if err := ensureProductSchema(s.db); err != nil {
+		return fmt.Errorf("failed to recreate product schema: %w", err)
+	}
+
+	return nil
+}
