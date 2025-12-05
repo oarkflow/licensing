@@ -903,13 +903,15 @@ func (s *Server) handleTrialCheck(w http.ResponseWriter, r *http.Request) {
 
 // SubscribeRequest represents a subscription creation request.
 type SubscribeRequest struct {
-	Email        string `json:"email"`
-	ProductID    string `json:"product_id"`
-	PlanID       string `json:"plan_id"`
-	StartDate    string `json:"start_date,omitempty"`    // ISO 8601 format, defaults to now
-	DurationDays int    `json:"duration_days,omitempty"` // Overrides billing cycle if set
-	MaxDevices   int    `json:"max_devices,omitempty"`   // Defaults to 1
-	SendEmail    bool   `json:"send_email,omitempty"`    // Send welcome email to customer
+	Email        string            `json:"email"`
+	ProductID    string            `json:"product_id"`
+	PlanID       string            `json:"plan_id"`
+	StartDate    string            `json:"start_date,omitempty"`    // ISO 8601 format, defaults to now
+	DurationDays int               `json:"duration_days,omitempty"` // Overrides billing cycle if set
+	MaxDevices   int               `json:"max_devices,omitempty"`   // Defaults to 1
+	SendEmail    bool              `json:"send_email,omitempty"`    // Send welcome email to customer
+	IsTrial      bool              `json:"is_trial,omitempty"`      // Force trial mode regardless of plan
+	Metadata     map[string]string `json:"metadata,omitempty"`      // Additional metadata
 }
 
 func (s *Server) handleSubscribe(w http.ResponseWriter, r *http.Request) {

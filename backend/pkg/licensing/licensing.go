@@ -256,9 +256,10 @@ func validateActivationRequest(req *ActivationRequest) error {
 const maxAdminPayloadBytes = 256 << 10
 
 type createClientRequest struct {
-	Email       string `json:"email"`
-	Name        string `json:"name,omitempty"`
-	CompanyName string `json:"company_name,omitempty"`
+	Email       string            `json:"email"`
+	Name        string            `json:"name,omitempty"`
+	CompanyName string            `json:"company_name,omitempty"`
+	Metadata    map[string]string `json:"metadata,omitempty"`
 }
 
 type banClientRequest struct {
@@ -266,14 +267,16 @@ type banClientRequest struct {
 }
 
 type createLicenseRequest struct {
-	ClientID             string `json:"client_id"`
-	ProductID            string `json:"product_id,omitempty"`
-	PlanID               string `json:"plan_id,omitempty"`
-	DurationDays         int    `json:"duration_days"`
-	MaxDevices           int    `json:"max_devices"`
-	CheckMode            string `json:"check_mode,omitempty"`
-	CheckIntervalSeconds int64  `json:"check_interval_seconds,omitempty"`
-	PlanSlug             string `json:"plan_slug"`
+	ClientID             string            `json:"client_id"`
+	ProductID            string            `json:"product_id,omitempty"`
+	PlanID               string            `json:"plan_id,omitempty"`
+	DurationDays         int               `json:"duration_days"`
+	MaxDevices           int               `json:"max_devices"`
+	CheckMode            string            `json:"check_mode,omitempty"`
+	CheckIntervalSeconds int64             `json:"check_interval_seconds,omitempty"`
+	PlanSlug             string            `json:"plan_slug"`
+	IsTrial              bool              `json:"is_trial,omitempty"`
+	Metadata             map[string]string `json:"metadata,omitempty"`
 }
 
 type licenseMutationRequest struct {
@@ -290,17 +293,20 @@ type createAPIKeyRequest struct {
 }
 
 type trialLicenseAPIRequest struct {
-	Email             string `json:"email"`
-	DeviceFingerprint string `json:"device_fingerprint"`
-	ProductID         string `json:"product_id,omitempty"`
-	TrialDurationDays int    `json:"trial_duration_days,omitempty"`
-	SubscriptionURL   string `json:"subscription_url,omitempty"`
+	Email             string            `json:"email"`
+	DeviceFingerprint string            `json:"device_fingerprint"`
+	ProductID         string            `json:"product_id,omitempty"`
+	TrialDurationDays int               `json:"trial_duration_days,omitempty"`
+	SubscriptionURL   string            `json:"subscription_url,omitempty"`
+	Metadata          map[string]string `json:"metadata,omitempty"`
 }
 
 type provisionLicenseRequest struct {
-	Email       string `json:"email"`
-	Name        string `json:"name,omitempty"`
-	CompanyName string `json:"company_name,omitempty"`
-	ProductID   string `json:"product_id"`
-	PlanID      string `json:"plan_id"`
+	Email       string            `json:"email"`
+	Name        string            `json:"name,omitempty"`
+	CompanyName string            `json:"company_name,omitempty"`
+	ProductID   string            `json:"product_id"`
+	PlanID      string            `json:"plan_id"`
+	IsTrial     bool              `json:"is_trial,omitempty"`
+	Metadata    map[string]string `json:"metadata,omitempty"`
 }
