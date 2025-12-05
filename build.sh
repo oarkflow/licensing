@@ -15,7 +15,7 @@ CONTAINER_NAME="crm"
 TAR_FILE="crm.tar"
 
 echo "Building Docker image..."
-docker compose build
+docker compose build --build-arg PLATFORM=linux/amd64
 
 echo "Saving Docker image to tar file..."
 docker save $IMAGE_NAME > $TAR_FILE

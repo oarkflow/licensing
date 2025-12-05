@@ -3,9 +3,12 @@
 ########################
 # Backend build stage  #
 ########################
-FROM golang:1.25-alpine AS backend-build
+ARG PLATFORM=linux/amd64
+FROM --platform=$PLATFORM golang:1.25-alpine AS backend-build
 WORKDIR /src
 ENV CGO_ENABLED=0
+ENV GOOS=linux
+ENV GOARCH=amd64
 COPY backend/go.mod backend/go.sum ./
 RUN go mod download
 COPY backend/. .
@@ -14,7 +17,7 @@ RUN go build -o /out/crm ./cmd
 ########################
 # Backend runtime      #
 ########################
-FROM alpine:latest AS backend
+FROM --platform=$PLATFORM alpine:latest AS backend
 RUN apk add --no-cache ca-certificates wget
 WORKDIR /srv
 COPY --from=backend-build /out/crm /usr/local/bin/crm

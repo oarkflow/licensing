@@ -2,6 +2,8 @@ services:
   crm:
     build:
       context: .
+      args:
+        PLATFORM: linux/amd64
     image: crm:latest
     container_name: crm
     restart: unless-stopped
