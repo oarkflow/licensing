@@ -318,6 +318,12 @@ export function MessagingProviderFormPage() {
                                 min={0}
                                 value={formState.priority}
                                 onChange={(e) => setFormState((prev) => ({ ...prev, priority: e.target.value }))}
+                                onBlur={(e) => {
+                                    const value = e.target.value;
+                                    if (value === '' || isNaN(parseInt(value, 10))) {
+                                        setFormState((prev) => ({ ...prev, priority: '100' }));
+                                    }
+                                }}
                             />
                             <p className="text-xs text-muted-foreground">Lower numbers are attempted first.</p>
                         </div>
@@ -338,6 +344,12 @@ export function MessagingProviderFormPage() {
                                 min={1}
                                 value={formState.maxRetries}
                                 onChange={(e) => setFormState((prev) => ({ ...prev, maxRetries: e.target.value }))}
+                                onBlur={(e) => {
+                                    const value = e.target.value;
+                                    if (value === '' || isNaN(parseInt(value, 10))) {
+                                        setFormState((prev) => ({ ...prev, maxRetries: '3' }));
+                                    }
+                                }}
                             />
                         </div>
                         <div className="space-y-2">
@@ -348,6 +360,12 @@ export function MessagingProviderFormPage() {
                                 min={0}
                                 value={formState.retryBaseMs}
                                 onChange={(e) => setFormState((prev) => ({ ...prev, retryBaseMs: e.target.value }))}
+                                onBlur={(e) => {
+                                    const value = e.target.value;
+                                    if (value === '' || isNaN(parseInt(value, 10))) {
+                                        setFormState((prev) => ({ ...prev, retryBaseMs: '1000' }));
+                                    }
+                                }}
                             />
                         </div>
                         <div className="space-y-2">
@@ -358,6 +376,12 @@ export function MessagingProviderFormPage() {
                                 min={0}
                                 value={formState.retryMaxMs}
                                 onChange={(e) => setFormState((prev) => ({ ...prev, retryMaxMs: e.target.value }))}
+                                onBlur={(e) => {
+                                    const value = e.target.value;
+                                    if (value === '' || isNaN(parseInt(value, 10))) {
+                                        setFormState((prev) => ({ ...prev, retryMaxMs: '60000' }));
+                                    }
+                                }}
                             />
                         </div>
                         <div className="space-y-2">
@@ -368,6 +392,12 @@ export function MessagingProviderFormPage() {
                                 step="0.05"
                                 value={formState.retryJitterPct}
                                 onChange={(e) => setFormState((prev) => ({ ...prev, retryJitterPct: e.target.value }))}
+                                onBlur={(e) => {
+                                    const value = e.target.value;
+                                    if (value === '' || isNaN(parseFloat(value))) {
+                                        setFormState((prev) => ({ ...prev, retryJitterPct: '0.25' }));
+                                    }
+                                }}
                             />
                         </div>
                         <div className="flex items-center gap-4 rounded-2xl border border-border p-4">

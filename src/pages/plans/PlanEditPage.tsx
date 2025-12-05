@@ -221,12 +221,22 @@ export function PlanEditPage() {
                                     min="1"
                                     max="365"
                                     value={formData.trial_days || ''}
-                                    onChange={(e) =>
+                                    onChange={(e) => {
+                                        const value = e.target.value;
                                         setFormData((prev) => ({
                                             ...prev,
-                                            trial_days: e.target.value === '' ? undefined : parseInt(e.target.value) || 30,
-                                        }))
-                                    }
+                                            trial_days: value === '' ? undefined : parseInt(value, 10),
+                                        }));
+                                    }}
+                                    onBlur={(e) => {
+                                        const value = e.target.value;
+                                        if (value === '' || isNaN(parseInt(value, 10))) {
+                                            setFormData((prev) => ({
+                                                ...prev,
+                                                trial_days: 30,
+                                            }));
+                                        }
+                                    }}
                                     placeholder="30"
                                     required={formData.is_trial}
                                 />
@@ -266,13 +276,23 @@ export function PlanEditPage() {
                                             id="min_devices"
                                             type="number"
                                             min="1"
-                                            value={formData.min_devices || 1}
-                                            onChange={(e) =>
+                                            value={formData.min_devices || ''}
+                                            onChange={(e) => {
+                                                const value = e.target.value;
                                                 setFormData((prev) => ({
                                                     ...prev,
-                                                    min_devices: parseInt(e.target.value) || 1,
-                                                }))
-                                            }
+                                                    min_devices: value === '' ? undefined : parseInt(value, 10),
+                                                }));
+                                            }}
+                                            onBlur={(e) => {
+                                                const value = e.target.value;
+                                                if (value === '' || isNaN(parseInt(value, 10))) {
+                                                    setFormData((prev) => ({
+                                                        ...prev,
+                                                        min_devices: 1,
+                                                    }));
+                                                }
+                                            }}
                                             placeholder="1"
                                         />
                                         <p className="text-xs text-muted-foreground">

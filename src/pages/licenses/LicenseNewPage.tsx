@@ -35,10 +35,10 @@ export function LicenseNewPage() {
     const [formData, setFormData] = useState<CreateLicenseRequest>({
         client_id: searchParams.get('clientId') || '',
         product_id: searchParams.get('productId') || '',
-        plan_id: '',
+        plan_id: searchParams.get('planId') || '',
         plan_slug: '',
-        duration_days: 365,
-        max_devices: 1,
+        duration_days: undefined,
+        max_devices: undefined,
     });
 
     const { data: clientsResponse } = useQuery({
@@ -101,6 +101,24 @@ export function LicenseNewPage() {
         }
     }, [selectedPlan]);
 
+    // Handle pre-selected plan from URL params
+    useEffect(() => {
+        const planIdFromUrl = searchParams.get('planId');
+        if (planIdFromUrl && plans.length > 0 && !formData.plan_id) {
+            const plan = plans.find((p) => p.id === planIdFromUrl);
+            if (plan) {
+                setFormData((prev) => ({
+                    ...prev,
+                    plan_id: planIdFromUrl,
+                    plan_slug: plan.slug,
+                    max_devices: Math.max(prev.max_devices || 1, plan.min_devices || 1),
+                    duration_days: plan.is_trial ? (plan.trial_days || 30) : (prev.duration_days || 365),
+                    is_trial: plan.is_trial || false,
+                }));
+            }
+        }
+    }, [searchParams, plans, formData.plan_id]);
+
     const createMutation = useMutation({
         mutationFn: (data: CreateLicenseRequest) => api.createLicense(data),
         onSuccess: (response) => {
@@ -123,6 +141,13 @@ export function LicenseNewPage() {
     const handleSubmit = (e: React.FormEvent) => {
         e.preventDefault();
 
+        // Prepare form data with defaults
+        const submitData = {
+            ...formData,
+            max_devices: formData.max_devices || (selectedPlan?.min_devices || 1),
+            duration_days: formData.duration_days || (selectedPlan?.is_trial ? (selectedPlan.trial_days || 30) : 365),
+        };
+
         // Enforce minimum devices
         if (priceInfo && priceInfo.isUnderMinimum) {
             toast({
@@ -133,7 +158,7 @@ export function LicenseNewPage() {
             return;
         }
 
-        createMutation.mutate(formData);
+        createMutation.mutate(submitData);
     };
 
     const handlePlanChange = (planId: string) => {
@@ -144,6 +169,10 @@ export function LicenseNewPage() {
             plan_slug: plan?.slug || '',
             // Set max_devices to plan's minimum if current value is less
             max_devices: plan ? Math.max(prev.max_devices || 1, plan.min_devices || 1) : prev.max_devices,
+            // Set duration to trial_days if this is a trial plan
+            duration_days: plan?.is_trial ? (plan.trial_days || 30) : (prev.duration_days || 365),
+            // Set is_trial flag based on plan
+            is_trial: plan?.is_trial || false,
         }));
     };
 
@@ -288,15 +317,25 @@ export function LicenseNewPage() {
                                                 <SelectContent className="rounded-2xl border bg-popover/90 backdrop-blur">
                                                     {plans.map((plan) => (
                                                         <SelectItem key={plan.id} value={plan.id}>
-                                                            <div className="flex flex-col gap-0.5">
-                                                                <span className="font-medium">{plan.name}</span>
-                                                                <span className="text-xs text-muted-foreground">
-                                                                    {plan.price_per_device > 0
-                                                                        ? `${formatCurrency(plan.price_per_device / 100, plan.currency || 'USD')}/device/${formatBillingCycle(plan.billing_cycle)}`
-                                                                        : plan.slug
-                                                                    }
-                                                                    {` · min ${plan.min_devices || 1} device${(plan.min_devices || 1) > 1 ? 's' : ''}`}
-                                                                </span>
+                                                            <div className="flex items-center gap-2">
+                                                                <div className="flex flex-col gap-0.5 flex-1">
+                                                                    <div className="flex items-center gap-2">
+                                                                        <span className="font-medium">{plan.name}</span>
+                                                                        {plan.is_trial && (
+                                                                            <Badge variant="secondary" className="text-xs">
+                                                                                Trial
+                                                                            </Badge>
+                                                                        )}
+                                                                    </div>
+                                                                    <span className="text-xs text-muted-foreground">
+                                                                        {plan.price_per_device > 0
+                                                                            ? `${formatCurrency(plan.price_per_device / 100, plan.currency || 'USD')}/device/${formatBillingCycle(plan.billing_cycle)}`
+                                                                            : plan.slug
+                                                                        }
+                                                                        {` · min ${plan.min_devices || 1} device${(plan.min_devices || 1) > 1 ? 's' : ''}`}
+                                                                        {plan.is_trial && ` · ${plan.trial_days || 30} days`}
+                                                                    </span>
+                                                                </div>
                                                             </div>
                                                         </SelectItem>
                                                     ))}
@@ -335,12 +374,23 @@ export function LicenseNewPage() {
                                         type="number"
                                         min={priceInfo?.minDevices || 1}
                                         value={formData.max_devices || ''}
-                                        onChange={(e) =>
+                                        onChange={(e) => {
+                                            const value = e.target.value;
                                             setFormData((prev) => ({
                                                 ...prev,
-                                                max_devices: parseInt(e.target.value, 10) || 1,
-                                            }))
-                                        }
+                                                max_devices: value === '' ? undefined : parseInt(value, 10),
+                                            }));
+                                        }}
+                                        onBlur={(e) => {
+                                            const value = e.target.value;
+                                            if (value === '' || isNaN(parseInt(value, 10))) {
+                                                const minDevices = selectedPlan?.min_devices || 1;
+                                                setFormData((prev) => ({
+                                                    ...prev,
+                                                    max_devices: minDevices,
+                                                }));
+                                            }
+                                        }}
                                         className={`h-12 rounded-2xl border bg-muted ${priceInfo?.isUnderMinimum ? 'border-destructive' : ''}`}
                                     />
                                     {selectedPlan && (
@@ -353,21 +403,39 @@ export function LicenseNewPage() {
                                     )}
                                 </div>
                                 <div className="space-y-3">
-                                    <Label htmlFor="duration_days" className="text-xs uppercase tracking-[0.3em] text-muted-foreground">Duration (Days)</Label>
+                                    <Label htmlFor="duration_days" className="text-xs uppercase tracking-[0.3em] text-muted-foreground">
+                                        Duration (Days) {selectedPlan?.is_trial && <Badge variant="secondary" className="ml-2 text-xs">Trial</Badge>}
+                                    </Label>
                                     <Input
                                         id="duration_days"
                                         type="number"
                                         min="1"
                                         value={formData.duration_days || ''}
-                                        onChange={(e) =>
+                                        onChange={(e) => {
+                                            const value = e.target.value;
                                             setFormData((prev) => ({
                                                 ...prev,
-                                                duration_days: parseInt(e.target.value, 10) || 365,
-                                            }))
-                                        }
+                                                duration_days: value === '' ? undefined : parseInt(value, 10),
+                                            }));
+                                        }}
+                                        onBlur={(e) => {
+                                            const value = e.target.value;
+                                            if (value === '' || isNaN(parseInt(value, 10))) {
+                                                const defaultDays = selectedPlan?.is_trial ? (selectedPlan.trial_days || 30) : 365;
+                                                setFormData((prev) => ({
+                                                    ...prev,
+                                                    duration_days: defaultDays,
+                                                }));
+                                            }
+                                        }}
                                         className="h-12 rounded-2xl border bg-muted"
                                     />
-                                    <p className="text-xs text-muted-foreground">Determines when the entitlement automatically lapses.</p>
+                                    <p className="text-xs text-muted-foreground">
+                                        {selectedPlan?.is_trial
+                                            ? `Trial period: ${selectedPlan.trial_days || 30} days. The license will expire after this trial period.`
+                                            : 'Determines when the entitlement automatically lapses.'
+                                        }
+                                    </p>
                                 </div>
                             </div>
 

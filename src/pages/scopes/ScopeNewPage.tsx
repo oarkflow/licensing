@@ -169,11 +169,24 @@ export function ScopeNewPage() {
                                     id="limit"
                                     type="number"
                                     min="0"
-                                    value={formData.limit}
+                                    value={formData.limit || ''}
                                     disabled={formData.permission !== 'limit'}
-                                    onChange={(e) =>
-                                        setFormData((prev) => ({ ...prev, limit: e.target.value }))
-                                    }
+                                    onChange={(e) => {
+                                        const value = e.target.value;
+                                        setFormData((prev) => ({
+                                            ...prev,
+                                            limit: value === '' ? undefined : parseInt(value, 10),
+                                        }));
+                                    }}
+                                    onBlur={(e) => {
+                                        const value = e.target.value;
+                                        if (formData.permission === 'limit' && (value === '' || isNaN(parseInt(value, 10)))) {
+                                            setFormData((prev) => ({
+                                                ...prev,
+                                                limit: 0,
+                                            }));
+                                        }
+                                    }}
                                     placeholder={
                                         formData.permission === 'limit'
                                             ? 'Maximum allowed operations'

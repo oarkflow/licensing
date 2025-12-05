@@ -214,10 +214,11 @@ export interface CreateLicenseRequest {
     product_id?: string;
     plan_id?: string;
     plan_slug: string;
-    duration_days: number;
-    max_devices: number;
+    duration_days?: number;
+    max_devices?: number;
     check_mode?: string;
     check_interval_seconds?: number;
+    is_trial?: boolean;
 }
 
 export interface CreateClientRequest {
