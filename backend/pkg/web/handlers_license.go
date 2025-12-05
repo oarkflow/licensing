@@ -98,9 +98,9 @@ func (ws *WebServer) handleAPILicenses(w http.ResponseWriter, r *http.Request) {
 			})
 			return
 		}
-
-		// Send license email to client
-		go ws.sendLicenseEmail(ctx, req.ClientID, license)
+		fmt.Printf("License created: %s\n", license.ID)
+		// Send license email to client (use background context since HTTP request context may be cancelled)
+		go ws.sendLicenseEmail(context.Background(), req.ClientID, license)
 
 		ws.respondJSON(w, http.StatusCreated, license)
 	default:
@@ -418,24 +418,28 @@ func filterClientsByQuery(clients []*licensing.Client, filter string) []*licensi
 
 // sendLicenseEmail sends a license email to the client asynchronously
 func (ws *WebServer) sendLicenseEmail(ctx context.Context, clientID string, license *licensing.License) {
+	log.Printf("📧 Starting license email process for client %s", clientID)
+
 	if ws.server == nil {
-		log.Printf("server reference not set, cannot send license email")
+		log.Printf("❌ server reference not set, cannot send license email")
 		return
 	}
 
 	// Get client information
 	client, err := ws.lm.GetClient(ctx, clientID)
 	if err != nil {
-		log.Printf("failed to get client %s for license email: %v", clientID, err)
+		log.Printf("❌ failed to get client %s for license email: %v", clientID, err)
 		return
 	}
+	log.Printf("📧 Got client info: %s (%s)", client.Name, client.Email)
 
 	// Get product information
 	product, err := ws.lm.Storage().GetProduct(ctx, license.ProductID)
 	if err != nil {
-		log.Printf("failed to get product %s for license email: %v", license.ProductID, err)
+		log.Printf("❌ failed to get product %s for license email: %v", license.ProductID, err)
 		return
 	}
+	log.Printf("📧 Got product info: %s", product.Name)
 
 	// Prepare license data for email
 	licenseJSON, err := json.MarshalIndent(license, "", "  ")
@@ -486,9 +490,8 @@ func (ws *WebServer) sendLicenseEmail(ctx context.Context, clientID string, lice
 	}
 
 	if res, err := ws.server.SendEmailNow(ctx, client.Email, licenseSubject, licenseHTML, licenseText, []*email.EmailAttachment{licenseAttachment}); err != nil {
-		log.Printf("failed to send license email for %s: %v", client.Email, err)
+		log.Printf("❌ failed to send license email for %s: %v", client.Email, err)
 	} else {
-		log.Printf("license email sent successfully to %s", client.Email)
-		_ = res // We could log more details if needed
+		log.Printf("✅ license email sent successfully to %s (message ID: %s)", client.Email, res.MessageID)
 	}
 }

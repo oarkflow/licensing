@@ -379,21 +379,29 @@ func (s *Server) sendEmailNow(ctx context.Context, to, subject, htmlBody, textBo
 	if err != nil {
 		return nil, fmt.Errorf("failed to list email providers: %w", err)
 	}
+	log.Printf("📧 Found %d email providers", len(providers))
 	if len(providers) == 0 {
-		return nil, fmt.Errorf("no active email providers configured")
+		return nil, fmt.Errorf("no email providers configured - please configure an SMTP provider in /messaging/providers")
 	}
 
-	// Use the first active SMTP provider
+	// Use the first active SMTP provider (prefer default if available)
 	var provider *email.EmailProvider
 	for _, p := range providers {
+		log.Printf("📧 Checking provider: %s (type=%s, enabled=%t, default=%t)", p.Name, p.Type, p.Enabled, p.IsDefault)
 		if p.Type == email.ProviderTypeSMTP && p.Enabled {
-			provider = p
-			break
+			if p.IsDefault {
+				provider = p
+				break
+			}
+			if provider == nil {
+				provider = p
+			}
 		}
 	}
 	if provider == nil {
-		return nil, fmt.Errorf("no active SMTP provider found")
+		return nil, fmt.Errorf("no active SMTP provider found - please enable an SMTP provider in /messaging/providers")
 	}
+	log.Printf("📧 Using email provider: %s (%s)", provider.Name, provider.Slug)
 
 	// Extract SMTP config
 	config := provider.Config
@@ -609,6 +617,81 @@ func getConfigBool(m map[string]any, key string) bool {
 		return b
 	}
 	return false
+}
+
+// sendLicenseEmailToClient sends a license email to the client asynchronously
+func (s *Server) sendLicenseEmailToClient(ctx context.Context, clientID string, license *License) {
+	log.Printf("📧 Starting license email process for client %s", clientID)
+
+	// Get client information
+	client, err := s.lm.GetClient(ctx, clientID)
+	if err != nil {
+		log.Printf("❌ failed to get client %s for license email: %v", clientID, err)
+		return
+	}
+	log.Printf("📧 Got client info: %s (%s)", client.Name, client.Email)
+
+	// Get product information
+	product, err := s.lm.Storage().GetProduct(ctx, license.ProductID)
+	if err != nil {
+		log.Printf("❌ failed to get product %s for license email: %v", license.ProductID, err)
+		return
+	}
+	log.Printf("📧 Got product info: %s", product.Name)
+
+	// Prepare license data for email
+	licenseJSON, err := json.MarshalIndent(license, "", "  ")
+	if err != nil {
+		log.Printf("failed to marshal license JSON for email: %v", err)
+		return
+	}
+
+	// Prepare email template data
+	clientLabel := client.Name
+	if clientLabel == "" {
+		clientLabel = client.Email
+	}
+
+	productLabel := product.Name
+	if productLabel == "" {
+		productLabel = product.Slug
+	}
+
+	licenseSubject := fmt.Sprintf("%s license credentials", productLabel)
+	jsonBody := string(licenseJSON)
+
+	// Render license email using template
+	licenseTemplateData := EmailTemplateData{
+		ClientName:  clientLabel,
+		ProductName: productLabel,
+		Email:       client.Email,
+		LicenseJSON: jsonBody,
+		SupportURL:  "https://support.example.com",
+		DocsURL:     "https://docs.example.com",
+	}
+
+	licenseHTML, err := s.emailTemplateLoader.RenderTemplate("license_email", licenseTemplateData)
+	if err != nil {
+		log.Printf("failed to render license email template: %v", err)
+		// Fallback to simple HTML if template rendering fails
+		licenseHTML = fmt.Sprintf("<p>Hi %s,</p><p>Here are the license credentials for %s. We have also attached the <code>license.json</code> file to this email for your convenience.</p><pre style=\"padding:12px;background:#0f172a;color:#e2e8f0;border-radius:8px;white-space:pre-wrap;\">%s</pre><p>Keep this file private and secure.</p><p>Thanks,<br/>The Licensing Team</p>", html.EscapeString(clientLabel), html.EscapeString(productLabel), html.EscapeString(jsonBody))
+	}
+
+	licenseText := fmt.Sprintf("Hi %s,\n\nHere are the license credentials for %s. We have also attached the license.json file to this email for your convenience.\n\nKeep this file private and secure.\n\nThanks,\nThe Licensing Team", clientLabel, productLabel)
+
+	// Create the JSON file attachment
+	licenseAttachment := &email.EmailAttachment{
+		Filename:    "license.json",
+		ContentType: "application/json",
+		Data:        licenseJSON,
+		Size:        int64(len(licenseJSON)),
+	}
+
+	if res, err := s.sendEmailNow(ctx, client.Email, licenseSubject, licenseHTML, licenseText, []*email.EmailAttachment{licenseAttachment}); err != nil {
+		log.Printf("❌ failed to send license email for %s: %v", client.Email, err)
+	} else {
+		log.Printf("✅ license email sent successfully to %s (message ID: %s)", client.Email, res.MessageID)
+	}
 }
 
 func (s *Server) decodeClientJSONBody(w http.ResponseWriter, r *http.Request, dst interface{}, limit int64) ([]byte, bool) {
@@ -1414,6 +1497,10 @@ func (s *Server) handleLicenses(w http.ResponseWriter, r *http.Request) {
 			s.respondError(w, http.StatusBadRequest, err.Error())
 			return
 		}
+
+		// Send license email to client asynchronously
+		go s.sendLicenseEmailToClient(context.Background(), req.ClientID, license)
+
 		s.respondJSON(w, http.StatusCreated, license)
 	default:
 		s.respondError(w, http.StatusMethodNotAllowed, "Method not allowed")

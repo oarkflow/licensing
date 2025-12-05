@@ -83,6 +83,7 @@ func NewWebServer(lm *licensing.LicenseManager) (*WebServer, error) {
 // SetServer sets the reference to the main licensing server for email functionality
 func (ws *WebServer) SetServer(server *licensing.Server) {
 	ws.server = server
+	log.Printf("📧 WebServer: Server reference set for email functionality")
 }
 
 // loadSessionsFromStorage loads non-expired sessions from persistent storage
