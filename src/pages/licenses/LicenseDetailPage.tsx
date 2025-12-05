@@ -13,6 +13,11 @@ import {
     CheckCircle,
     XCircle,
 } from 'lucide-react';
+import {
+    Tooltip,
+    TooltipContent,
+    TooltipTrigger,
+} from '@/components/ui/tooltip';
 import api from '@/services/api';
 import { Button } from '@/components/ui/button';
 import {
@@ -165,9 +170,16 @@ export function LicenseDetailPage() {
     return (
         <div className="space-y-6">
             <div className="flex items-center gap-4">
-                <Button variant="ghost" size="icon" onClick={() => navigate(-1)}>
-                    <ArrowLeft className="h-4 w-4" />
-                </Button>
+                <Tooltip>
+                    <TooltipTrigger asChild>
+                        <Button variant="ghost" size="icon" onClick={() => navigate(-1)}>
+                            <ArrowLeft className="h-4 w-4" />
+                        </Button>
+                    </TooltipTrigger>
+                    <TooltipContent>
+                        <p>Go back</p>
+                    </TooltipContent>
+                </Tooltip>
                 <div className="flex-1">
                     <h1 className="text-3xl font-bold tracking-tight">License Details</h1>
                     <p className="text-muted-foreground">
@@ -404,9 +416,16 @@ export function LicenseDetailPage() {
                                         <TableCell>
                                             <AlertDialog>
                                                 <AlertDialogTrigger asChild>
-                                                    <Button variant="ghost" size="icon">
-                                                        <Trash2 className="h-4 w-4" />
-                                                    </Button>
+                                                    <Tooltip>
+                                                        <TooltipTrigger asChild>
+                                                            <Button variant="ghost" size="icon">
+                                                                <Trash2 className="h-4 w-4" />
+                                                            </Button>
+                                                        </TooltipTrigger>
+                                                        <TooltipContent>
+                                                            <p>Remove device</p>
+                                                        </TooltipContent>
+                                                    </Tooltip>
                                                 </AlertDialogTrigger>
                                                 <AlertDialogContent>
                                                     <AlertDialogHeader>
@@ -451,9 +470,9 @@ export function LicenseDetailPage() {
                                     className="flex items-center gap-2 rounded-md border p-3"
                                 >
                                     {entitlement.enabled ? (
-                                        <CheckCircle className="h-4 w-4 text-green-500" />
+                                        <CheckCircle className="h-4 w-4 text-primary" />
                                     ) : (
-                                        <XCircle className="h-4 w-4 text-red-500" />
+                                        <XCircle className="h-4 w-4 text-destructive" />
                                     )}
                                     <span className="text-sm">{slug}</span>
                                     {entitlement.category && (

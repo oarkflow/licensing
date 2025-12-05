@@ -241,9 +241,13 @@ func (s *Server) decodeJSONBody(w http.ResponseWriter, r *http.Request, dst inte
 	body := http.MaxBytesReader(w, r.Body, limit)
 	defer body.Close()
 	decoder := json.NewDecoder(body)
-	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(dst); err != nil {
-		s.respondError(w, http.StatusBadRequest, "Invalid request body")
+		s.respondError(w, http.StatusBadRequest, "Invalid request body", map[string]interface{}{
+			"expected":         "Valid JSON object",
+			"error_type":       "json_decode_failed",
+			"parse_error":      err.Error(),
+			"suggested_action": "Ensure the request body contains valid JSON",
+		})
 		return false
 	}
 	if err := decoder.Decode(&struct{}{}); err != io.EOF {
@@ -261,8 +265,15 @@ func (s *Server) respondJSON(w http.ResponseWriter, status int, payload interfac
 	}
 }
 
-func (s *Server) respondError(w http.ResponseWriter, status int, message string) {
-	s.respondJSON(w, status, map[string]string{"error": message})
+func (s *Server) respondError(w http.ResponseWriter, status int, message string, details ...map[string]interface{}) {
+	if len(details) > 0 && details[0] != nil {
+		s.respondJSON(w, status, map[string]interface{}{
+			"error":   message,
+			"details": details[0],
+		})
+	} else {
+		s.respondJSON(w, status, map[string]string{"error": message})
+	}
 }
 
 func (s *Server) respondClientJSON(w http.ResponseWriter, status int, payload interface{}, transportKey []byte) {
@@ -293,12 +304,22 @@ func (s *Server) respondClientJSON(w http.ResponseWriter, status int, payload in
 	}
 }
 
-func (s *Server) respondClientError(w http.ResponseWriter, status int, message string, transportKey []byte) {
+func (s *Server) respondClientError(w http.ResponseWriter, status int, message string, transportKey []byte, details ...map[string]interface{}) {
+	var payload interface{}
+	if len(details) > 0 && details[0] != nil {
+		payload = map[string]interface{}{
+			"error":   message,
+			"details": details[0],
+		}
+	} else {
+		payload = map[string]string{"error": message}
+	}
+
 	if len(transportKey) == 32 {
-		s.respondClientJSON(w, status, map[string]string{"error": message}, transportKey)
+		s.respondClientJSON(w, status, payload, transportKey)
 		return
 	}
-	s.respondError(w, status, message)
+	s.respondJSON(w, status, payload)
 }
 
 func (s *Server) enqueueEmail(ctx context.Context, to, subject, htmlBody, textBody string, metadata map[string]string) (*emailDispatchResult, error) {
@@ -520,7 +541,12 @@ func (s *Server) sendEmailNow(ctx context.Context, to, subject, htmlBody, textBo
 		return nil, fmt.Errorf("SMTP close data failed: %w", err)
 	}
 
-	client.Quit()
+	// Try to quit gracefully, but don't fail if quit fails
+	// Some SMTP servers may not support QUIT or may have already closed the connection
+	if err := client.Quit(); err != nil {
+		// Log at debug level since this is often expected behavior
+		log.Printf("Debug: SMTP quit failed (but email sent successfully): %v", err)
+	}
 
 	return &emailDispatchResult{Queued: false, Sent: true, MessageID: msgID}, nil
 }
@@ -610,7 +636,12 @@ func (s *Server) decodeClientJSONBody(w http.ResponseWriter, r *http.Request, ds
 		}
 	}
 	if err := json.Unmarshal(payload, dst); err != nil {
-		s.respondClientError(w, http.StatusBadRequest, "Invalid request body", transportKey)
+		s.respondClientError(w, http.StatusBadRequest, "Invalid request body", transportKey, map[string]interface{}{
+			"expected":         "Valid JSON object",
+			"error_type":       "json_decode_failed",
+			"parse_error":      err.Error(),
+			"suggested_action": "Ensure the request body contains valid JSON",
+		})
 		return nil, false
 	}
 	return transportKey, true
@@ -620,6 +651,71 @@ func (s *Server) withSecurityHeaders(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		setSecurityHeaders(w)
 		w.Header().Set("X-Request-ID", uuid.New().String())
+		next.ServeHTTP(w, r)
+	})
+}
+
+func (s *Server) getAllowedOrigins() []string {
+	// Get allowed origins from environment variable
+	originsStr := strings.TrimSpace(os.Getenv("LICENSE_SERVER_ALLOWED_ORIGINS"))
+	if originsStr == "" {
+		// Default to common development origins
+		return []string{
+			"http://localhost:5173", // Vite default port
+			"http://localhost:3000", // Common React port
+			"http://localhost:8080", // Common development port
+		}
+	}
+
+	// Parse comma-separated origins
+	origins := strings.Split(originsStr, ",")
+	for i, origin := range origins {
+		origins[i] = strings.TrimSpace(origin)
+	}
+	return origins
+}
+
+func (s *Server) isOriginAllowed(origin string) bool {
+	if origin == "" {
+		return true
+	}
+
+	allowedOrigins := s.getAllowedOrigins()
+	for _, allowedOrigin := range allowedOrigins {
+		if allowedOrigin == origin {
+			return true
+		}
+	}
+	return false
+}
+
+func (s *Server) withCORS(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Handle CORS with proper origin handling for credentialed requests
+		origin := r.Header.Get("Origin")
+
+		// If no origin, allow any (for non-browser clients)
+		if origin == "" {
+			origin = "*"
+		} else if !s.isOriginAllowed(origin) {
+			// If origin is not allowed, don't set CORS headers
+			next.ServeHTTP(w, r)
+			return
+		}
+
+		// Set CORS headers
+		w.Header().Set("Access-Control-Allow-Origin", origin)
+		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-API-Key, X-Device-Fingerprint, X-License-Key, X-License-Secure, Cookie")
+		w.Header().Set("Access-Control-Allow-Credentials", "true")
+		w.Header().Set("Access-Control-Max-Age", "86400") // 24 hours
+
+		// Handle OPTIONS requests for CORS preflight
+		if r.Method == http.MethodOptions {
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+
 		next.ServeHTTP(w, r)
 	})
 }
@@ -1708,7 +1804,7 @@ func (s *Server) Start() error {
 
 	server := &http.Server{
 		Addr:              s.port,
-		Handler:           s.withSecurityHeaders(mux),
+		Handler:           s.withCORS(s.withSecurityHeaders(mux)),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       15 * time.Second,
 		WriteTimeout:      15 * time.Second,

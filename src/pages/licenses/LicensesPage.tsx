@@ -94,7 +94,7 @@ export function LicensesPage() {
         <div className="space-y-8">
             <div className="flex flex-wrap items-center justify-between gap-4">
                 <div className="space-y-3">
-                    <Badge variant="secondary" className="rounded-full border border-white/10 bg-white/5 px-4 py-1 text-xs uppercase tracking-[0.4em] text-muted-foreground">
+                    <Badge variant="secondary" className="rounded-full border bg-muted px-4 py-1 text-xs uppercase tracking-[0.4em]">
                         Licenses
                     </Badge>
                     <div>
@@ -115,7 +115,7 @@ export function LicensesPage() {
                 </Button>
             </div>
 
-            <div className="glass-panel rounded-3xl border border-white/5 p-4">
+            <div className="glass-panel rounded-3xl border p-4">
                 <div className="flex flex-col gap-4 lg:flex-row lg:items-center">
                     <div className="relative flex-1">
                         <Search className="pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
@@ -123,7 +123,7 @@ export function LicensesPage() {
                             placeholder="Search licenses, clients or plans"
                             value={searchQuery}
                             onChange={(e) => setSearchQuery(e.target.value)}
-                            className="h-11 rounded-2xl border-white/10 bg-white/5 pl-10"
+                            className="h-11 rounded-2xl border bg-muted pl-10"
                         />
                     </div>
                     <div className="flex items-center gap-2 text-sm text-muted-foreground">
@@ -133,7 +133,7 @@ export function LicensesPage() {
                 </div>
                 <div className="mt-4 flex flex-wrap gap-3">
                     <Select value={filter} onValueChange={setFilter}>
-                        <SelectTrigger className="w-[140px] rounded-2xl border-white/10 bg-transparent">
+                        <SelectTrigger className="w-[140px] rounded-2xl border bg-muted">
                             <SelectValue placeholder="Status" />
                         </SelectTrigger>
                         <SelectContent>
@@ -150,7 +150,7 @@ export function LicensesPage() {
                             setSelectedPlanId('');
                         }}
                     >
-                        <SelectTrigger className="w-[180px] rounded-2xl border-white/10 bg-transparent">
+                        <SelectTrigger className="w-[180px] rounded-2xl border bg-muted">
                             <SelectValue placeholder="All Products" />
                         </SelectTrigger>
                         <SelectContent>
@@ -167,7 +167,7 @@ export function LicensesPage() {
                             value={selectedPlanId}
                             onValueChange={(v) => setSelectedPlanId(v === 'all' ? '' : v)}
                         >
-                            <SelectTrigger className="w-[180px] rounded-2xl border-white/10 bg-transparent">
+                            <SelectTrigger className="w-[180px] rounded-2xl border bg-muted">
                                 <SelectValue placeholder="All Plans" />
                             </SelectTrigger>
                             <SelectContent>
@@ -190,7 +190,7 @@ export function LicensesPage() {
                     ))}
                 </div>
             ) : filteredLicenses.length === 0 ? (
-                <div className="glass-panel flex flex-col items-center justify-center rounded-3xl border border-dashed border-white/10 py-12 text-center">
+                <div className="glass-panel flex flex-col items-center justify-center rounded-3xl border border-dashed bg-muted/50 py-12 text-center">
                     <Key className="h-12 w-12 text-muted-foreground" />
                     <h3 className="mt-4 text-xl font-semibold">No licenses found</h3>
                     <p className="mt-2 text-sm text-muted-foreground">
@@ -208,10 +208,10 @@ export function LicensesPage() {
                     )}
                 </div>
             ) : (
-                <div className="glass-panel overflow-hidden rounded-3xl border border-white/5">
+                <div className="glass-panel overflow-hidden rounded-3xl border">
                     <Table>
                         <TableHeader>
-                            <TableRow className="border-white/5 text-muted-foreground">
+                            <TableRow className="border text-muted-foreground">
                                 <TableHead>License Key</TableHead>
                                 <TableHead>Email</TableHead>
                                 <TableHead>Product</TableHead>
@@ -224,7 +224,7 @@ export function LicensesPage() {
                         </TableHeader>
                         <TableBody>
                             {filteredLicenses.map((license) => (
-                                <TableRow key={license.id} className="border-white/5">
+                                <TableRow key={license.id} className="border">
                                     <TableCell>
                                         <Link
                                             to={`/licenses/${license.id}`}
@@ -242,7 +242,7 @@ export function LicensesPage() {
                                         {license.product_id ? (
                                             <Link
                                                 to={`/products/${license.product_id}`}
-                                                className="text-muted-foreground hover:text-white"
+                                                className="text-muted-foreground hover:text-foreground"
                                             >
                                                 {getProductName(license.product_id) || license.product_id.substring(0, 8)}
                                             </Link>

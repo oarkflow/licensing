@@ -258,8 +258,67 @@ func (ws *WebServer) Handler() http.Handler {
 	return ws.withMiddleware(mux)
 }
 
+func (ws *WebServer) getAllowedOrigins() []string {
+	// Get allowed origins from environment variable
+	originsStr := strings.TrimSpace(os.Getenv("LICENSE_SERVER_ALLOWED_ORIGINS"))
+	if originsStr == "" {
+		// Default to common development origins
+		return []string{
+			"http://localhost:5173", // Vite default port
+			"http://localhost:3000", // Common React port
+			"http://localhost:8080", // Common development port
+		}
+	}
+
+	// Parse comma-separated origins
+	origins := strings.Split(originsStr, ",")
+	for i, origin := range origins {
+		origins[i] = strings.TrimSpace(origin)
+	}
+	return origins
+}
+
+func (ws *WebServer) isOriginAllowed(origin string) bool {
+	if origin == "" {
+		return true
+	}
+
+	allowedOrigins := ws.getAllowedOrigins()
+	for _, allowedOrigin := range allowedOrigins {
+		if allowedOrigin == origin {
+			return true
+		}
+	}
+	return false
+}
+
 func (ws *WebServer) withMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Handle CORS with proper origin handling for credentialed requests
+		origin := r.Header.Get("Origin")
+
+		// If no origin, use default for development
+		if origin == "" {
+			origin = "http://localhost:5173"
+		} else if !ws.isOriginAllowed(origin) {
+			// If origin is not allowed, don't set CORS headers
+			next.ServeHTTP(w, r)
+			return
+		}
+
+		// CORS headers
+		w.Header().Set("Access-Control-Allow-Origin", origin)
+		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-API-Key, X-Device-Fingerprint, X-License-Key, X-License-Secure, Cookie")
+		w.Header().Set("Access-Control-Allow-Credentials", "true")
+		w.Header().Set("Access-Control-Max-Age", "86400") // 24 hours
+
+		// Handle OPTIONS requests for CORS preflight
+		if r.Method == http.MethodOptions {
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+
 		// Security headers
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.Header().Set("X-Frame-Options", "DENY")
@@ -331,9 +390,82 @@ func (ws *WebServer) respondJSON(w http.ResponseWriter, status int, payload inte
 	}
 }
 
-// respondAPIError writes a JSON error response
-func (ws *WebServer) respondAPIError(w http.ResponseWriter, status int, message string) {
+// respondAPIError writes a JSON error response with detailed information
+func (ws *WebServer) respondAPIError(w http.ResponseWriter, status int, message string, details ...map[string]interface{}) {
+	// Create structured error response
+	errorResponse := map[string]interface{}{
+		"success": false,
+		"error": map[string]interface{}{
+			"message": message,
+			"status":  status,
+			"code":    getErrorCodeFromStatus(status),
+		},
+	}
+
+	// Add additional details if provided
+	if len(details) > 0 && details[0] != nil {
+		errorResponse["error"].(map[string]interface{})["details"] = details[0]
+	}
+
+	ws.respondJSON(w, status, errorResponse)
+}
+
+// respondAPIErrorWithRequest provides enhanced error responses with request context
+func (ws *WebServer) respondAPIErrorWithRequest(w http.ResponseWriter, r *http.Request, status int, message string, details ...map[string]interface{}) {
+	// Create structured error response with request context
+	errorResponse := map[string]interface{}{
+		"success": false,
+		"error": map[string]interface{}{
+			"message": message,
+			"status":  status,
+			"code":    getErrorCodeFromStatus(status),
+		},
+	}
+
+	// Add additional details if provided
+	if len(details) > 0 && details[0] != nil {
+		errorResponse["error"].(map[string]interface{})["details"] = details[0]
+	}
+
+	// Add request context for debugging
+	if r != nil {
+		errorResponse["request"] = map[string]interface{}{
+			"method":    r.Method,
+			"path":      r.URL.Path,
+			"timestamp": time.Now().Format(time.RFC3339),
+		}
+	}
+
+	ws.respondJSON(w, status, errorResponse)
+}
+
+// respondAPIErrorSimple maintains backward compatibility
+func (ws *WebServer) respondAPIErrorSimple(w http.ResponseWriter, status int, message string) {
 	ws.respondJSON(w, status, map[string]string{"error": message})
+}
+
+// getErrorCodeFromStatus maps HTTP status codes to error codes
+func getErrorCodeFromStatus(status int) string {
+	switch status {
+	case http.StatusBadRequest:
+		return "invalid_request"
+	case http.StatusUnauthorized:
+		return "unauthorized"
+	case http.StatusForbidden:
+		return "forbidden"
+	case http.StatusNotFound:
+		return "not_found"
+	case http.StatusMethodNotAllowed:
+		return "method_not_allowed"
+	case http.StatusConflict:
+		return "conflict"
+	case http.StatusTooManyRequests:
+		return "rate_limited"
+	case http.StatusInternalServerError:
+		return "internal_error"
+	default:
+		return "api_error"
+	}
 }
 
 // requireAPIAuth is middleware for JSON API endpoints requiring authentication
@@ -386,7 +518,16 @@ func (ws *WebServer) handleAPILogin(w http.ResponseWriter, r *http.Request) {
 		Password string `json:"password"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		ws.respondAPIError(w, http.StatusBadRequest, "Invalid request body")
+		ws.respondAPIError(w, http.StatusBadRequest, "Invalid request body", map[string]interface{}{
+			"expected": "JSON object with username and password fields",
+			"example": map[string]string{
+				"username": "admin",
+				"password": "password123",
+			},
+			"error_type":       "json_decode_failed",
+			"parse_error":      err.Error(),
+			"suggested_action": "Ensure the request body is valid JSON with username and password fields",
+		})
 		return
 	}
 
@@ -517,7 +658,17 @@ func (ws *WebServer) handleAPISetup(w http.ResponseWriter, r *http.Request) {
 		ConfirmPassword string `json:"confirm_password"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		ws.respondAPIError(w, http.StatusBadRequest, "Invalid request body")
+		ws.respondAPIError(w, http.StatusBadRequest, "Invalid request body", map[string]interface{}{
+			"expected": "JSON object with username and password fields",
+			"example": map[string]string{
+				"username":         "admin",
+				"password":         "securepassword123",
+				"confirm_password": "securepassword123",
+			},
+			"error_type":       "json_decode_failed",
+			"parse_error":      err.Error(),
+			"suggested_action": "Ensure the request body is valid JSON with required fields (username, password) and optional confirm_password",
+		})
 		return
 	}
 

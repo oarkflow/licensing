@@ -4,6 +4,11 @@ import { Plus, Users, Shield, Trash2 } from 'lucide-react';
 import api from '@/services/api';
 import { Button } from '@/components/ui/button';
 import {
+    Tooltip,
+    TooltipContent,
+    TooltipTrigger,
+} from '@/components/ui/tooltip';
+import {
     Card,
     CardContent,
     CardDescription,
@@ -143,9 +148,16 @@ export function AdminUsersPage() {
                                                 {user.id !== currentUser?.id && (
                                                     <AlertDialog>
                                                         <AlertDialogTrigger asChild>
-                                                            <Button variant="ghost" size="icon">
-                                                                <Trash2 className="h-4 w-4" />
-                                                            </Button>
+                                                            <Tooltip>
+                                                                <TooltipTrigger asChild>
+                                                                    <Button variant="ghost" size="icon">
+                                                                        <Trash2 className="h-4 w-4" />
+                                                                    </Button>
+                                                                </TooltipTrigger>
+                                                                <TooltipContent>
+                                                                    <p>Delete user</p>
+                                                                </TooltipContent>
+                                                            </Tooltip>
                                                         </AlertDialogTrigger>
                                                         <AlertDialogContent>
                                                             <AlertDialogHeader>

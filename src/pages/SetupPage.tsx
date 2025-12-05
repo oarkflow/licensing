@@ -84,7 +84,7 @@ export function SetupPage() {
                 <Card className="w-full max-w-md">
                     <CardContent className="pt-6">
                         <div className="flex flex-col items-center justify-center space-y-4">
-                            <CheckCircle className="h-16 w-16 text-green-500" />
+                            <CheckCircle className="h-16 w-16 text-primary" />
                             <h2 className="text-2xl font-bold">Setup Complete!</h2>
                             <p className="text-muted-foreground text-center">
                                 Your admin account has been created. Redirecting to dashboard...

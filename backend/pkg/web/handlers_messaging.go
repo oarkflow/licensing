@@ -172,9 +172,9 @@ func testSMTPProvider(ctx context.Context, provider *email.EmailProvider, testEm
 		return fmt.Errorf("smtp write failed: %w", err)
 	}
 	// Try to quit gracefully, but don't fail the test if quit fails
-	// Some SMTP servers may not support QUIT or may have already closed the connection
+	// Some SMTP servers (like MailHog) may not properly support QUIT or may have already closed the connection
 	if err := client.Quit(); err != nil {
-		log.Printf("Warning: SMTP quit failed (but test succeeded): %v", err)
+		log.Printf("Info: SMTP quit failed (but test succeeded): %v - This is normal for some SMTP servers", err)
 		// Don't return error for quit failures
 	}
 	return nil
@@ -491,7 +491,23 @@ func (ws *WebServer) handleAPIEmailProviders(w http.ResponseWriter, r *http.Requ
 		// Create new provider
 		var req map[string]any
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			ws.respondAPIError(w, http.StatusBadRequest, "Invalid request body")
+			ws.respondAPIError(w, http.StatusBadRequest, "Invalid request body", map[string]interface{}{
+				"expected": "JSON object with email provider configuration",
+				"example": map[string]interface{}{
+					"name":    "My SMTP Provider",
+					"type":    "smtp",
+					"enabled": true,
+					"settings": map[string]string{
+						"host":     "smtp.gmail.com",
+						"port":     "587",
+						"username": "user@gmail.com",
+						"password": "app-password",
+					},
+				},
+				"error_type":       "json_decode_failed",
+				"parse_error":      err.Error(),
+				"suggested_action": "Ensure the request body is valid JSON with provider configuration fields",
+			})
 			return
 		}
 
@@ -549,7 +565,23 @@ func (ws *WebServer) handleAPIEmailProviderDetail(w http.ResponseWriter, r *http
 		// Update provider
 		var req map[string]any
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			ws.respondAPIError(w, http.StatusBadRequest, "Invalid request body")
+			ws.respondAPIError(w, http.StatusBadRequest, "Invalid request body", map[string]interface{}{
+				"expected": "JSON object with email provider configuration updates",
+				"example": map[string]interface{}{
+					"name":    "Updated SMTP Provider",
+					"type":    "smtp",
+					"enabled": false,
+					"settings": map[string]string{
+						"host":     "smtp.gmail.com",
+						"port":     "587",
+						"username": "user@gmail.com",
+						"password": "new-app-password",
+					},
+				},
+				"error_type":       "json_decode_failed",
+				"parse_error":      err.Error(),
+				"suggested_action": "Ensure the request body is valid JSON with provider configuration fields to update",
+			})
 			return
 		}
 
@@ -599,7 +631,26 @@ func (ws *WebServer) handleAPIEmailProviderTest(w http.ResponseWriter, r *http.R
 	}
 
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		ws.respondAPIError(w, http.StatusBadRequest, "Invalid request body")
+		ws.respondAPIError(w, http.StatusBadRequest, "Invalid request body", map[string]interface{}{
+			"expected": "JSON object with provider configuration and test email",
+			"example": map[string]interface{}{
+				"provider": map[string]interface{}{
+					"name":    "SMTP Provider",
+					"type":    "smtp",
+					"enabled": true,
+					"settings": map[string]string{
+						"host":     "smtp.gmail.com",
+						"port":     "587",
+						"username": "user@gmail.com",
+						"password": "app-password",
+					},
+				},
+				"test_email": "test@example.com",
+			},
+			"error_type":       "json_decode_failed",
+			"parse_error":      err.Error(),
+			"suggested_action": "Ensure the request body contains valid JSON with 'provider' and 'test_email' fields",
+		})
 		return
 	}
 
@@ -693,7 +744,15 @@ func (ws *WebServer) handleAPIEmailProviderToggle(w http.ResponseWriter, r *http
 	}
 
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		ws.respondAPIError(w, http.StatusBadRequest, "Invalid request body")
+		ws.respondAPIError(w, http.StatusBadRequest, "Invalid request body", map[string]interface{}{
+			"expected": "JSON object with enabled status",
+			"example": map[string]interface{}{
+				"enabled": true,
+			},
+			"error_type":       "json_decode_failed",
+			"parse_error":      err.Error(),
+			"suggested_action": "Ensure the request body contains valid JSON with an 'enabled' boolean field",
+		})
 		return
 	}
 
@@ -736,7 +795,19 @@ func (ws *WebServer) handleAPIEmailTemplates(w http.ResponseWriter, r *http.Requ
 		// Create new template
 		var req map[string]any
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			ws.respondAPIError(w, http.StatusBadRequest, "Invalid request body")
+			ws.respondAPIError(w, http.StatusBadRequest, "Invalid request body", map[string]interface{}{
+				"expected": "JSON object with email template configuration",
+				"example": map[string]interface{}{
+					"name":         "Welcome Email",
+					"subject":      "Welcome to our service!",
+					"body":         "Hello {{.Name}}, welcome to our platform!",
+					"content_type": "text/html",
+					"variables":    []string{"Name", "Email"},
+				},
+				"error_type":       "json_decode_failed",
+				"parse_error":      err.Error(),
+				"suggested_action": "Ensure the request body contains valid JSON with template fields like name, subject, body, etc.",
+			})
 			return
 		}
 
@@ -794,7 +865,19 @@ func (ws *WebServer) handleAPIEmailTemplateDetail(w http.ResponseWriter, r *http
 		// Update template
 		var req map[string]any
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			ws.respondAPIError(w, http.StatusBadRequest, "Invalid request body")
+			ws.respondAPIError(w, http.StatusBadRequest, "Invalid request body", map[string]interface{}{
+				"expected": "JSON object with email template configuration updates",
+				"example": map[string]interface{}{
+					"name":         "Updated Welcome Email",
+					"subject":      "Welcome to our service!",
+					"body":         "Hello {{.Name}}, welcome to our platform!",
+					"content_type": "text/html",
+					"variables":    []string{"Name", "Email"},
+				},
+				"error_type":       "json_decode_failed",
+				"parse_error":      err.Error(),
+				"suggested_action": "Ensure the request body contains valid JSON with template fields to update",
+			})
 			return
 		}
 
@@ -1072,8 +1155,9 @@ func sendEmailImmediately(ctx context.Context, provider *email.EmailProvider, to
 	}
 
 	// Try to quit gracefully, but don't fail if it fails
+	// Some SMTP servers may not support QUIT or may have already closed the connection
 	if err := client.Quit(); err != nil {
-		log.Printf("Warning: SMTP quit failed: %v", err)
+		log.Printf("Info: SMTP quit failed (but email sent successfully): %v - This is normal for some SMTP servers", err)
 	}
 
 	return nil
@@ -1101,7 +1185,21 @@ func (ws *WebServer) handleAPIEmailComposePreview(w http.ResponseWriter, r *http
 	}
 
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		ws.respondAPIError(w, http.StatusBadRequest, "Invalid request body")
+		ws.respondAPIError(w, http.StatusBadRequest, "Invalid request body", map[string]interface{}{
+			"expected": "JSON object with email composition parameters",
+			"example": map[string]interface{}{
+				"template_id":       "template-uuid",
+				"client_ids":        []string{"client-uuid-1", "client-uuid-2"},
+				"additional_emails": []string{"extra@example.com"},
+				"variables": map[string]interface{}{
+					"Name":  "John Doe",
+					"Email": "john@example.com",
+				},
+			},
+			"error_type":       "json_decode_failed",
+			"parse_error":      err.Error(),
+			"suggested_action": "Ensure the request body contains valid JSON with template_id and optional client_ids, additional_emails, and variables",
+		})
 		return
 	}
 
@@ -1188,7 +1286,28 @@ func (ws *WebServer) handleAPIEmailComposeSend(w http.ResponseWriter, r *http.Re
 	}
 
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		ws.respondAPIError(w, http.StatusBadRequest, "Invalid request body")
+		ws.respondAPIError(w, http.StatusBadRequest, "Invalid request body", map[string]interface{}{
+			"expected": "JSON object with email composition and sending parameters",
+			"example": map[string]interface{}{
+				"template_id":       "template-uuid",
+				"client_ids":        []string{"client-uuid-1", "client-uuid-2"},
+				"additional_emails": []string{"extra@example.com"},
+				"variables": map[string]interface{}{
+					"Name":  "John Doe",
+					"Email": "john@example.com",
+				},
+				"attachments": []map[string]interface{}{
+					{
+						"filename":     "document.pdf",
+						"content_type": "application/pdf",
+						"data_base64":  "base64-encoded-data-here",
+					},
+				},
+			},
+			"error_type":       "json_decode_failed",
+			"parse_error":      err.Error(),
+			"suggested_action": "Ensure the request body contains valid JSON with template_id and optional client_ids, additional_emails, variables, and attachments",
+		})
 		return
 	}
 

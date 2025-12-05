@@ -34,7 +34,18 @@ func (ws *WebServer) handleAPIProducts(w http.ResponseWriter, r *http.Request) {
 			LogoURL     string `json:"logo_url"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			ws.respondAPIError(w, http.StatusBadRequest, "Invalid request body")
+			ws.respondAPIError(w, http.StatusBadRequest, "Invalid request body", map[string]interface{}{
+				"expected": "JSON object with name, slug, and optional description and logo_url fields",
+				"example": map[string]interface{}{
+					"name":        "My Product",
+					"slug":        "my-product",
+					"description": "A description of my product",
+					"logo_url":    "https://example.com/logo.png",
+				},
+				"error_type":       "json_decode_failed",
+				"parse_error":      err.Error(),
+				"suggested_action": "Ensure the request body is valid JSON with required name and slug fields",
+			})
 			return
 		}
 		if strings.TrimSpace(req.Name) == "" || strings.TrimSpace(req.Slug) == "" {
@@ -110,7 +121,18 @@ func (ws *WebServer) handleAPIProductDetail(w http.ResponseWriter, r *http.Reque
 			LogoURL     string `json:"logo_url"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			ws.respondAPIError(w, http.StatusBadRequest, "Invalid request body")
+			ws.respondAPIError(w, http.StatusBadRequest, "Invalid request body", map[string]interface{}{
+				"expected": "JSON object with product update fields",
+				"example": map[string]interface{}{
+					"name":        "Updated Product Name",
+					"slug":        "updated-product",
+					"description": "Updated product description",
+					"logo_url":    "https://example.com/logo.png",
+				},
+				"error_type":       "json_decode_failed",
+				"parse_error":      err.Error(),
+				"suggested_action": "Ensure the request body is valid JSON with optional product fields (name, slug, description, logo_url)",
+			})
 			return
 		}
 		if strings.TrimSpace(req.Name) != "" {
@@ -200,7 +222,20 @@ func (ws *WebServer) createPlan(w http.ResponseWriter, r *http.Request, ctx cont
 		Metadata       map[string]string `json:"metadata"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		ws.respondAPIError(w, http.StatusBadRequest, "Invalid request body")
+		ws.respondAPIError(w, http.StatusBadRequest, "Invalid request body", map[string]interface{}{
+			"expected": "JSON object with plan creation fields",
+			"example": map[string]interface{}{
+				"name":        "Plan Name",
+				"slug":        "plan-slug",
+				"description": "Plan description",
+				"is_trial":    false,
+				"trial_days":  30,
+				"is_active":   true,
+			},
+			"error_type":       "json_decode_failed",
+			"parse_error":      err.Error(),
+			"suggested_action": "Ensure the request body is valid JSON and contains required fields (name, slug)",
+		})
 		return
 	}
 	if strings.TrimSpace(req.Name) == "" || strings.TrimSpace(req.Slug) == "" {
@@ -221,7 +256,26 @@ func (ws *WebServer) createPlan(w http.ResponseWriter, r *http.Request, ctx cont
 	}
 	if req.IsTrial {
 		if existing, _ := ws.lm.Storage().GetTrialPlanForProduct(ctx, productID); existing != nil {
-			ws.respondAPIError(w, http.StatusBadRequest, "A trial plan already exists for this product")
+			ws.respondAPIError(w, http.StatusBadRequest, "Cannot create trial plan: another trial plan already exists for this product", map[string]interface{}{
+				"existing_trial_plan": map[string]interface{}{
+					"id":   existing.ID,
+					"name": existing.Name,
+					"slug": existing.Slug,
+				},
+				"error_type":       "trial_plan_conflict",
+				"suggested_action": "Either delete the existing trial plan or set is_trial to false for this new plan",
+				"validation_rule":  "Only one trial plan is allowed per product",
+			})
+			return
+		}
+		if req.TrialDays <= 0 {
+			ws.respondAPIError(w, http.StatusBadRequest, "Invalid trial duration for new trial plan", map[string]interface{}{
+				"field":            "trial_days",
+				"provided_value":   req.TrialDays,
+				"validation_rule":  "Must be greater than 0 for trial plans",
+				"error_type":       "invalid_trial_duration",
+				"suggested_action": "Provide a positive number of trial days (e.g., 7, 14, 30)",
+			})
 			return
 		}
 	}
@@ -295,9 +349,54 @@ func (ws *WebServer) handleAPIPlanDetail(w http.ResponseWriter, r *http.Request,
 			Metadata       map[string]string `json:"metadata"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			ws.respondAPIError(w, http.StatusBadRequest, "Invalid request body")
+			ws.respondAPIError(w, http.StatusBadRequest, "Invalid request body", map[string]interface{}{
+				"expected": "JSON object with plan update fields",
+				"example": map[string]interface{}{
+					"name":        "Updated Plan Name",
+					"slug":        "updated-plan",
+					"description": "Updated description",
+					"is_trial":    false,
+					"trial_days":  30,
+					"is_active":   true,
+				},
+				"error_type":       "json_decode_failed",
+				"parse_error":      err.Error(),
+				"suggested_action": "Ensure the request body is valid JSON and contains expected fields",
+			})
 			return
 		}
+
+		// Validate trial plan constraints
+		if req.IsTrial != nil && *req.IsTrial && !plan.IsTrial {
+			// Check if another trial plan already exists for this product
+			if existing, _ := ws.lm.Storage().GetTrialPlanForProduct(ctx, productID); existing != nil && existing.ID != planID {
+				ws.respondAPIError(w, http.StatusBadRequest, "Cannot convert plan to trial: another trial plan already exists for this product", map[string]interface{}{
+					"existing_trial_plan": map[string]interface{}{
+						"id":   existing.ID,
+						"name": existing.Name,
+						"slug": existing.Slug,
+					},
+					"error_type":       "trial_plan_conflict",
+					"suggested_action": "Either delete the existing trial plan or update it instead",
+					"validation_rule":  "Only one trial plan is allowed per product",
+				})
+				return
+			}
+		}
+
+		// Validate trial days for trial plans
+		if req.IsTrial != nil && *req.IsTrial && req.TrialDays != nil && *req.TrialDays <= 0 {
+			ws.respondAPIError(w, http.StatusBadRequest, "Invalid trial duration", map[string]interface{}{
+				"field":            "trial_days",
+				"provided_value":   *req.TrialDays,
+				"validation_rule":  "Must be greater than 0 for trial plans",
+				"error_type":       "invalid_trial_duration",
+				"suggested_action": "Provide a positive number of trial days (e.g., 7, 14, 30)",
+			})
+			return
+		}
+
+		// Apply updates
 		if strings.TrimSpace(req.Name) != "" {
 			plan.Name = strings.TrimSpace(req.Name)
 		}
@@ -418,7 +517,22 @@ func (ws *WebServer) addPlanFeature(w http.ResponseWriter, r *http.Request, ctx 
 		ScopeOverrides map[string]licensing.ScopeOverride `json:"scope_overrides"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		ws.respondAPIError(w, http.StatusBadRequest, "Invalid request body")
+		ws.respondAPIError(w, http.StatusBadRequest, "Invalid request body", map[string]interface{}{
+			"expected": "JSON object with plan feature fields",
+			"example": map[string]interface{}{
+				"feature_id": "feature-uuid",
+				"enabled":    true,
+				"scope_overrides": map[string]interface{}{
+					"read_secrets": map[string]interface{}{
+						"permission": "allow",
+						"limit":      100,
+					},
+				},
+			},
+			"error_type":       "json_decode_failed",
+			"parse_error":      err.Error(),
+			"suggested_action": "Ensure the request body is valid JSON with feature_id and optional enabled/scope_overrides fields",
+		})
 		return
 	}
 	if strings.TrimSpace(req.FeatureID) == "" {
@@ -467,7 +581,21 @@ func (ws *WebServer) handleAPIPlanFeatureDetail(w http.ResponseWriter, r *http.R
 			ScopeOverrides map[string]licensing.ScopeOverride `json:"scope_overrides"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			ws.respondAPIError(w, http.StatusBadRequest, "Invalid request body")
+			ws.respondAPIError(w, http.StatusBadRequest, "Invalid request body", map[string]interface{}{
+				"expected": "JSON object with optional enabled and scope_overrides fields",
+				"example": map[string]interface{}{
+					"enabled": true,
+					"scope_overrides": map[string]interface{}{
+						"read_secrets": map[string]interface{}{
+							"permission": "allow",
+							"limit":      100,
+						},
+					},
+				},
+				"error_type":       "json_decode_failed",
+				"parse_error":      err.Error(),
+				"suggested_action": "Ensure the request body is valid JSON with optional enabled and scope_overrides fields",
+			})
 			return
 		}
 		if req.Enabled != nil {
@@ -515,7 +643,18 @@ func (ws *WebServer) handleAPIProductFeatures(w http.ResponseWriter, r *http.Req
 				Category    string `json:"category"`
 			}
 			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-				ws.respondAPIError(w, http.StatusBadRequest, "Invalid request body")
+				ws.respondAPIError(w, http.StatusBadRequest, "Invalid request body", map[string]interface{}{
+					"expected": "JSON object with name, slug, and optional description and category fields",
+					"example": map[string]interface{}{
+						"name":        "Secret Management",
+						"slug":        "secret-management",
+						"description": "Feature for managing secrets",
+						"category":    "security",
+					},
+					"error_type":       "json_decode_failed",
+					"parse_error":      err.Error(),
+					"suggested_action": "Ensure the request body is valid JSON with required name and slug fields",
+				})
 				return
 			}
 			if strings.TrimSpace(req.Name) == "" || strings.TrimSpace(req.Slug) == "" {
@@ -574,7 +713,18 @@ func (ws *WebServer) handleAPIProductFeatureDetail(w http.ResponseWriter, r *htt
 			Category    string `json:"category"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			ws.respondAPIError(w, http.StatusBadRequest, "Invalid request body")
+			ws.respondAPIError(w, http.StatusBadRequest, "Invalid request body", map[string]interface{}{
+				"expected": "JSON object with optional name, slug, description, and category fields",
+				"example": map[string]interface{}{
+					"name":        "Updated Feature Name",
+					"slug":        "updated-feature-slug",
+					"description": "Updated feature description",
+					"category":    "security",
+				},
+				"error_type":       "json_decode_failed",
+				"parse_error":      err.Error(),
+				"suggested_action": "Ensure the request body is valid JSON with optional feature update fields",
+			})
 			return
 		}
 		if strings.TrimSpace(req.Name) != "" {
@@ -622,7 +772,21 @@ func (ws *WebServer) handleAPIProductFeatureScopes(w http.ResponseWriter, r *htt
 				Metadata   map[string]string `json:"metadata"`
 			}
 			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-				ws.respondAPIError(w, http.StatusBadRequest, "Invalid request body")
+				ws.respondAPIError(w, http.StatusBadRequest, "Invalid request body", map[string]interface{}{
+					"expected": "JSON object with name, slug, and optional permission, limit, and metadata fields",
+					"example": map[string]interface{}{
+						"name":       "Read Secrets",
+						"slug":       "read_secrets",
+						"permission": "allow",
+						"limit":      100,
+						"metadata": map[string]interface{}{
+							"description": "Allows reading secret values",
+						},
+					},
+					"error_type":       "json_decode_failed",
+					"parse_error":      err.Error(),
+					"suggested_action": "Ensure the request body is valid JSON with required name and slug fields",
+				})
 				return
 			}
 			if strings.TrimSpace(req.Name) == "" || strings.TrimSpace(req.Slug) == "" {
@@ -677,7 +841,21 @@ func (ws *WebServer) handleAPIProductFeatureScopeDetail(w http.ResponseWriter, r
 			Metadata   map[string]string `json:"metadata"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			ws.respondAPIError(w, http.StatusBadRequest, "Invalid request body")
+			ws.respondAPIError(w, http.StatusBadRequest, "Invalid request body", map[string]interface{}{
+				"expected": "JSON object with optional name, slug, permission, limit, and metadata fields",
+				"example": map[string]interface{}{
+					"name":       "Updated Scope Name",
+					"slug":       "updated_scope_slug",
+					"permission": "deny",
+					"limit":      50,
+					"metadata": map[string]interface{}{
+						"description": "Updated scope description",
+					},
+				},
+				"error_type":       "json_decode_failed",
+				"parse_error":      err.Error(),
+				"suggested_action": "Ensure the request body is valid JSON with optional scope update fields",
+			})
 			return
 		}
 		if strings.TrimSpace(req.Name) != "" {

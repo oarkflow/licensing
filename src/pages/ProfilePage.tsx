@@ -87,7 +87,7 @@ export function ProfilePage() {
     return (
         <div className="space-y-8">
             <div className="space-y-3">
-                <Badge variant="secondary" className="rounded-full border border-white/10 bg-white/5 px-4 py-1 text-xs uppercase tracking-[0.4em] text-muted-foreground">
+                <Badge variant="secondary" className="rounded-full border bg-muted px-4 py-1 text-xs uppercase tracking-[0.4em] text-muted-foreground">
                     Operator profile
                 </Badge>
                 <div>
@@ -99,7 +99,7 @@ export function ProfilePage() {
             </div>
 
             <div className="grid gap-6 lg:grid-cols-[1.2fr_1fr]">
-                <Card className="glass-panel rounded-3xl border-white/10">
+                <Card className="glass-panel rounded-3xl border">
                     <CardHeader>
                         <CardTitle className="flex items-center gap-2 text-2xl">
                             <User className="h-5 w-5 text-primary" />
@@ -118,7 +118,7 @@ export function ProfilePage() {
                                     value={username}
                                     onChange={(e) => setUsername(e.target.value)}
                                     required
-                                    className="h-11 rounded-2xl border-white/10 bg-white/5"
+                                    className="h-11 rounded-2xl border bg-muted"
                                 />
                             </div>
                             <Button
@@ -132,7 +132,7 @@ export function ProfilePage() {
                     </CardContent>
                 </Card>
 
-                <Card className="glass-panel rounded-3xl border-white/10">
+                <Card className="glass-panel rounded-3xl border">
                     <CardHeader>
                         <CardTitle className="flex items-center gap-2 text-2xl">
                             <Lock className="h-5 w-5 text-secondary" />
@@ -152,11 +152,11 @@ export function ProfilePage() {
                                     value={currentPassword}
                                     onChange={(e) => setCurrentPassword(e.target.value)}
                                     required
-                                    className="h-11 rounded-2xl border-white/10 bg-white/5"
+                                    className="h-11 rounded-2xl border bg-muted"
                                 />
                             </div>
 
-                            <Separator className="bg-white/10" />
+                            <Separator className="bg-border" />
 
                             <div className="space-y-2">
                                 <Label htmlFor="newPassword">New Password</Label>
@@ -166,7 +166,7 @@ export function ProfilePage() {
                                     value={newPassword}
                                     onChange={(e) => setNewPassword(e.target.value)}
                                     required
-                                    className="h-11 rounded-2xl border-white/10 bg-white/5"
+                                    className="h-11 rounded-2xl border bg-muted"
                                 />
                             </div>
 
@@ -178,7 +178,7 @@ export function ProfilePage() {
                                     value={confirmPassword}
                                     onChange={(e) => setConfirmPassword(e.target.value)}
                                     required
-                                    className="h-11 rounded-2xl border-white/10 bg-white/5"
+                                    className="h-11 rounded-2xl border bg-muted"
                                 />
                             </div>
 
@@ -196,10 +196,10 @@ export function ProfilePage() {
                 </Card>
             </div>
 
-            <Card className="glass-panel rounded-3xl border-white/10">
+            <Card className="glass-panel rounded-3xl border">
                 <CardHeader className="flex flex-col gap-2 text-sm text-muted-foreground">
                     <CardTitle className="flex items-center gap-2 text-lg">
-                        <ShieldCheck className="h-5 w-5 text-emerald-300" />
+                        <ShieldCheck className="h-5 w-5 text-primary" />
                         Session integrity
                     </CardTitle>
                     <CardDescription>

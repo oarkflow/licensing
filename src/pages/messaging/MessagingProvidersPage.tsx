@@ -6,6 +6,11 @@ import api from '@/services/api';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import {
+    Tooltip,
+    TooltipContent,
+    TooltipTrigger,
+} from '@/components/ui/tooltip';
+import {
     Card,
     CardContent,
     CardDescription,
@@ -126,7 +131,7 @@ export function MessagingProvidersPage() {
                 </Button>
             </div>
 
-            <Card className="border-white/5 bg-white/2">
+            <Card className="border bg-muted/50">
                 <CardHeader>
                     <CardTitle className="flex items-center gap-2 text-lg">
                         <Shield className="h-5 w-5 text-primary" />
@@ -144,7 +149,7 @@ export function MessagingProvidersPage() {
                             ))}
                         </div>
                     ) : providers.length === 0 ? (
-                        <div className="flex flex-col items-center justify-center rounded-3xl border border-dashed border-white/10 py-12 text-center">
+                        <div className="flex flex-col items-center justify-center rounded-3xl border border-dashed bg-muted/50 py-12 text-center">
                             <MailWarning className="h-10 w-10 text-muted-foreground" />
                             <h3 className="mt-4 text-xl font-semibold">No providers configured</h3>
                             <p className="mt-2 text-sm text-muted-foreground">
@@ -160,7 +165,7 @@ export function MessagingProvidersPage() {
                     ) : (
                         <Table>
                             <TableHeader>
-                                <TableRow className="border-white/5 text-xs uppercase tracking-[0.2em] text-muted-foreground">
+                                <TableRow className="border text-xs uppercase tracking-[0.2em] text-muted-foreground">
                                     <TableHead>Name</TableHead>
                                     <TableHead>Type</TableHead>
                                     <TableHead>Priority</TableHead>
@@ -171,15 +176,15 @@ export function MessagingProvidersPage() {
                             </TableHeader>
                             <TableBody>
                                 {providers.map((provider) => (
-                                    <TableRow key={provider.id} className="border-white/5">
+                                    <TableRow key={provider.id} className="border">
                                         <TableCell>
                                             <div className="flex flex-col">
-                                                <span className="font-medium text-white">{provider.name}</span>
+                                                <span className="font-medium text-foreground">{provider.name}</span>
                                                 <span className="text-xs text-muted-foreground">{provider.slug}</span>
                                             </div>
                                         </TableCell>
                                         <TableCell>
-                                            <Badge variant="outline" className="rounded-full border-white/10 bg-white/5">
+                                            <Badge variant="outline" className="rounded-full border">
                                                 {formatProviderType(provider.type)}
                                             </Badge>
                                         </TableCell>
@@ -193,11 +198,11 @@ export function MessagingProvidersPage() {
                                         </TableCell>
                                         <TableCell>
                                             {provider.enabled ? (
-                                                <Badge className="rounded-full bg-emerald-500/20 text-emerald-200">
+                                                <Badge className="rounded-full bg-primary/20 text-primary">
                                                     Active
                                                 </Badge>
                                             ) : (
-                                                <Badge variant="secondary" className="rounded-full text-amber-200">
+                                                <Badge variant="secondary" className="rounded-full text-secondary">
                                                     Disabled
                                                 </Badge>
                                             )}
@@ -211,41 +216,69 @@ export function MessagingProvidersPage() {
                                             </div>
                                         </TableCell>
                                         <TableCell className="space-x-1 text-right">
-                                            <Button
-                                                variant="ghost"
-                                                size="sm"
-                                                className="rounded-full"
-                                                onClick={() => navigate(`/messaging/providers/${provider.id}`)}
-                                            >
-                                                <RefreshCcw className="h-4 w-4" />
-                                            </Button>
-                                            <Button
-                                                variant="ghost"
-                                                size="sm"
-                                                className="rounded-full"
-                                                disabled={provider.is_default || defaultMutation.isPending}
-                                                onClick={() => handleSetDefault(provider)}
-                                            >
-                                                <Star className="h-4 w-4" />
-                                            </Button>
-                                            <Button
-                                                variant="ghost"
-                                                size="sm"
-                                                className="rounded-full"
-                                                disabled={toggleMutation.isPending}
-                                                onClick={() => handleToggle(provider)}
-                                            >
-                                                <Power className="h-4 w-4" />
-                                            </Button>
-                                            <Button
-                                                variant="ghost"
-                                                size="sm"
-                                                className="rounded-full text-destructive"
-                                                disabled={deleteMutation.isPending}
-                                                onClick={() => handleDelete(provider)}
-                                            >
-                                                <AlertTriangle className="h-4 w-4" />
-                                            </Button>
+                                            <Tooltip>
+                                                <TooltipTrigger asChild>
+                                                    <Button
+                                                        variant="ghost"
+                                                        size="sm"
+                                                        className="rounded-full"
+                                                        onClick={() => navigate(`/messaging/providers/${provider.id}`)}
+                                                    >
+                                                        <RefreshCcw className="h-4 w-4" />
+                                                    </Button>
+                                                </TooltipTrigger>
+                                                <TooltipContent>
+                                                    <p>Edit provider</p>
+                                                </TooltipContent>
+                                            </Tooltip>
+                                            <Tooltip>
+                                                <TooltipTrigger asChild>
+                                                    <Button
+                                                        variant="ghost"
+                                                        size="sm"
+                                                        className="rounded-full"
+                                                        disabled={provider.is_default || defaultMutation.isPending}
+                                                        onClick={() => handleSetDefault(provider)}
+                                                    >
+                                                        <Star className="h-4 w-4" />
+                                                    </Button>
+                                                </TooltipTrigger>
+                                                <TooltipContent>
+                                                    <p>Set as default</p>
+                                                </TooltipContent>
+                                            </Tooltip>
+                                            <Tooltip>
+                                                <TooltipTrigger asChild>
+                                                    <Button
+                                                        variant="ghost"
+                                                        size="sm"
+                                                        className="rounded-full"
+                                                        disabled={toggleMutation.isPending}
+                                                        onClick={() => handleToggle(provider)}
+                                                    >
+                                                        <Power className="h-4 w-4" />
+                                                    </Button>
+                                                </TooltipTrigger>
+                                                <TooltipContent>
+                                                    <p>{provider.enabled ? 'Disable' : 'Enable'} provider</p>
+                                                </TooltipContent>
+                                            </Tooltip>
+                                            <Tooltip>
+                                                <TooltipTrigger asChild>
+                                                    <Button
+                                                        variant="ghost"
+                                                        size="sm"
+                                                        className="rounded-full text-destructive"
+                                                        disabled={deleteMutation.isPending}
+                                                        onClick={() => handleDelete(provider)}
+                                                    >
+                                                        <AlertTriangle className="h-4 w-4" />
+                                                    </Button>
+                                                </TooltipTrigger>
+                                                <TooltipContent>
+                                                    <p>Delete provider</p>
+                                                </TooltipContent>
+                                            </Tooltip>
                                         </TableCell>
                                     </TableRow>
                                 ))}
@@ -256,25 +289,25 @@ export function MessagingProvidersPage() {
             </Card>
 
             <div className="grid gap-4 md:grid-cols-3">
-                <Card className="rounded-3xl border-white/5 bg-gradient-to-br from-emerald-500/10 to-transparent">
+                <Card className="rounded-3xl border bg-gradient-to-br from-emerald-500/10 to-transparent">
                     <CardHeader>
                         <CardTitle className="flex items-center gap-2 text-base">
-                            <MailCheck className="h-4 w-4 text-emerald-400" /> Deliverability
+                            <MailCheck className="h-4 w-4 text-primary" /> Deliverability
                         </CardTitle>
                         <CardDescription>
                             Enabled providers used for warm failover routing.
                         </CardDescription>
                     </CardHeader>
                     <CardContent>
-                        <p className="text-3xl font-semibold text-white">
+                        <p className="text-3xl font-semibold text-foreground">
                             {providers.filter((p) => p.enabled).length} / {providers.length}
                         </p>
                     </CardContent>
                 </Card>
-                <Card className="rounded-3xl border-white/5 bg-gradient-to-br from-blue-500/10 to-transparent">
+                <Card className="rounded-3xl border bg-gradient-to-br from-blue-500/10 to-transparent">
                     <CardHeader>
                         <CardTitle className="flex items-center gap-2 text-base">
-                            <Shield className="h-4 w-4 text-blue-300" /> Default Guard
+                            <Shield className="h-4 w-4 text-secondary" /> Default Guard
                         </CardTitle>
                         <CardDescription>
                             Traffic automatically flows to the default provider first.
@@ -284,7 +317,7 @@ export function MessagingProvidersPage() {
                         {providers.find((p) => p.is_default) ? (
                             <div>
                                 <p className="text-sm text-muted-foreground">Currently pinned to</p>
-                                <p className="text-xl font-semibold text-white">
+                                <p className="text-xl font-semibold text-foreground">
                                     {providers.find((p) => p.is_default)?.name}
                                 </p>
                             </div>
@@ -295,17 +328,17 @@ export function MessagingProvidersPage() {
                         )}
                     </CardContent>
                 </Card>
-                <Card className="rounded-3xl border-white/5 bg-gradient-to-br from-amber-500/10 to-transparent">
+                <Card className="rounded-3xl border bg-gradient-to-br from-amber-500/10 to-transparent">
                     <CardHeader>
                         <CardTitle className="flex items-center gap-2 text-base">
-                            <MailWarning className="h-4 w-4 text-amber-300" /> Retries
+                            <MailWarning className="h-4 w-4 text-secondary" /> Retries
                         </CardTitle>
                         <CardDescription>
                             Average max retries across providers.
                         </CardDescription>
                     </CardHeader>
                     <CardContent>
-                        <p className="text-3xl font-semibold text-white">
+                        <p className="text-3xl font-semibold text-foreground">
                             {providers.length
                                 ? (
                                     providers.reduce((sum, p) => sum + (p.max_retries || 0), 0) /

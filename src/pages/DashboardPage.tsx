@@ -32,8 +32,8 @@ type StatTone = 'cyan' | 'purple' | 'pink' | 'emerald';
 const toneStyles: Record<StatTone, { icon: string; accent: string }> = {
     cyan: { icon: 'bg-primary/20 text-primary', accent: 'text-primary' },
     purple: { icon: 'bg-secondary/20 text-secondary', accent: 'text-secondary' },
-    pink: { icon: 'bg-rose-500/10 text-rose-200', accent: 'text-rose-200' },
-    emerald: { icon: 'bg-emerald-500/10 text-emerald-300', accent: 'text-emerald-300' },
+    pink: { icon: 'bg-destructive/20 text-destructive', accent: 'text-destructive' },
+    emerald: { icon: 'bg-accent/20 text-accent-foreground', accent: 'text-accent-foreground' },
 };
 
 function StatCard({
@@ -53,7 +53,7 @@ function StatCard({
 }) {
     const palette = toneStyles[tone];
     return (
-        <div className="glass-panel relative overflow-hidden rounded-3xl border border-white/5 p-4">
+        <div className="glass-panel relative overflow-hidden rounded-3xl border p-4">
             <div className="flex items-center justify-between">
                 <p className="text-xs uppercase tracking-[0.3em] text-muted-foreground">{title}</p>
                 <div className={`rounded-2xl p-2 ${palette.icon}`}>
@@ -68,7 +68,7 @@ function StatCard({
                 )}
                 {description && <p className={`text-sm ${palette.accent}`}>{description}</p>}
             </div>
-            <div className="pointer-events-none absolute inset-x-6 bottom-2 h-px bg-gradient-to-r from-transparent via-white/40 to-transparent opacity-30" />
+            <div className="pointer-events-none absolute inset-x-6 bottom-2 h-px bg-gradient-to-r from-transparent via-border to-transparent opacity-30" />
         </div>
     );
 }
@@ -113,10 +113,10 @@ export function DashboardPage() {
         <div className="space-y-8">
             <div className="space-y-4">
                 <div className="flex flex-wrap items-center gap-3">
-                    <Badge variant="secondary" className="rounded-full border border-white/10 bg-white/5 px-4 py-1 text-xs uppercase tracking-[0.4em] text-muted-foreground">
+                    <Badge variant="secondary" className="rounded-full border bg-muted px-4 py-1 text-xs uppercase tracking-[0.4em] text-muted-foreground">
                         Telemetry
                     </Badge>
-                    <Badge className="rounded-full bg-emerald-500/15 text-emerald-200">
+                    <Badge className="rounded-full bg-primary/20 text-primary">
                         Live sync
                     </Badge>
                 </div>
@@ -128,7 +128,7 @@ export function DashboardPage() {
                         </p>
                     </div>
                     <div className="flex flex-wrap gap-3">
-                        <Button asChild variant="outline" className="rounded-2xl border-white/20 bg-white/5 text-white hover:bg-white/10">
+                        <Button asChild variant="outline" className="rounded-2xl border bg-muted text-foreground hover:bg-muted/80">
                             <Link to="/products">
                                 <Package className="mr-2 h-4 w-4" />
                                 Products
@@ -145,40 +145,40 @@ export function DashboardPage() {
             </div>
 
             <div className="grid gap-6 lg:grid-cols-[2fr,1fr]">
-                <Card className="relative overflow-hidden rounded-3xl border-white/10 bg-gradient-to-br from-white/10 via-transparent to-primary/5 text-white">
+                <Card className="relative overflow-hidden rounded-3xl border bg-gradient-to-br from-muted/50 via-transparent to-primary/5 text-foreground">
                     <div className="pointer-events-none absolute -right-16 top-0 h-48 w-48 rounded-full bg-primary/20 blur-3xl" />
                     <CardHeader className="space-y-6">
-                        <div className="flex items-center gap-3 text-sm text-white/70">
+                        <div className="flex items-center gap-3 text-sm text-muted-foreground">
                             <Sparkles className="h-4 w-4" />
                             <span>Signal clarity</span>
                         </div>
                         <div>
-                            <CardTitle className="text-3xl font-semibold text-white">Total footprint</CardTitle>
-                            <CardDescription className="text-base text-white/80">
+                            <CardTitle className="text-3xl font-semibold text-foreground">Total footprint</CardTitle>
+                            <CardDescription className="text-base text-muted-foreground">
                                 {stats.total_licenses} licenses tracked across {stats.total_clients} active clients.
                             </CardDescription>
                         </div>
                         <div className="grid gap-4 text-sm md:grid-cols-3">
-                            <div className="rounded-2xl border border-white/20 bg-white/5 p-4">
-                                <p className="text-xs uppercase tracking-[0.3em] text-white/60">Active</p>
-                                <p className="mt-2 text-2xl font-semibold text-white">{stats.total_licenses > 0 ? Math.round((stats.active_licenses / stats.total_licenses) * 100) : 0}%</p>
-                                <p className="text-white/70">+12% this week</p>
+                            <div className="rounded-2xl border bg-muted p-4">
+                                <p className="text-xs uppercase tracking-[0.3em] text-muted-foreground">Active</p>
+                                <p className="mt-2 text-2xl font-semibold text-foreground">{stats.total_licenses > 0 ? Math.round((stats.active_licenses / stats.total_licenses) * 100) : 0}%</p>
+                                <p className="text-muted-foreground">+12% this week</p>
                             </div>
-                            <div className="rounded-2xl border border-white/20 bg-white/5 p-4">
-                                <p className="text-xs uppercase tracking-[0.3em] text-white/60">Expiring</p>
-                                <p className="mt-2 text-2xl font-semibold text-amber-200">{stats.total_licenses > 0 ? Math.round((stats.expired_licenses / stats.total_licenses) * 100) : 0}%</p>
-                                <p className="text-white/70">Review before renewal</p>
+                            <div className="rounded-2xl border bg-muted p-4">
+                                <p className="text-xs uppercase tracking-[0.3em] text-muted-foreground">Expiring</p>
+                                <p className="mt-2 text-2xl font-semibold text-secondary">{stats.total_licenses > 0 ? Math.round((stats.expired_licenses / stats.total_licenses) * 100) : 0}%</p>
+                                <p className="text-muted-foreground">Review before renewal</p>
                             </div>
-                            <div className="rounded-2xl border border-white/20 bg-white/5 p-4">
-                                <p className="text-xs uppercase tracking-[0.3em] text-white/60">Revoked</p>
-                                <p className="mt-2 text-2xl font-semibold text-rose-200">{stats.total_licenses > 0 ? Math.round((stats.revoked_licenses / stats.total_licenses) * 100) : 0}%</p>
-                                <p className="text-white/70">Containment mode</p>
+                            <div className="rounded-2xl border bg-muted p-4">
+                                <p className="text-xs uppercase tracking-[0.3em] text-muted-foreground">Revoked</p>
+                                <p className="mt-2 text-2xl font-semibold text-destructive">{stats.total_licenses > 0 ? Math.round((stats.revoked_licenses / stats.total_licenses) * 100) : 0}%</p>
+                                <p className="text-muted-foreground">Containment mode</p>
                             </div>
                         </div>
                     </CardHeader>
                 </Card>
 
-                <Card className="glass-panel rounded-3xl border-white/10">
+                <Card className="glass-panel rounded-3xl border">
                     <CardHeader>
                         <CardTitle className="text-xl">Live status</CardTitle>
                         <CardDescription>System health across environments</CardDescription>
@@ -187,23 +187,23 @@ export function DashboardPage() {
                         <div>
                             <div className="mb-2 flex items-center justify-between text-sm">
                                 <span className="text-muted-foreground">Signal uptime</span>
-                                <span className="font-semibold text-emerald-300">99.92%</span>
+                                <span className="font-semibold text-primary">99.92%</span>
                             </div>
-                            <Progress value={99.92} className="h-2 rounded-full bg-white/10" />
+                            <Progress value={99.92} className="h-2 rounded-full bg-muted" />
                         </div>
                         <div>
                             <div className="mb-2 flex items-center justify-between text-sm">
                                 <span className="text-muted-foreground">Policy drift</span>
-                                <span className="font-semibold text-amber-200">1.2%</span>
+                                <span className="font-semibold text-secondary">1.2%</span>
                             </div>
-                            <Progress value={20} className="h-2 rounded-full bg-white/10" />
+                            <Progress value={20} className="h-2 rounded-full bg-muted" />
                         </div>
                         <div>
                             <div className="mb-2 flex items-center justify-between text-sm">
                                 <span className="text-muted-foreground">Security events</span>
-                                <span className="font-semibold text-rose-200">{stats.revoked_licenses}</span>
+                                <span className="font-semibold text-destructive">{stats.revoked_licenses}</span>
                             </div>
-                            <Progress value={stats.total_licenses > 0 ? (stats.revoked_licenses / stats.total_licenses) * 100 : 0} className="h-2 rounded-full bg-white/10" />
+                            <Progress value={stats.total_licenses > 0 ? (stats.revoked_licenses / stats.total_licenses) * 100 : 0} className="h-2 rounded-full bg-muted" />
                         </div>
                     </CardContent>
                 </Card>
@@ -243,13 +243,13 @@ export function DashboardPage() {
             </div>
 
             <div className="grid gap-6 xl:grid-cols-5">
-                <Card className="glass-panel rounded-3xl border-white/10 xl:col-span-3">
+                <Card className="glass-panel rounded-3xl border xl:col-span-3">
                     <CardHeader className="flex flex-row items-center justify-between">
                         <div>
                             <CardTitle className="text-2xl">Recent Licenses</CardTitle>
                             <CardDescription>Latest issuances across your workspace</CardDescription>
                         </div>
-                        <Button asChild variant="outline" size="sm" className="rounded-full border-white/20 bg-white/5 text-white">
+                        <Button asChild variant="outline" size="sm" className="rounded-full border bg-muted text-foreground">
                             <Link to="/licenses">
                                 View All
                                 <ArrowRight className="ml-2 h-4 w-4" />
@@ -264,7 +264,7 @@ export function DashboardPage() {
                                 ))}
                             </div>
                         ) : recentLicenses.length === 0 ? (
-                            <div className="flex flex-col items-center justify-center rounded-3xl border border-dashed border-white/10 py-10 text-center">
+                            <div className="flex flex-col items-center justify-center rounded-3xl border border-dashed bg-muted/50 py-10 text-center">
                                 <Key className="h-12 w-12 text-muted-foreground" />
                                 <p className="mt-2 text-sm text-muted-foreground">
                                     No licenses found. Create your first license to get started.
@@ -274,10 +274,10 @@ export function DashboardPage() {
                                 </Button>
                             </div>
                         ) : (
-                            <div className="overflow-hidden rounded-2xl border border-white/5">
+                            <div className="overflow-hidden rounded-2xl border">
                                 <Table>
                                     <TableHeader>
-                                        <TableRow className="border-white/5">
+                                        <TableRow className="border">
                                             <TableHead>License Key</TableHead>
                                             <TableHead>Email</TableHead>
                                             <TableHead>Product</TableHead>
@@ -288,7 +288,7 @@ export function DashboardPage() {
                                     </TableHeader>
                                     <TableBody>
                                         {recentLicenses.map((license) => (
-                                            <TableRow key={license.id} className="border-white/5">
+                                            <TableRow key={license.id} className="border">
                                                 <TableCell>
                                                     <Link
                                                         to={`/licenses/${license.id}`}
@@ -306,7 +306,7 @@ export function DashboardPage() {
                                                     {license.product_id ? (
                                                         <Link
                                                             to={`/products/${license.product_id}`}
-                                                            className="text-sm text-muted-foreground hover:text-white"
+                                                            className="text-sm text-muted-foreground hover:text-foreground"
                                                         >
                                                             {license.product?.name || license.product_id.substring(0, 8)}
                                                         </Link>
@@ -334,13 +334,13 @@ export function DashboardPage() {
                     </CardContent>
                 </Card>
 
-                <Card className="glass-panel rounded-3xl border-white/10 xl:col-span-2">
+                <Card className="glass-panel rounded-3xl border xl:col-span-2">
                     <CardHeader className="space-y-1">
                         <CardTitle className="text-xl">License health</CardTitle>
                         <CardDescription>Signals across your deployment surface</CardDescription>
                     </CardHeader>
                     <CardContent className="space-y-5 text-sm">
-                        <div className="flex items-center gap-4 rounded-2xl border border-white/5 bg-white/5 p-4">
+                        <div className="flex items-center gap-4 rounded-2xl border bg-muted p-4">
                             <Activity className="h-10 w-10 rounded-2xl bg-primary/20 p-2 text-primary" />
                             <div>
                                 <p className="text-xs uppercase tracking-[0.4em] text-muted-foreground">Heartbeat</p>
@@ -351,26 +351,26 @@ export function DashboardPage() {
                         <div className="space-y-3">
                             <div className="flex items-center justify-between">
                                 <div className="flex items-center gap-2 text-muted-foreground">
-                                    <ShieldCheck className="h-4 w-4 text-emerald-300" />
+                                    <ShieldCheck className="h-4 w-4 text-primary" />
                                     Verified fingerprints
                                 </div>
                                 <span className="font-semibold">{stats.total_clients - stats.banned_clients}</span>
                             </div>
-                            <Progress value={stats.total_clients > 0 ? ((stats.total_clients - stats.banned_clients) / stats.total_clients) * 100 : 0} className="h-2 rounded-full bg-white/10" />
+                            <Progress value={stats.total_clients > 0 ? ((stats.total_clients - stats.banned_clients) / stats.total_clients) * 100 : 0} className="h-2 rounded-full bg-muted" />
                         </div>
                         <div className="space-y-3">
                             <div className="flex items-center justify-between">
                                 <div className="flex items-center gap-2 text-muted-foreground">
-                                    <Radar className="h-4 w-4 text-amber-200" />
+                                    <Radar className="h-4 w-4 text-secondary" />
                                     Pending renewals
                                 </div>
                                 <span className="font-semibold">{stats.expired_licenses}</span>
                             </div>
-                            <Progress value={stats.total_licenses > 0 ? (stats.expired_licenses / stats.total_licenses) * 100 : 0} className="h-2 rounded-full bg-white/10" />
+                            <Progress value={stats.total_licenses > 0 ? (stats.expired_licenses / stats.total_licenses) * 100 : 0} className="h-2 rounded-full bg-muted" />
                         </div>
-                        <div className="rounded-2xl border border-dashed border-white/20 p-4 text-center">
+                        <div className="rounded-2xl border border-dashed p-4 text-center">
                             <p className="text-sm text-muted-foreground">Need help with license rollouts?</p>
-                            <Button asChild variant="secondary" size="sm" className="mt-3 rounded-full bg-white/10 text-white">
+                            <Button asChild variant="secondary" size="sm" className="mt-3 rounded-full bg-muted text-foreground">
                                 <Link to="/clients">
                                     Review clients
                                 </Link>

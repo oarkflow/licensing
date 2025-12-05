@@ -62,38 +62,38 @@ export function LoginPage() {
                 <div className="absolute bottom-10 right-10 h-72 w-72 rounded-full bg-primary/30 blur-[140px]" />
             </div>
 
-            <div className="glass-panel grid w-full max-w-5xl overflow-hidden rounded-[32px] border border-white/10 bg-card/60 backdrop-blur-2xl md:grid-cols-[1.1fr_0.9fr]">
-                <div className="relative hidden flex-col justify-between bg-gradient-to-b from-primary/10 via-primary/5 to-transparent p-10 text-white md:flex">
+            <div className="glass-panel grid w-full max-w-5xl overflow-hidden rounded-[32px] border backdrop-blur-2xl md:grid-cols-[1.1fr_0.9fr]">
+                <div className="relative hidden flex-col justify-between bg-gradient-to-b from-primary/10 via-primary/5 to-transparent p-10 text-foreground md:flex">
                     <div className="space-y-5">
-                        <Badge variant="secondary" className="rounded-full border border-white/30 bg-white/20 px-4 py-1 text-xs uppercase tracking-[0.4em] text-white">
+                        <Badge variant="secondary" className="rounded-full border bg-muted px-4 py-1 text-xs uppercase tracking-[0.4em] text-foreground">
                             Licensing OS
                         </Badge>
                         <div className="flex items-center gap-3 text-2xl font-semibold">
                             <Key className="h-8 w-8 text-primary" />
                             License Mission Control
                         </div>
-                        <p className="text-lg text-white/80">
+                        <p className="text-lg text-muted-foreground">
                             Secure admin surface for issuing, revoking and auditing software entitlements.
                         </p>
                     </div>
-                    <div className="space-y-4 rounded-3xl border border-white/20 bg-white/10 p-6">
+                    <div className="space-y-4 rounded-3xl border bg-card/80 p-6">
                         <div className="flex items-center gap-3">
-                            <ShieldCheck className="h-10 w-10 rounded-2xl bg-white/20 p-2" />
+                            <ShieldCheck className="h-10 w-10 rounded-2xl bg-muted p-2" />
                             <div>
-                                <p className="text-xs uppercase tracking-[0.3em] text-white/70">Signal</p>
+                                <p className="text-xs uppercase tracking-[0.3em] text-muted-foreground">Signal</p>
                                 <p className="text-xl font-semibold">99.92% uptime</p>
                             </div>
                         </div>
-                        <div className="flex items-start gap-3 text-sm text-white/80">
+                        <div className="flex items-start gap-3 text-sm text-muted-foreground">
                             <Sparkles className="mt-1 h-4 w-4" />
                             Trusted by every product surface of your licensing stack.
                         </div>
                     </div>
                 </div>
 
-                <Card className="rounded-none border-0 bg-card/60 text-card-foreground">
+                <Card className="rounded-none border-0">
                     <CardHeader className="space-y-2 text-center">
-                        <Badge variant="secondary" className="mx-auto mb-2 rounded-full border border-white/10 bg-white/5 px-3 py-1 text-xs uppercase tracking-[0.4em] text-muted-foreground">
+                        <Badge variant="secondary" className="mx-auto mb-2 rounded-full border bg-muted px-3 py-1 text-xs uppercase tracking-[0.4em] text-foreground">
                             Access
                         </Badge>
                         <CardTitle className="text-3xl">Welcome back</CardTitle>
@@ -117,7 +117,7 @@ export function LoginPage() {
                                     required
                                     autoComplete="username"
                                     autoFocus
-                                    className="h-11 rounded-2xl border-white/10 bg-white/5"
+                                    className="h-11 rounded-2xl border bg-muted"
                                 />
                             </div>
 
@@ -131,13 +131,13 @@ export function LoginPage() {
                                     placeholder="••••••••"
                                     required
                                     autoComplete="current-password"
-                                    className="h-11 rounded-2xl border-white/10 bg-white/5"
+                                    className="h-11 rounded-2xl border bg-muted"
                                 />
                             </div>
 
                             <Button
                                 type="submit"
-                                className="h-11 w-full rounded-2xl bg-primary text-primary-foreground shadow-lg shadow-primary/40"
+                                className="h-11 w-full rounded-2xl shadow-lg"
                                 disabled={isLoading}
                             >
                                 {isLoading ? (

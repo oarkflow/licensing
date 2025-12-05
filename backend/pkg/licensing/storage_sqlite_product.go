@@ -965,12 +965,16 @@ func (s *SQLiteStorage) ComputeLicenseEntitlements(ctx context.Context, productI
 	}
 
 	for _, pf := range planFeatures {
-		if !pf.Enabled {
+		feature, err := s.GetFeature(ctx, pf.FeatureID)
+		if err != nil {
 			continue
 		}
 
-		feature, err := s.GetFeature(ctx, pf.FeatureID)
-		if err != nil {
+		// Enforce feature-level gating even if persisted data drifts
+		if feature.Slug == "api" && !planHasAPIAccess(plan.Slug) {
+			continue
+		}
+		if !pf.Enabled {
 			continue
 		}
 
@@ -1004,6 +1008,11 @@ func (s *SQLiteStorage) ComputeLicenseEntitlements(ctx context.Context, productI
 				if override.Metadata != nil {
 					scopeGrant.Metadata = override.Metadata
 				}
+			}
+
+			// Final safety net: enforce plan/feature matrix even if overrides are missing
+			if !IsScopeAllowedForPlan(feature.Slug, scope.Slug, plan.Slug) {
+				scopeGrant.Permission = ScopePermissionDeny
 			}
 
 			featureGrant.Scopes[scope.Slug] = scopeGrant

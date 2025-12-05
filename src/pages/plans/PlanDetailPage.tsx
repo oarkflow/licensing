@@ -12,6 +12,8 @@ import {
     Save,
     Edit,
     X,
+    Search,
+    Filter,
 } from 'lucide-react';
 import api from '@/services/api';
 import { Button } from '@/components/ui/button';
@@ -54,6 +56,7 @@ import {
 import { useToast } from '@/hooks/use-toast';
 import type { PlanFeature, FeatureScope, CreatePlanRequest } from '@/types/api';
 import { formatCurrencyFromCents } from '@/lib/utils';
+import { cliScopes, guiScopes, apiScopes, type ScopeDefinition } from '@/data/menuData';
 
 // Scope Card Component with Toggle
 function ScopeCard({
@@ -106,6 +109,9 @@ function PlanFeatureRow({
         pf.scope_overrides || {}
     );
     const [isDirty, setIsDirty] = useState(false);
+    const [searchQuery, setSearchQuery] = useState('');
+    const [permissionFilter, setPermissionFilter] = useState<'all' | 'allowed' | 'denied'>('all');
+    const [categoryFilter, setCategoryFilter] = useState<string>('all');
     const queryClient = useQueryClient();
     const { toast } = useToast();
 
@@ -133,11 +139,11 @@ function PlanFeatureRow({
         setIsDirty(true);
     };
 
-    const handleScopeToggle = (scopeSlug: string, allowed: boolean) => {
+    const handleScopeToggle = (scopeId: string, allowed: boolean) => {
         setScopeOverrides(prev => ({
             ...prev,
-            [scopeSlug]: {
-                ...prev[scopeSlug],
+            [scopeId]: {
+                ...prev[scopeId],
                 permission: allowed ? 'allow' : 'deny',
             }
         }));
@@ -145,7 +151,7 @@ function PlanFeatureRow({
     };
 
     const getScopePermission = (scope: FeatureScope): boolean => {
-        const override = scopeOverrides[scope.slug];
+        const override = scopeOverrides[scope.id];
         if (override) {
             return override.permission === 'allow';
         }
@@ -216,21 +222,164 @@ function PlanFeatureRow({
                             )}
                         </div>
 
-                        {pf.scopes && pf.scopes.length > 0 && (
-                            <div className="space-y-3">
-                                <Label className="text-sm font-medium">Scope Permissions</Label>
-                                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-                                    {pf.scopes.map((scope) => (
-                                        <ScopeCard
-                                            key={scope.id}
-                                            scope={scope}
-                                            isAllowed={getScopePermission(scope)}
-                                            onToggle={(allowed) => handleScopeToggle(scope.slug, allowed)}
-                                        />
-                                    ))}
+                        {pf.scopes && pf.scopes.length > 0 && (() => {
+                            // Get categorized scopes based on feature slug
+                            let categorizedScopes: { [category: string]: ScopeDefinition[] } = {};
+                            if (pf.feature?.slug === 'cli') {
+                                categorizedScopes = cliScopes;
+                            } else if (pf.feature?.slug === 'gui') {
+                                categorizedScopes = guiScopes;
+                            } else if (pf.feature?.slug === 'api') {
+                                categorizedScopes = apiScopes;
+                            }
+
+                            return (
+                                <div className="space-y-3">
+                                    <div className="flex items-center justify-between">
+                                        <Label className="text-sm font-medium">Scope Permissions</Label>
+                                        <div className="flex items-center gap-2">
+                                            <div className="relative">
+                                                <Search className="absolute left-2 top-2.5 h-4 w-4 text-muted-foreground" />
+                                                <Input
+                                                    placeholder="Search scopes..."
+                                                    value={searchQuery}
+                                                    onChange={(e) => setSearchQuery(e.target.value)}
+                                                    className="pl-8 h-8 w-48"
+                                                />
+                                            </div>
+                                            <Select value={permissionFilter} onValueChange={(value: 'all' | 'allowed' | 'denied') => setPermissionFilter(value)}>
+                                                <SelectTrigger className="h-8 w-32">
+                                                    <Filter className="h-4 w-4 mr-1" />
+                                                    <SelectValue />
+                                                </SelectTrigger>
+                                                <SelectContent>
+                                                    <SelectItem value="all">All</SelectItem>
+                                                    <SelectItem value="allowed">Allowed</SelectItem>
+                                                    <SelectItem value="denied">Denied</SelectItem>
+                                                </SelectContent>
+                                            </Select>
+                                            {Object.keys(categorizedScopes).length > 0 && (
+                                                <Select value={categoryFilter} onValueChange={setCategoryFilter}>
+                                                    <SelectTrigger className="h-8 w-40">
+                                                        <SelectValue placeholder="All Categories" />
+                                                    </SelectTrigger>
+                                                    <SelectContent>
+                                                        <SelectItem value="all">All Categories</SelectItem>
+                                                        {Object.keys(categorizedScopes).map((category) => (
+                                                            <SelectItem key={category} value={category}>
+                                                                {category}
+                                                            </SelectItem>
+                                                        ))}
+                                                    </SelectContent>
+                                                </Select>
+                                            )}
+                                        </div>
+                                    </div>
+                                    {(() => {
+                                        // Helper function to filter scopes
+                                        const filterScopes = (scopes: FeatureScope[]) => {
+                                            return scopes.filter(scope => {
+                                                // Search filter
+                                                if (searchQuery) {
+                                                    const query = searchQuery.toLowerCase();
+                                                    if (!scope.name.toLowerCase().includes(query) &&
+                                                        !scope.slug.toLowerCase().includes(query)) {
+                                                        return false;
+                                                    }
+                                                }
+
+                                                // Permission filter
+                                                if (permissionFilter !== 'all') {
+                                                    const isAllowed = getScopePermission(scope);
+                                                    if (permissionFilter === 'allowed' && !isAllowed) return false;
+                                                    if (permissionFilter === 'denied' && isAllowed) return false;
+                                                }
+
+                                                return true;
+                                            });
+                                        };
+
+                                        // If we have categories, render grouped
+                                        if (Object.keys(categorizedScopes).length > 0) {
+                                            const renderedCategories = Object.entries(categorizedScopes).map(([category, categoryScopes]) => {
+                                                // Find FeatureScope objects that match the ScopeDefinition IDs
+                                                let availableScopes = pf.scopes.filter(pfScope =>
+                                                    categoryScopes.some(catScope => catScope.id === pfScope.id)
+                                                );
+
+                                                // Apply filters
+                                                availableScopes = filterScopes(availableScopes);
+
+                                                // Category filter
+                                                if (categoryFilter !== 'all' && category !== categoryFilter) {
+                                                    return null;
+                                                }
+
+                                                if (availableScopes.length === 0) return null;
+
+                                                return (
+                                                    <Collapsible key={category} defaultOpen className="space-y-2">
+                                                        <CollapsibleTrigger className="flex items-center gap-2 w-full text-left">
+                                                            <ChevronRight className="h-4 w-4 transition-transform group-data-[state=open]/collapsible:rotate-90" />
+                                                            <span className="font-medium text-sm">{category}</span>
+                                                            <Badge variant="outline" className="text-xs">
+                                                                {availableScopes.length} scopes
+                                                            </Badge>
+                                                        </CollapsibleTrigger>
+                                                        <CollapsibleContent>
+                                                            <div className="ml-6 mt-2 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+                                                                {availableScopes.map((scope) => (
+                                                                    <ScopeCard
+                                                                        key={scope.id}
+                                                                        scope={scope}
+                                                                        isAllowed={getScopePermission(scope)}
+                                                                        onToggle={(allowed) => handleScopeToggle(scope.id, allowed)}
+                                                                    />
+                                                                ))}
+                                                            </div>
+                                                        </CollapsibleContent>
+                                                    </Collapsible>
+                                                );
+                                            }).filter(Boolean);
+
+                                            if (renderedCategories.length === 0) {
+                                                return (
+                                                    <div className="text-center py-8 text-muted-foreground">
+                                                        <Search className="h-8 w-8 mx-auto mb-2 opacity-50" />
+                                                        <p>No scopes match the current filters</p>
+                                                    </div>
+                                                );
+                                            }
+
+                                            return renderedCategories;
+                                        }
+
+                                        // Fallback to flat rendering for other features
+                                        const filteredScopes = filterScopes(pf.scopes);
+                                        if (filteredScopes.length === 0) {
+                                            return (
+                                                <div className="text-center py-8 text-muted-foreground">
+                                                    <Search className="h-8 w-8 mx-auto mb-2 opacity-50" />
+                                                    <p>No scopes match the current filters</p>
+                                                </div>
+                                            );
+                                        }
+                                        return (
+                                            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+                                                {filteredScopes.map((scope) => (
+                                                    <ScopeCard
+                                                        key={scope.id}
+                                                        scope={scope}
+                                                        isAllowed={getScopePermission(scope)}
+                                                        onToggle={(allowed) => handleScopeToggle(scope.id, allowed)}
+                                                    />
+                                                ))}
+                                            </div>
+                                        );
+                                    })()}
                                 </div>
-                            </div>
-                        )}
+                            );
+                        })()}
 
                         {(!pf.scopes || pf.scopes.length === 0) && (
                             <p className="text-sm text-muted-foreground italic">No scopes defined for this feature</p>
@@ -281,6 +430,8 @@ export function PlanDetailPage() {
         min_devices: 1,
         currency: 'USD',
         billing_cycle: 'yearly',
+        is_trial: false,
+        trial_days: 30,
     });
     const [isFormDirty, setIsFormDirty] = useState(false);
 
@@ -295,6 +446,8 @@ export function PlanDetailPage() {
                 min_devices: planResponse.data.min_devices || 1,
                 currency: planResponse.data.currency || 'USD',
                 billing_cycle: planResponse.data.billing_cycle || 'yearly',
+                is_trial: planResponse.data.is_trial || false,
+                trial_days: planResponse.data.trial_days || 30,
             });
             setIsFormDirty(false);
         }
@@ -359,16 +512,30 @@ export function PlanDetailPage() {
     };
 
     const handleSavePlan = () => {
-        const pricePerDevice = formData.price_per_device || 0;
-        const minDevices = formData.min_devices || 1;
-        const price = Math.round(pricePerDevice * minDevices * 100);
+        if (formData.is_trial) {
+            // For trial plans, only send trial-related fields
+            updatePlanMutation.mutate({
+                name: formData.name,
+                slug: formData.slug,
+                description: formData.description,
+                is_trial: true,
+                trial_days: formData.trial_days || 30,
+                is_active: formData.is_active,
+            });
+        } else {
+            // Calculate total price from price_per_device * min_devices
+            const pricePerDevice = formData.price_per_device || 0;
+            const minDevices = formData.min_devices || 1;
+            const price = Math.round(pricePerDevice * minDevices * 100);
 
-        updatePlanMutation.mutate({
-            ...formData,
-            price,
-            price_per_device: Math.round(pricePerDevice * 100),
-            min_devices: minDevices,
-        });
+            updatePlanMutation.mutate({
+                ...formData,
+                price,
+                price_per_device: Math.round(pricePerDevice * 100),
+                min_devices: minDevices,
+                trial_days: undefined, // Clear trial_days for non-trial plans
+            });
+        }
     };
 
     if (planLoading) {
@@ -402,10 +569,10 @@ export function PlanDetailPage() {
     const hasPaidPrice = priceCents > 0;
     const formattedPrice = hasPaidPrice ? formatCurrencyFromCents(priceCents, currencyCode) : 'Free';
 
-    // Calculate displayed total price for form
+    // Calculate displayed total price for form (only for non-trial plans)
     const pricePerDevice = formData.price_per_device || 0;
     const minDevices = formData.min_devices || 1;
-    const totalPrice = pricePerDevice * minDevices;
+    const totalPrice = formData.is_trial ? 0 : pricePerDevice * minDevices;
 
     const highlightStats = [
         {
@@ -512,6 +679,8 @@ export function PlanDetailPage() {
                                                 min_devices: planResponse.data.min_devices || 1,
                                                 currency: planResponse.data.currency || 'USD',
                                                 billing_cycle: planResponse.data.billing_cycle || 'yearly',
+                                                is_trial: planResponse.data.is_trial || false,
+                                                trial_days: planResponse.data.trial_days || 30,
                                             });
                                         }
                                     }}
@@ -573,68 +742,105 @@ export function PlanDetailPage() {
                             </div>
 
                             <div className="space-y-4">
-                                <div className="grid gap-4 sm:grid-cols-2">
-                                    <div className="space-y-2">
-                                        <Label htmlFor="price_per_device">Price per Device</Label>
-                                        <Input
-                                            id="price_per_device"
-                                            type="number"
-                                            step="0.01"
-                                            min="0"
-                                            value={formData.price_per_device || ''}
-                                            onChange={(e) => handleFormChange('price_per_device', parseFloat(e.target.value) || undefined)}
-                                            placeholder="49.00"
-                                        />
+                                <div className="flex items-center justify-between">
+                                    <div className="space-y-0.5">
+                                        <Label htmlFor="is_trial">Trial Plan</Label>
+                                        <p className="text-xs text-muted-foreground">
+                                            Enable trial mode for this plan (no payment required)
+                                        </p>
                                     </div>
+                                    <Switch
+                                        id="is_trial"
+                                        checked={!!formData.is_trial}
+                                        onCheckedChange={(checked) => handleFormChange('is_trial', checked)}
+                                    />
+                                </div>
 
+                                {formData.is_trial && (
                                     <div className="space-y-2">
-                                        <Label htmlFor="min_devices">Min Devices</Label>
+                                        <Label htmlFor="trial_days">Trial Duration (days) *</Label>
                                         <Input
-                                            id="min_devices"
+                                            id="trial_days"
                                             type="number"
                                             min="1"
-                                            value={formData.min_devices || 1}
-                                            onChange={(e) => handleFormChange('min_devices', parseInt(e.target.value) || 1)}
-                                            placeholder="1"
+                                            max="365"
+                                            value={formData.trial_days || ''}
+                                            onChange={(e) => handleFormChange('trial_days', e.target.value === '' ? undefined : parseInt(e.target.value) || 30)}
+                                            placeholder="30"
+                                            required={!!formData.is_trial}
                                         />
+                                        <p className="text-xs text-muted-foreground">
+                                            Number of days the trial license will be valid
+                                        </p>
                                     </div>
-                                </div>
+                                )}
 
-                                <div className="grid gap-4 sm:grid-cols-2">
-                                    <div className="space-y-2">
-                                        <Label htmlFor="currency">Currency</Label>
-                                        <Select
-                                            value={formData.currency || 'USD'}
-                                            onValueChange={(value) => handleFormChange('currency', value)}
-                                        >
-                                            <SelectTrigger id="currency">
-                                                <SelectValue placeholder="Select currency" />
-                                            </SelectTrigger>
-                                            <SelectContent>
-                                                <SelectItem value="USD">USD ($)</SelectItem>
-                                                <SelectItem value="EUR">EUR (€)</SelectItem>
-                                                <SelectItem value="GBP">GBP (£)</SelectItem>
-                                            </SelectContent>
-                                        </Select>
-                                    </div>
+                                {!formData.is_trial && (
+                                    <>
+                                        <div className="grid gap-4 sm:grid-cols-2">
+                                            <div className="space-y-2">
+                                                <Label htmlFor="price_per_device">Price per Device</Label>
+                                                <Input
+                                                    id="price_per_device"
+                                                    type="number"
+                                                    step="0.01"
+                                                    min="0"
+                                                    value={formData.price_per_device || ''}
+                                                    onChange={(e) => handleFormChange('price_per_device', parseFloat(e.target.value) || undefined)}
+                                                    placeholder="49.00"
+                                                />
+                                            </div>
 
-                                    <div className="space-y-2">
-                                        <Label htmlFor="billing_cycle">Billing Cycle</Label>
-                                        <Select
-                                            value={formData.billing_cycle || 'yearly'}
-                                            onValueChange={(value) => handleFormChange('billing_cycle', value)}
-                                        >
-                                            <SelectTrigger id="billing_cycle">
-                                                <SelectValue placeholder="Select billing cycle" />
-                                            </SelectTrigger>
-                                            <SelectContent>
-                                                <SelectItem value="monthly">Monthly</SelectItem>
-                                                <SelectItem value="yearly">Yearly</SelectItem>
-                                                <SelectItem value="lifetime">Lifetime</SelectItem>
-                                            </SelectContent>
-                                        </Select>
-                                    </div>
-                                </div>
+                                            <div className="space-y-2">
+                                                <Label htmlFor="min_devices">Min Devices</Label>
+                                                <Input
+                                                    id="min_devices"
+                                                    type="number"
+                                                    min="1"
+                                                    value={formData.min_devices || 1}
+                                                    onChange={(e) => handleFormChange('min_devices', parseInt(e.target.value) || 1)}
+                                                    placeholder="1"
+                                                />
+                                            </div>
+                                        </div>
+
+                                        <div className="grid gap-4 sm:grid-cols-2">
+                                            <div className="space-y-2">
+                                                <Label htmlFor="currency">Currency</Label>
+                                                <Select
+                                                    value={formData.currency || 'USD'}
+                                                    onValueChange={(value) => handleFormChange('currency', value)}
+                                                >
+                                                    <SelectTrigger id="currency">
+                                                        <SelectValue placeholder="Select currency" />
+                                                    </SelectTrigger>
+                                                    <SelectContent>
+                                                        <SelectItem value="USD">USD ($)</SelectItem>
+                                                        <SelectItem value="EUR">EUR (€)</SelectItem>
+                                                        <SelectItem value="GBP">GBP (£)</SelectItem>
+                                                    </SelectContent>
+                                                </Select>
+                                            </div>
+
+                                            <div className="space-y-2">
+                                                <Label htmlFor="billing_cycle">Billing Cycle</Label>
+                                                <Select
+                                                    value={formData.billing_cycle || 'yearly'}
+                                                    onValueChange={(value) => handleFormChange('billing_cycle', value)}
+                                                >
+                                                    <SelectTrigger id="billing_cycle">
+                                                        <SelectValue placeholder="Select billing cycle" />
+                                                    </SelectTrigger>
+                                                    <SelectContent>
+                                                        <SelectItem value="monthly">Monthly</SelectItem>
+                                                        <SelectItem value="yearly">Yearly</SelectItem>
+                                                        <SelectItem value="lifetime">Lifetime</SelectItem>
+                                                    </SelectContent>
+                                                </Select>
+                                            </div>
+                                        </div>
+                                    </>
+                                )}
 
                                 {totalPrice > 0 && (
                                     <div className="rounded-lg border bg-muted/50 p-3">

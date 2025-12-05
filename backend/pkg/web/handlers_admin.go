@@ -73,7 +73,17 @@ func (ws *WebServer) handleAPIAdminUsers(w http.ResponseWriter, r *http.Request)
 			ConfirmPassword string `json:"confirm_password"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			ws.respondAPIError(w, http.StatusBadRequest, "Invalid request body")
+			ws.respondAPIError(w, http.StatusBadRequest, "Invalid request body", map[string]interface{}{
+				"expected": "JSON object with username and password fields",
+				"example": map[string]string{
+					"username":         "admin",
+					"password":         "securepassword123",
+					"confirm_password": "securepassword123",
+				},
+				"error_type":       "json_decode_failed",
+				"parse_error":      err.Error(),
+				"suggested_action": "Ensure the request body is valid JSON with required fields (username, password) and optional confirm_password",
+			})
 			return
 		}
 
@@ -124,7 +134,17 @@ func (ws *WebServer) handleAPIAdminUserDetail(w http.ResponseWriter, r *http.Req
 				ConfirmPassword string `json:"confirmPassword"`
 			}
 			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-				ws.respondAPIError(w, http.StatusBadRequest, "Invalid request body")
+				ws.respondAPIError(w, http.StatusBadRequest, "Invalid request body", map[string]interface{}{
+					"expected": "JSON object with currentPassword and newPassword fields",
+					"example": map[string]string{
+						"currentPassword": "oldpassword123",
+						"newPassword":     "newpassword456",
+						"confirmPassword": "newpassword456",
+					},
+					"error_type":       "json_decode_failed",
+					"parse_error":      err.Error(),
+					"suggested_action": "Ensure the request body is valid JSON with required fields (currentPassword, newPassword) and optional confirmPassword",
+				})
 				return
 			}
 			if req.NewPassword == "" || req.CurrentPassword == "" {
@@ -159,7 +179,15 @@ func (ws *WebServer) handleAPIAdminUserDetail(w http.ResponseWriter, r *http.Req
 			Username string `json:"username"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			ws.respondAPIError(w, http.StatusBadRequest, "Invalid request body")
+			ws.respondAPIError(w, http.StatusBadRequest, "Invalid request body", map[string]interface{}{
+				"expected": "JSON object with admin user update data",
+				"example": map[string]interface{}{
+					"username": "new-admin-username",
+				},
+				"error_type":       "json_decode_failed",
+				"parse_error":      err.Error(),
+				"suggested_action": "Ensure the request body contains valid JSON with a 'username' field",
+			})
 			return
 		}
 		if strings.TrimSpace(req.Username) == "" {
@@ -210,7 +238,15 @@ func (ws *WebServer) handleAPIAdminAPIKeys(w http.ResponseWriter, r *http.Reques
 			UserID string `json:"user_id"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			ws.respondAPIError(w, http.StatusBadRequest, "Invalid request body")
+			ws.respondAPIError(w, http.StatusBadRequest, "Invalid request body", map[string]interface{}{
+				"expected": "JSON object with user_id",
+				"example": map[string]interface{}{
+					"user_id": "admin-user-uuid",
+				},
+				"error_type":       "json_decode_failed",
+				"parse_error":      err.Error(),
+				"suggested_action": "Ensure the request body contains valid JSON with a 'user_id' field",
+			})
 			return
 		}
 		if strings.TrimSpace(req.UserID) == "" {
@@ -270,7 +306,15 @@ func (ws *WebServer) handleAPIProfile(w http.ResponseWriter, r *http.Request) {
 			Username string `json:"username"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			ws.respondAPIError(w, http.StatusBadRequest, "Invalid request body")
+			ws.respondAPIError(w, http.StatusBadRequest, "Invalid request body", map[string]interface{}{
+				"expected": "JSON object with profile update data",
+				"example": map[string]interface{}{
+					"username": "new-profile-username",
+				},
+				"error_type":       "json_decode_failed",
+				"parse_error":      err.Error(),
+				"suggested_action": "Ensure the request body contains valid JSON with a 'username' field",
+			})
 			return
 		}
 		if strings.TrimSpace(req.Username) == "" {
@@ -306,7 +350,17 @@ func (ws *WebServer) handleAPIProfilePassword(w http.ResponseWriter, r *http.Req
 		ConfirmPassword string `json:"confirmPassword"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		ws.respondAPIError(w, http.StatusBadRequest, "Invalid request body")
+		ws.respondAPIError(w, http.StatusBadRequest, "Invalid request body", map[string]interface{}{
+			"expected": "JSON object with currentPassword and newPassword fields",
+			"example": map[string]string{
+				"currentPassword": "oldpassword123",
+				"newPassword":     "newpassword456",
+				"confirmPassword": "newpassword456",
+			},
+			"error_type":       "json_decode_failed",
+			"parse_error":      err.Error(),
+			"suggested_action": "Ensure the request body is valid JSON with required fields (currentPassword, newPassword) and optional confirmPassword",
+		})
 		return
 	}
 	if req.NewPassword == "" || req.CurrentPassword == "" {

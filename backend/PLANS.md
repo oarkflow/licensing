@@ -4,14 +4,16 @@ Secretr is a **local-first, offline-capable** secret management tool designed fo
 
 ---
 
-## Free Trial - 14 Days
+## Free Trial - 7 Days
 
-**Try everything before you buy.** Full access to all features for 14 days.
+**Try everything before you buy.** Full access to all features for 7 days.
 
 - ✅ All features from all plans unlocked
 - ✅ Unlimited secrets and storage
 - ✅ No credit card required
 - ⏰ Converts to Personal plan after trial (or choose another plan)
+
+> **Launch promo:** First 500 customers who purchase any paid plan with at least the minimum device count plus 25 additional devices receive an automatic 5% discount at checkout.
 
 ---
 
@@ -59,7 +61,7 @@ These core features are included in every plan:
 
 ---
 
-## Personal - $15/device/year (min 1 device)
+## Personal - $25/device/year (min 1 device)
 
 **Best for:** Individual developers managing personal secrets
 
@@ -120,7 +122,7 @@ Everything in Common Features plus:
 
 ---
 
-## Solo - $40/device/year (min 2 devices)
+## Solo - $60/device/year (min 2 devices)
 
 **Best for:** Power users and freelancers with multiple workstations
 
@@ -178,7 +180,7 @@ Everything from Personal plus:
 
 ---
 
-## Team - $78/device/year (min 5 devices)
+## Team - $90/device/year (min 5 devices)
 
 **Best for:** Small teams collaborating on projects
 
@@ -232,7 +234,7 @@ Everything from Solo plus:
 
 ---
 
-## Business - $135/device/year (min 15 devices)
+## Business - $180/device/year (min 15 devices)
 
 **Best for:** Growing organizations with centralized secret management needs
 
@@ -408,9 +410,9 @@ Switch modes with `-mode=pro` or `-mode=standard` CLI flag.
 
 | Category | Personal | Solo | Team | Business | Enterprise |
 |----------|:--------:|:----:|:----:|:--------:|:----------:|
-| **Price** | $15/dev/yr | $40/dev/yr | $78/dev/yr | $135/dev/yr | Custom |
+| **Price** | $25/dev/yr | $60/dev/yr | $90/dev/yr | $180/dev/yr | Custom |
 | **Min Devices** | 1 | 2 | 5 | 15 | 50+ |
-| **Min ACV** | $15 | $80 | $390 | $2,025 | Custom |
+| **Min ACV** | $25 | $120 | $450 | $2,700 | Custom |
 | **Storage** | 1 GB | 5 GB | 25 GB | Unlimited | Unlimited |
 | **Secret Expiration** | ✅ | ✅ | ✅ | ✅ | ✅ |
 | **2FA/Passkey** | — | ✅ | ✅ | ✅ | ✅ |
@@ -486,8 +488,8 @@ Switch modes with `-mode=pro` or `-mode=standard` CLI flag.
 ### Total Cost of Ownership (Example)
 | Scenario | Secretr (Team) | Cloud-Based (Typical) | Self-Hosted Enterprise |
 |----------|----------------|----------------------|------------------------|
-| 5 developers, 1 year | $390 | $1,260-2,000 | ~$5,000-10,000+ |
-| 15 developers, 1 year | $2,025 (Business) | $3,780-6,000 | ~$15,000-25,000+ |
-| 50 developers, 1 year | $5,737* | $12,600-20,000 | ~$50,000-80,000+ |
+| 5 developers, 1 year | $450 | $1,260-2,000 | ~$5,000-10,000+ |
+| 15 developers, 1 year | $2,700 (Business) | $3,780-6,000 | ~$15,000-25,000+ |
+| 50 developers, 1 year | $4,500* | $12,600-20,000 | ~$50,000-80,000+ |
 
 *With volume discount applied

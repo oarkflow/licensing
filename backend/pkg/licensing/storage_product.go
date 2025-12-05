@@ -477,12 +477,20 @@ func (s *InMemoryStorage) ComputeLicenseEntitlements(_ context.Context, productI
 
 	// Collect all plan features
 	for _, pf := range s.planFeatures {
-		if pf.PlanID != planID || !pf.Enabled {
+		if pf.PlanID != planID {
 			continue
 		}
 
 		feature, exists := s.features[pf.FeatureID]
 		if !exists {
+			continue
+		}
+
+		// Enforce feature-level gating even if stored data is stale
+		if feature.Slug == "api" && !planHasAPIAccess(plan.Slug) {
+			continue
+		}
+		if !pf.Enabled {
 			continue
 		}
 
@@ -516,6 +524,11 @@ func (s *InMemoryStorage) ComputeLicenseEntitlements(_ context.Context, productI
 				if override.Metadata != nil {
 					scopeGrant.Metadata = override.Metadata
 				}
+			}
+
+			// Final safety net: enforce plan/feature matrix even if overrides are missing
+			if !IsScopeAllowedForPlan(feature.Slug, scope.Slug, plan.Slug) {
+				scopeGrant.Permission = ScopePermissionDeny
 			}
 
 			featureGrant.Scopes[scope.Slug] = scopeGrant

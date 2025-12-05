@@ -261,7 +261,7 @@ export function MessagingProviderFormPage() {
             </div>
 
             <form onSubmit={handleSubmit} className="space-y-6">
-                <Card className="border-white/5">
+                <Card className="border-border">
                     <CardHeader>
                         <CardTitle className="flex items-center gap-2">
                             <Shield className="h-5 w-5 text-primary" /> Identity
@@ -294,7 +294,7 @@ export function MessagingProviderFormPage() {
                         <div className="space-y-2">
                             <Label>Provider type</Label>
                             <select
-                                className="w-full rounded-2xl border border-white/10 bg-transparent px-3 py-2"
+                                className="w-full rounded-2xl border border-border bg-transparent px-3 py-2"
                                 value={formState.type}
                                 onChange={(e) =>
                                     setFormState((prev) => ({
@@ -324,7 +324,7 @@ export function MessagingProviderFormPage() {
                     </CardContent>
                 </Card>
 
-                <Card className="border-white/5">
+                <Card className="border-border">
                     <CardHeader>
                         <CardTitle>Retry & failover policy</CardTitle>
                         <CardDescription>Define delivery guardrails and jitter behavior.</CardDescription>
@@ -370,7 +370,7 @@ export function MessagingProviderFormPage() {
                                 onChange={(e) => setFormState((prev) => ({ ...prev, retryJitterPct: e.target.value }))}
                             />
                         </div>
-                        <div className="flex items-center gap-4 rounded-2xl border border-white/5 p-4">
+                        <div className="flex items-center gap-4 rounded-2xl border border-border p-4">
                             <div className="flex-1">
                                 <p className="font-medium">Default provider</p>
                                 <p className="text-sm text-muted-foreground">Use as the primary send node.</p>
@@ -380,7 +380,7 @@ export function MessagingProviderFormPage() {
                                 onCheckedChange={(checked) => setFormState((prev) => ({ ...prev, isDefault: checked }))}
                             />
                         </div>
-                        <div className="flex items-center gap-4 rounded-2xl border border-white/5 p-4">
+                        <div className="flex items-center gap-4 rounded-2xl border border-border p-4">
                             <div className="flex-1">
                                 <p className="font-medium">Enabled</p>
                                 <p className="text-sm text-muted-foreground">Disable to take out of rotation.</p>
@@ -393,7 +393,7 @@ export function MessagingProviderFormPage() {
                     </CardContent>
                 </Card>
 
-                <Card className="border-white/5">
+                <Card className="border-border">
                     <CardHeader>
                         <CardTitle>Connection config</CardTitle>
                         <CardDescription>Paste the JSON payload consumed by the provider driver.</CardDescription>
@@ -423,7 +423,7 @@ export function MessagingProviderFormPage() {
                     </CardContent>
                 </Card>
 
-                <Card className="border-white/5">
+                <Card className="border-border">
                     <CardHeader>
                         <CardTitle className="flex items-center gap-2">
                             <Beaker className="h-5 w-5 text-primary" /> Live test

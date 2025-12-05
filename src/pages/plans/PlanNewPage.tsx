@@ -21,6 +21,7 @@ import {
     SelectTrigger,
     SelectValue,
 } from '@/components/ui/select';
+import { Switch } from '@/components/ui/switch';
 import { useToast } from '@/hooks/use-toast';
 import type { CreatePlanRequest } from '@/types/api';
 
@@ -38,6 +39,8 @@ export function PlanNewPage() {
         min_devices: 1,
         currency: 'USD',
         billing_cycle: 'yearly',
+        is_trial: false,
+        trial_days: 30,
         is_active: true,
     });
 
@@ -66,24 +69,39 @@ export function PlanNewPage() {
         e.preventDefault();
         // Generate slug from name if not provided
         const slug = formData.slug || formData.name.toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '');
-        // Calculate total price from price_per_device * min_devices
-        const pricePerDevice = formData.price_per_device || 0;
-        const minDevices = formData.min_devices || 1;
-        const price = Math.round(pricePerDevice * minDevices * 100); // Convert to cents
 
-        createMutation.mutate({
-            ...formData,
-            slug,
-            price,
-            price_per_device: Math.round(pricePerDevice * 100), // Convert to cents
-            min_devices: minDevices,
-        });
+        if (formData.is_trial) {
+            // For trial plans, only send trial-related fields
+            createMutation.mutate({
+                product_id: productId!,
+                name: formData.name,
+                slug,
+                description: formData.description,
+                is_trial: true,
+                trial_days: formData.trial_days || 30,
+                is_active: formData.is_active,
+            });
+        } else {
+            // Calculate total price from price_per_device * min_devices
+            const pricePerDevice = formData.price_per_device || 0;
+            const minDevices = formData.min_devices || 1;
+            const price = Math.round(pricePerDevice * minDevices * 100); // Convert to cents
+
+            createMutation.mutate({
+                ...formData,
+                slug,
+                price,
+                price_per_device: Math.round(pricePerDevice * 100), // Convert to cents
+                min_devices: minDevices,
+                trial_days: undefined, // Clear trial_days for non-trial plans
+            });
+        }
     };
 
-    // Calculate displayed total price
+    // Calculate displayed total price (only for non-trial plans)
     const pricePerDevice = formData.price_per_device || 0;
     const minDevices = formData.min_devices || 1;
-    const totalPrice = pricePerDevice * minDevices;
+    const totalPrice = formData.is_trial ? 0 : pricePerDevice * minDevices;
 
     return (
         <div className="space-y-6">
@@ -151,88 +169,134 @@ export function PlanNewPage() {
                             />
                         </div>
 
-                        <div className="grid gap-4 sm:grid-cols-2">
-                            <div className="space-y-2">
-                                <Label htmlFor="price_per_device">Price per Device (per year)</Label>
-                                <Input
-                                    id="price_per_device"
-                                    type="number"
-                                    step="0.01"
-                                    min="0"
-                                    value={formData.price_per_device || ''}
-                                    onChange={(e) =>
-                                        setFormData((prev) => ({
-                                            ...prev,
-                                            price_per_device: parseFloat(e.target.value) || undefined,
-                                        }))
-                                    }
-                                    placeholder="49.00"
-                                />
+                        <div className="flex items-center justify-between">
+                            <div className="space-y-0.5">
+                                <Label htmlFor="is_trial">Trial Plan</Label>
                                 <p className="text-xs text-muted-foreground">
-                                    Price charged per device per billing cycle
+                                    Enable trial mode for this plan (no payment required)
                                 </p>
                             </div>
+                            <Switch
+                                id="is_trial"
+                                checked={formData.is_trial || false}
+                                onCheckedChange={(checked) =>
+                                    setFormData((prev) => ({ ...prev, is_trial: checked }))
+                                }
+                            />
+                        </div>
 
+                        {formData.is_trial && (
                             <div className="space-y-2">
-                                <Label htmlFor="min_devices">Minimum Devices *</Label>
+                                <Label htmlFor="trial_days">Trial Duration (days) *</Label>
                                 <Input
-                                    id="min_devices"
+                                    id="trial_days"
                                     type="number"
                                     min="1"
-                                    value={formData.min_devices || 1}
+                                    max="365"
+                                    value={formData.trial_days || ''}
                                     onChange={(e) =>
                                         setFormData((prev) => ({
                                             ...prev,
-                                            min_devices: parseInt(e.target.value) || 1,
+                                            trial_days: e.target.value === '' ? undefined : parseInt(e.target.value) || 30,
                                         }))
                                     }
-                                    placeholder="1"
+                                    placeholder="30"
+                                    required={formData.is_trial}
                                 />
                                 <p className="text-xs text-muted-foreground">
-                                    Minimum number of devices required for this plan
+                                    Number of days the trial license will be valid
                                 </p>
                             </div>
-                        </div>
+                        )}
 
-                        <div className="grid gap-4 sm:grid-cols-2">
-                            <div className="space-y-2">
-                                <Label htmlFor="currency">Currency</Label>
-                                <Select
-                                    value={formData.currency || 'USD'}
-                                    onValueChange={(value) =>
-                                        setFormData((prev) => ({ ...prev, currency: value }))
-                                    }
-                                >
-                                    <SelectTrigger id="currency">
-                                        <SelectValue placeholder="Select currency" />
-                                    </SelectTrigger>
-                                    <SelectContent>
-                                        <SelectItem value="USD">USD ($)</SelectItem>
-                                        <SelectItem value="EUR">EUR (€)</SelectItem>
-                                        <SelectItem value="GBP">GBP (£)</SelectItem>
-                                    </SelectContent>
-                                </Select>
-                            </div>
+                        {!formData.is_trial && (
+                            <>
+                                <div className="grid gap-4 sm:grid-cols-2">
+                                    <div className="space-y-2">
+                                        <Label htmlFor="price_per_device">Price per Device (per year)</Label>
+                                        <Input
+                                            id="price_per_device"
+                                            type="number"
+                                            step="0.01"
+                                            min="0"
+                                            value={formData.price_per_device || ''}
+                                            onChange={(e) =>
+                                                setFormData((prev) => ({
+                                                    ...prev,
+                                                    price_per_device: parseFloat(e.target.value) || undefined,
+                                                }))
+                                            }
+                                            placeholder="49.00"
+                                        />
+                                        <p className="text-xs text-muted-foreground">
+                                            Price charged per device per billing cycle
+                                        </p>
+                                    </div>
 
-                            <div className="space-y-2">
-                                <Label htmlFor="billing_cycle">Billing Cycle</Label>
-                                <Select
-                                    value={formData.billing_cycle || 'yearly'}
-                                    onValueChange={(value) =>
-                                        setFormData((prev) => ({ ...prev, billing_cycle: value }))
-                                    }
-                                >
-                                    <SelectTrigger id="billing_cycle">
-                                        <SelectValue placeholder="Select billing cycle" />
-                                    </SelectTrigger>
-                                    <SelectContent>
-                                        <SelectItem value="monthly">Monthly</SelectItem>
-                                        <SelectItem value="yearly">Yearly</SelectItem>
-                                        <SelectItem value="lifetime">Lifetime</SelectItem>
-                                    </SelectContent>
-                                </Select>
+                                    <div className="space-y-2">
+                                        <Label htmlFor="min_devices">Minimum Devices *</Label>
+                                        <Input
+                                            id="min_devices"
+                                            type="number"
+                                            min="1"
+                                            value={formData.min_devices || 1}
+                                            onChange={(e) =>
+                                                setFormData((prev) => ({
+                                                    ...prev,
+                                                    min_devices: parseInt(e.target.value) || 1,
+                                                }))
+                                            }
+                                            placeholder="1"
+                                        />
+                                        <p className="text-xs text-muted-foreground">
+                                            Minimum number of devices required for this plan
+                                        </p>
+                                    </div>
+                                </div>
+                            </>
+                        )}
+
+                        {!formData.is_trial && (
+                            <div className="grid gap-4 sm:grid-cols-2">
+                                <div className="space-y-2">
+                                    <Label htmlFor="currency">Currency</Label>
+                                    <Select
+                                        value={formData.currency || 'USD'}
+                                        onValueChange={(value) =>
+                                            setFormData((prev) => ({ ...prev, currency: value }))
+                                        }
+                                    >
+                                        <SelectTrigger id="currency">
+                                            <SelectValue placeholder="Select currency" />
+                                        </SelectTrigger>
+                                        <SelectContent>
+                                            <SelectItem value="USD">USD ($)</SelectItem>
+                                            <SelectItem value="EUR">EUR (€)</SelectItem>
+                                            <SelectItem value="GBP">GBP (£)</SelectItem>
+                                        </SelectContent>
+                                    </Select>
+                                </div>
+
+                                <div className="space-y-2">
+                                    <Label htmlFor="billing_cycle">Billing Cycle</Label>
+                                    <Select
+                                        value={formData.billing_cycle || 'yearly'}
+                                        onValueChange={(value) =>
+                                            setFormData((prev) => ({ ...prev, billing_cycle: value }))
+                                        }
+                                    >
+                                        <SelectTrigger id="billing_cycle">
+                                            <SelectValue placeholder="Select billing cycle" />
+                                        </SelectTrigger>
+                                        <SelectContent>
+                                            <SelectItem value="monthly">Monthly</SelectItem>
+                                            <SelectItem value="yearly">Yearly</SelectItem>
+                                            <SelectItem value="lifetime">Lifetime</SelectItem>
+                                        </SelectContent>
+                                    </Select>
+                                </div>
                             </div>
-                        </div>
+                        )}
 
                         {totalPrice > 0 && (
                             <div className="rounded-lg border bg-muted/50 p-4">

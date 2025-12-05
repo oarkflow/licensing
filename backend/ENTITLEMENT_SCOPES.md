@@ -6,11 +6,11 @@ This document defines the complete entitlement structure covering all CLI comman
 
 | Plan | Price | Min Devices | Storage | Key Features |
 |------|-------|-------------|---------|--------------|
-| **Trial** | $0 (14 days) | 1 | Unlimited | All features unlocked |
-| **Personal** | $15/device/yr | 1 | 1 GB | Core secrets, SSH, generators, GUI |
-| **Solo** | $40/device/yr | 2 | 5 GB | + 2FA, P2P sharing, audit, versioning |
-| **Team** | $78/device/yr | 5 | 25 GB | + Scratchpads, templates, rotation, bundles |
-| **Business** | $135/device/yr | 15 | Unlimited | + API server, user mgmt, ACL, multi-tenant, sandbox |
+| **Trial** | $0 (7 days) | 1 | Unlimited | All features unlocked |
+| **Personal** | $25/device/yr | 1 | 1 GB | Core secrets, SSH, generators, GUI |
+| **Solo** | $60/device/yr | 2 | 5 GB | + 2FA, P2P sharing, audit, versioning |
+| **Team** | $90/device/yr | 5 | 25 GB | + Scratchpads, templates, rotation, bundles |
+| **Business** | $180/device/yr | 15 | Unlimited | + API server, user mgmt, ACL, multi-tenant, sandbox |
 | **Enterprise** | Custom | 50+ | Unlimited | + Compliance, FIPS, containers, HSM |
 
 ## License Data Structure
@@ -223,6 +223,16 @@ The `cli` feature controls command-line interface access.
 }
 ```
 
+#### Interactive Log Viewers
+```json
+{
+  "view": { "scope_id": "cli_s090", "scope_slug": "view", "permission": "allow", "min_plan": "team" },
+  "view_audit-logs": { "scope_id": "cli_s091", "scope_slug": "view_audit-logs", "permission": "allow", "min_plan": "team" },
+  "view_access-logs": { "scope_id": "cli_s092", "scope_slug": "view_access-logs", "permission": "allow", "min_plan": "team" }
+}
+```
+*Note: Interactive log viewers require Team plan or higher due to the enhanced browser UI.*
+
 #### FIPS Compliance
 ```json
 {
@@ -333,11 +343,37 @@ The `cli` feature controls command-line interface access.
 ```
 *Note: Config injection requires Startup plan or higher*
 
+#### Transfer System
+```json
+{
+  "transfer": { "scope_id": "cli_s084", "scope_slug": "transfer", "permission": "allow", "min_plan": "business" },
+  "transfer-devices": { "scope_id": "cli_s085", "scope_slug": "transfer-devices", "permission": "allow", "min_plan": "business" },
+  "transfer-devices-list": { "scope_id": "cli_s086", "scope_slug": "transfer-devices-list", "permission": "allow", "min_plan": "business" },
+  "transfer-devices-add": { "scope_id": "cli_s087", "scope_slug": "transfer-devices-add", "permission": "allow", "min_plan": "business" },
+  "transfer-devices-remove": { "scope_id": "cli_s088", "scope_slug": "transfer-devices-remove", "permission": "allow", "min_plan": "business" },
+  "transfer-devices-verify": { "scope_id": "cli_s089", "scope_slug": "transfer-devices-verify", "permission": "allow", "min_plan": "business" },
+  "transfer-send": { "scope_id": "cli_s090", "scope_slug": "transfer-send", "permission": "allow", "min_plan": "business" },
+  "transfer-upload": { "scope_id": "cli_s091", "scope_slug": "transfer-upload", "permission": "allow", "min_plan": "business" },
+  "transfer-download": { "scope_id": "cli_s092", "scope_slug": "transfer-download", "permission": "allow", "min_plan": "business" },
+  "transfer-bundle": { "scope_id": "cli_s093", "scope_slug": "transfer-bundle", "permission": "allow", "min_plan": "business" },
+  "transfer-bundle-create": { "scope_id": "cli_s094", "scope_slug": "transfer-bundle-create", "permission": "allow", "min_plan": "business" },
+  "transfer-bundle-import": { "scope_id": "cli_s095", "scope_slug": "transfer-bundle-import", "permission": "allow", "min_plan": "business" },
+  "transfer-bundle-qr": { "scope_id": "cli_s096", "scope_slug": "transfer-bundle-qr", "permission": "allow", "min_plan": "business" },
+  "transfer-schedule": { "scope_id": "cli_s097", "scope_slug": "transfer-schedule", "permission": "allow", "min_plan": "business" },
+  "transfer-schedule-list": { "scope_id": "cli_s098", "scope_slug": "transfer-schedule-list", "permission": "allow", "min_plan": "business" },
+  "transfer-schedule-add": { "scope_id": "cli_s099", "scope_slug": "transfer-schedule-add", "permission": "allow", "min_plan": "business" },
+  "transfer-schedule-pause": { "scope_id": "cli_s100", "scope_slug": "transfer-schedule-pause", "permission": "allow", "min_plan": "business" },
+  "transfer-schedule-resume": { "scope_id": "cli_s101", "scope_slug": "transfer-schedule-resume", "permission": "allow", "min_plan": "business" },
+  "transfer-schedule-run": { "scope_id": "cli_s102", "scope_slug": "transfer-schedule-run", "permission": "allow", "min_plan": "business" }
+}
+```
+*Note: Transfer system requires Business plan or higher*
+
 #### Container Security Audit
 ```json
 {
-  "container-audit": { "scope_id": "cli_s082", "scope_slug": "container-audit", "permission": "deny", "min_plan": "enterprise" },
-  "csa": { "scope_id": "cli_s083", "scope_slug": "csa", "permission": "deny", "min_plan": "enterprise" }
+  "container-audit": { "scope_id": "cli_s103", "scope_slug": "container-audit", "permission": "deny", "min_plan": "enterprise" },
+  "csa": { "scope_id": "cli_s104", "scope_slug": "csa", "permission": "deny", "min_plan": "enterprise" }
 }
 ```
 *Note: Container security audit requires Enterprise plan*
@@ -451,11 +487,34 @@ The `gui` feature controls desktop GUI application access.
 }
 ```
 
+#### Transfer System Views
+```json
+{
+  "transfer_dashboard": { "scope_id": "gui_s038", "scope_slug": "transfer_dashboard", "permission": "allow", "min_plan": "business" },
+  "transfer_devices": { "scope_id": "gui_s039", "scope_slug": "transfer_devices", "permission": "allow", "min_plan": "business" },
+  "transfer_devices_manage": { "scope_id": "gui_s040", "scope_slug": "transfer_devices_manage", "permission": "allow", "min_plan": "business" },
+  "transfer_send": { "scope_id": "gui_s041", "scope_slug": "transfer_send", "permission": "allow", "min_plan": "business" },
+  "transfer_receive": { "scope_id": "gui_s042", "scope_slug": "transfer_receive", "permission": "allow", "min_plan": "business" },
+  "transfer_cloud": { "scope_id": "gui_s043", "scope_slug": "transfer_cloud", "permission": "allow", "min_plan": "business" },
+  "transfer_cloud_upload": { "scope_id": "gui_s044", "scope_slug": "transfer_cloud_upload", "permission": "allow", "min_plan": "business" },
+  "transfer_cloud_download": { "scope_id": "gui_s045", "scope_slug": "transfer_cloud_download", "permission": "allow", "min_plan": "business" },
+  "transfer_airgap": { "scope_id": "gui_s046", "scope_slug": "transfer_airgap", "permission": "allow", "min_plan": "business" },
+  "transfer_bundle_create": { "scope_id": "gui_s047", "scope_slug": "transfer_bundle_create", "permission": "allow", "min_plan": "business" },
+  "transfer_bundle_import": { "scope_id": "gui_s048", "scope_slug": "transfer_bundle_import", "permission": "allow", "min_plan": "business" },
+  "transfer_bundle_qr": { "scope_id": "gui_s049", "scope_slug": "transfer_bundle_qr", "permission": "allow", "min_plan": "business" },
+  "transfer_schedule": { "scope_id": "gui_s050", "scope_slug": "transfer_schedule", "permission": "allow", "min_plan": "business" },
+  "transfer_schedule_manage": { "scope_id": "gui_s051", "scope_slug": "transfer_schedule_manage", "permission": "allow", "min_plan": "business" },
+  "transfer_history": { "scope_id": "gui_s052", "scope_slug": "transfer_history", "permission": "allow", "min_plan": "business" },
+  "transfer_audit": { "scope_id": "gui_s053", "scope_slug": "transfer_audit", "permission": "allow", "min_plan": "business" }
+}
+```
+*Note: Transfer system views require Business plan or higher*
+
 #### Security Views
 ```json
 {
-  "two_factor_auth": { "scope_id": "gui_s036", "scope_slug": "two_factor_auth", "permission": "allow" },
-  "vault_lock": { "scope_id": "gui_s037", "scope_slug": "vault_lock", "permission": "allow" }
+  "two_factor_auth": { "scope_id": "gui_s054", "scope_slug": "two_factor_auth", "permission": "allow" },
+  "vault_lock": { "scope_id": "gui_s055", "scope_slug": "vault_lock", "permission": "allow" }
 }
 ```
 
@@ -642,31 +701,44 @@ The `api` feature controls HTTP API access.
 }
 ```
 
+#### Transfer System
+```json
+{
+  "transfer_devices_list": { "scope_id": "api_s070", "scope_slug": "transfer_devices_list", "permission": "allow", "min_plan": "business" },
+  "transfer_devices_add": { "scope_id": "api_s071", "scope_slug": "transfer_devices_add", "permission": "allow", "min_plan": "business" },
+  "transfer_devices_remove": { "scope_id": "api_s072", "scope_slug": "transfer_devices_remove", "permission": "allow", "min_plan": "business" },
+  "transfer_devices_verify": { "scope_id": "api_s073", "scope_slug": "transfer_devices_verify", "permission": "allow", "min_plan": "business" },
+  "transfer_send": { "scope_id": "api_s074", "scope_slug": "transfer_send", "permission": "allow", "min_plan": "business" },
+  "transfer_receive": { "scope_id": "api_s075", "scope_slug": "transfer_receive", "permission": "allow", "min_plan": "business" },
+  "transfer_status": { "scope_id": "api_s076", "scope_slug": "transfer_status", "permission": "allow", "min_plan": "business" },
+  "transfer_cancel": { "scope_id": "api_s077", "scope_slug": "transfer_cancel", "permission": "allow", "min_plan": "business" },
+  "transfer_cloud_upload": { "scope_id": "api_s078", "scope_slug": "transfer_cloud_upload", "permission": "allow", "min_plan": "business" },
+  "transfer_cloud_download": { "scope_id": "api_s079", "scope_slug": "transfer_cloud_download", "permission": "allow", "min_plan": "business" },
+  "transfer_cloud_list": { "scope_id": "api_s080", "scope_slug": "transfer_cloud_list", "permission": "allow", "min_plan": "business" },
+  "transfer_bundle_create": { "scope_id": "api_s081", "scope_slug": "transfer_bundle_create", "permission": "allow", "min_plan": "business" },
+  "transfer_bundle_import": { "scope_id": "api_s082", "scope_slug": "transfer_bundle_import", "permission": "allow", "min_plan": "business" },
+  "transfer_bundle_qr_generate": { "scope_id": "api_s083", "scope_slug": "transfer_bundle_qr_generate", "permission": "allow", "min_plan": "business" },
+  "transfer_bundle_qr_scan": { "scope_id": "api_s084", "scope_slug": "transfer_bundle_qr_scan", "permission": "allow", "min_plan": "business" },
+  "transfer_schedule_list": { "scope_id": "api_s085", "scope_slug": "transfer_schedule_list", "permission": "allow", "min_plan": "business" },
+  "transfer_schedule_create": { "scope_id": "api_s086", "scope_slug": "transfer_schedule_create", "permission": "allow", "min_plan": "business" },
+  "transfer_schedule_update": { "scope_id": "api_s087", "scope_slug": "transfer_schedule_update", "permission": "allow", "min_plan": "business" },
+  "transfer_schedule_delete": { "scope_id": "api_s088", "scope_slug": "transfer_schedule_delete", "permission": "allow", "min_plan": "business" },
+  "transfer_schedule_pause": { "scope_id": "api_s089", "scope_slug": "transfer_schedule_pause", "permission": "allow", "min_plan": "business" },
+  "transfer_schedule_resume": { "scope_id": "api_s090", "scope_slug": "transfer_schedule_resume", "permission": "allow", "min_plan": "business" },
+  "transfer_schedule_run": { "scope_id": "api_s091", "scope_slug": "transfer_schedule_run", "permission": "allow", "min_plan": "business" },
+  "transfer_history": { "scope_id": "api_s092", "scope_slug": "transfer_history", "permission": "allow", "min_plan": "business" },
+  "transfer_audit": { "scope_id": "api_s093", "scope_slug": "transfer_audit", "permission": "allow", "min_plan": "business" },
+  "transfer_manifest_get": { "scope_id": "api_s094", "scope_slug": "transfer_manifest_get", "permission": "allow", "min_plan": "business" },
+  "transfer_manifest_verify": { "scope_id": "api_s095", "scope_slug": "transfer_manifest_verify", "permission": "allow", "min_plan": "business" }
+}
+```
+*Note: Transfer system API endpoints require Business plan or higher*
+
 #### Export/Import
 ```json
 {
-  "export_all": { "scope_id": "api_s068", "scope_slug": "export_all", "permission": "allow" },
-  "import_all": { "scope_id": "api_s069", "scope_slug": "import_all", "permission": "allow" }
-}
-```
-
-#### Transfer (Business+ - Secure device-to-device and cloud transfers)
-```json
-{
-  "transfer_devices_list": { "scope_id": "api_s070", "scope_slug": "transfer_devices_list", "permission": "allow" },
-  "transfer_devices_trust": { "scope_id": "api_s071", "scope_slug": "transfer_devices_trust", "permission": "allow" },
-  "transfer_devices_revoke": { "scope_id": "api_s072", "scope_slug": "transfer_devices_revoke", "permission": "allow" },
-  "transfer_device_initiate": { "scope_id": "api_s073", "scope_slug": "transfer_device_initiate", "permission": "allow" },
-  "transfer_device_status": { "scope_id": "api_s074", "scope_slug": "transfer_device_status", "permission": "allow" },
-  "transfer_cloud_config": { "scope_id": "api_s075", "scope_slug": "transfer_cloud_config", "permission": "allow" },
-  "transfer_cloud_upload": { "scope_id": "api_s076", "scope_slug": "transfer_cloud_upload", "permission": "allow" },
-  "transfer_cloud_download": { "scope_id": "api_s077", "scope_slug": "transfer_cloud_download", "permission": "allow" },
-  "transfer_history_list": { "scope_id": "api_s078", "scope_slug": "transfer_history_list", "permission": "allow" },
-  "transfer_history_detail": { "scope_id": "api_s079", "scope_slug": "transfer_history_detail", "permission": "allow" },
-  "transfer_schedules_list": { "scope_id": "api_s080", "scope_slug": "transfer_schedules_list", "permission": "allow" },
-  "transfer_schedules_create": { "scope_id": "api_s081", "scope_slug": "transfer_schedules_create", "permission": "allow" },
-  "transfer_schedules_update": { "scope_id": "api_s082", "scope_slug": "transfer_schedules_update", "permission": "allow" },
-  "transfer_schedules_delete": { "scope_id": "api_s083", "scope_slug": "transfer_schedules_delete", "permission": "allow" }
+  "export_all": { "scope_id": "api_s096", "scope_slug": "export_all", "permission": "allow" },
+  "import_all": { "scope_id": "api_s097", "scope_slug": "import_all", "permission": "allow" }
 }
 ```
 
@@ -674,7 +746,7 @@ The `api` feature controls HTTP API access.
 
 ## 4. Plan-Based Feature Matrix
 
-### Trial Plan (14 days)
+### Trial Plan (7 days)
 ```json
 {
   "cli": {
@@ -693,7 +765,7 @@ The `api` feature controls HTTP API access.
 ```
 *Note: Empty scopes = all features unlocked during trial*
 
-### Personal Plan ($15/device/year, min 1 device)
+### Personal Plan ($25/device/year, min 1 device)
 ```json
 {
   "cli": {
@@ -727,7 +799,26 @@ The `api` feature controls HTTP API access.
       "shamir-split": { "permission": "deny" },
       "shamir-combine": { "permission": "deny" },
       "audit": { "permission": "deny" },
-      "audit-log": { "permission": "deny" }
+      "audit-log": { "permission": "deny" },
+      "transfer": { "permission": "deny" },
+      "transfer-devices": { "permission": "deny" },
+      "transfer-devices-list": { "permission": "deny" },
+      "transfer-devices-add": { "permission": "deny" },
+      "transfer-devices-remove": { "permission": "deny" },
+      "transfer-devices-verify": { "permission": "deny" },
+      "transfer-send": { "permission": "deny" },
+      "transfer-upload": { "permission": "deny" },
+      "transfer-download": { "permission": "deny" },
+      "transfer-bundle": { "permission": "deny" },
+      "transfer-bundle-create": { "permission": "deny" },
+      "transfer-bundle-import": { "permission": "deny" },
+      "transfer-bundle-qr": { "permission": "deny" },
+      "transfer-schedule": { "permission": "deny" },
+      "transfer-schedule-list": { "permission": "deny" },
+      "transfer-schedule-add": { "permission": "deny" },
+      "transfer-schedule-pause": { "permission": "deny" },
+      "transfer-schedule-resume": { "permission": "deny" },
+      "transfer-schedule-run": { "permission": "deny" }
     }
   },
   "gui": {
@@ -747,7 +838,23 @@ The `api` feature controls HTTP API access.
       "data_retention": { "permission": "deny" },
       "breach_notification": { "permission": "deny" },
       "access_reviews": { "permission": "deny" },
-      "fips_compliance": { "permission": "deny" }
+      "fips_compliance": { "permission": "deny" },
+      "transfer_dashboard": { "permission": "deny" },
+      "transfer_devices": { "permission": "deny" },
+      "transfer_devices_manage": { "permission": "deny" },
+      "transfer_send": { "permission": "deny" },
+      "transfer_receive": { "permission": "deny" },
+      "transfer_cloud": { "permission": "deny" },
+      "transfer_cloud_upload": { "permission": "deny" },
+      "transfer_cloud_download": { "permission": "deny" },
+      "transfer_airgap": { "permission": "deny" },
+      "transfer_bundle_create": { "permission": "deny" },
+      "transfer_bundle_import": { "permission": "deny" },
+      "transfer_bundle_qr": { "permission": "deny" },
+      "transfer_schedule": { "permission": "deny" },
+      "transfer_schedule_manage": { "permission": "deny" },
+      "transfer_history": { "permission": "deny" },
+      "transfer_audit": { "permission": "deny" }
     }
   },
   "api": {
@@ -756,7 +863,7 @@ The `api` feature controls HTTP API access.
 }
 ```
 
-### Solo Plan ($40/device/year, min 2 devices)
+### Solo Plan ($60/device/year, min 2 devices)
 ```json
 {
   "cli": {
@@ -778,7 +885,26 @@ The `api` feature controls HTTP API access.
       "breach": { "permission": "deny" },
       "access-review": { "permission": "deny" },
       "inject": { "permission": "deny" },
-      "config-inject": { "permission": "deny" }
+      "config-inject": { "permission": "deny" },
+      "transfer": { "permission": "deny" },
+      "transfer-devices": { "permission": "deny" },
+      "transfer-devices-list": { "permission": "deny" },
+      "transfer-devices-add": { "permission": "deny" },
+      "transfer-devices-remove": { "permission": "deny" },
+      "transfer-devices-verify": { "permission": "deny" },
+      "transfer-send": { "permission": "deny" },
+      "transfer-upload": { "permission": "deny" },
+      "transfer-download": { "permission": "deny" },
+      "transfer-bundle": { "permission": "deny" },
+      "transfer-bundle-create": { "permission": "deny" },
+      "transfer-bundle-import": { "permission": "deny" },
+      "transfer-bundle-qr": { "permission": "deny" },
+      "transfer-schedule": { "permission": "deny" },
+      "transfer-schedule-list": { "permission": "deny" },
+      "transfer-schedule-add": { "permission": "deny" },
+      "transfer-schedule-pause": { "permission": "deny" },
+      "transfer-schedule-resume": { "permission": "deny" },
+      "transfer-schedule-run": { "permission": "deny" }
     }
   },
   "gui": {
@@ -792,7 +918,23 @@ The `api` feature controls HTTP API access.
       "data_retention": { "permission": "deny" },
       "breach_notification": { "permission": "deny" },
       "access_reviews": { "permission": "deny" },
-      "fips_compliance": { "permission": "deny" }
+      "fips_compliance": { "permission": "deny" },
+      "transfer_dashboard": { "permission": "deny" },
+      "transfer_devices": { "permission": "deny" },
+      "transfer_devices_manage": { "permission": "deny" },
+      "transfer_send": { "permission": "deny" },
+      "transfer_receive": { "permission": "deny" },
+      "transfer_cloud": { "permission": "deny" },
+      "transfer_cloud_upload": { "permission": "deny" },
+      "transfer_cloud_download": { "permission": "deny" },
+      "transfer_airgap": { "permission": "deny" },
+      "transfer_bundle_create": { "permission": "deny" },
+      "transfer_bundle_import": { "permission": "deny" },
+      "transfer_bundle_qr": { "permission": "deny" },
+      "transfer_schedule": { "permission": "deny" },
+      "transfer_schedule_manage": { "permission": "deny" },
+      "transfer_history": { "permission": "deny" },
+      "transfer_audit": { "permission": "deny" }
     }
   },
   "api": {
@@ -801,7 +943,7 @@ The `api` feature controls HTTP API access.
 }
 ```
 
-### Team Plan ($78/device/year, min 5 devices)
+### Team Plan ($90/device/year, min 5 devices)
 ```json
 {
   "cli": {
@@ -840,7 +982,7 @@ The `api` feature controls HTTP API access.
 }
 ```
 
-### Business Plan ($135/device/year, min 15 devices)
+### Business Plan ($180/device/year, min 15 devices)
 ```json
 {
   "cli": {
@@ -897,7 +1039,7 @@ The `api` feature controls HTTP API access.
 
 ## 5. Complete License Data Example
 
-### Personal Plan Example ($15/device/year, 1 device min)
+### Personal Plan Example ($25/device/year, 1 device min)
 ```json
 {
   "entitlements": {
@@ -975,7 +1117,7 @@ The `api` feature controls HTTP API access.
 }
 ```
 
-### Business Plan Example ($135/device/year, 15 device min)
+### Business Plan Example ($180/device/year, 15 device min)
 ```json
 {
   "entitlements": {
@@ -1172,7 +1314,8 @@ When `scopes` is an empty object `{}`, all operations within that feature are al
 | CLI Vault Compaction | 2 | Team+ |
 | CLI Config Injection | 2 | Business+ |
 | CLI Container Security Audit | 2 | Enterprise |
-| **Total CLI Scopes** | **83** | |
+| CLI Transfer System | 19 | Business+ |
+| **Total CLI Scopes** | **102** | |
 | | | |
 | GUI CRUD Operations | 6 | All plans |
 | GUI Secret Management | 4 | Personal+ |
@@ -1182,9 +1325,10 @@ When `scopes` is an empty object `{}`, all operations within that feature are al
 | GUI P2P Sharing | 3 | Solo+ |
 | GUI Cryptographic Ops | 2 | Solo+ |
 | GUI Management Views | 4 | Solo+ |
+| GUI Transfer System Views | 17 | Business+ |
 | GUI Compliance Views | 6 | Enterprise |
 | GUI Security Views | 2 | Solo+ |
-| **Total GUI Scopes** | **37** | |
+| **Total GUI Scopes** | **54** | |
 | | | |
 | API Setup & Config | 3 | Business+ (requires HTTP API) |
 | API Authentication | 3 | Business+ |
@@ -1202,11 +1346,11 @@ When `scopes` is an empty object `{}`, all operations within that feature are al
 | API User Management | 11 | Business+ |
 | API Tenant Management | 6 | Business+ |
 | API Groups/Namespaces | 2 | Business+ |
+| API Transfer System | 26 | Business+ |
 | API Export/Import | 2 | Personal+ |
-| API Transfer | 14 | Business+ |
-| **Total API Scopes** | **83** | |
+| **Total API Scopes** | **95** | |
 | | | |
-| **Grand Total** | **203** | |
+| **Grand Total** | **251** | |
 
 ---
 

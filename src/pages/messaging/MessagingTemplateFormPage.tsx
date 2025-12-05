@@ -197,7 +197,7 @@ export function MessagingTemplateFormPage() {
             </div>
 
             <form onSubmit={handleSubmit} className="space-y-6">
-                <Card className="border-white/5">
+                <Card className="border-border">
                     <CardHeader>
                         <CardTitle className="flex items-center gap-2">
                             <BookOpenText className="h-5 w-5 text-primary" /> Template meta
@@ -252,7 +252,7 @@ export function MessagingTemplateFormPage() {
                                     }))
                                 }
                             >
-                                <SelectTrigger className="rounded-2xl border border-white/10 bg-transparent">
+                                <SelectTrigger className="rounded-2xl border border-border bg-transparent">
                                     <SelectValue placeholder="Follow routing">
                                         {formState.defaultProviderId
                                             ? providers.find((p) => p.id === formState.defaultProviderId)?.name
@@ -285,7 +285,7 @@ export function MessagingTemplateFormPage() {
                     </CardContent>
                 </Card>
 
-                <Card className="border-white/5">
+                <Card className="border-border">
                     <CardHeader>
                         <CardTitle>Content</CardTitle>
                         <CardDescription>Write HTML + plaintext bodies along with the subject line.</CardDescription>
@@ -323,7 +323,7 @@ export function MessagingTemplateFormPage() {
                     </CardContent>
                 </Card>
 
-                <Card className="border-white/5">
+                <Card className="border-border">
                     <CardHeader>
                         <CardTitle>Metadata (optional)</CardTitle>
                         <CardDescription>Attach structured data for downstream automation.</CardDescription>

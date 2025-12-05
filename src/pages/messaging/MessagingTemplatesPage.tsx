@@ -83,7 +83,7 @@ export function MessagingTemplatesPage() {
             </div>
 
             <div className="grid gap-4 md:grid-cols-3">
-                <Card className="rounded-3xl border-white/5">
+                <Card className="rounded-3xl border-border">
                     <CardHeader>
                         <CardTitle className="flex items-center gap-2 text-base">
                             <Layers className="h-4 w-4 text-primary" /> Catalog
@@ -94,7 +94,7 @@ export function MessagingTemplatesPage() {
                         <p className="text-4xl font-semibold">{templates.length}</p>
                     </CardContent>
                 </Card>
-                <Card className="rounded-3xl border-white/5">
+                <Card className="rounded-3xl border-border">
                     <CardHeader>
                         <CardTitle className="flex items-center gap-2 text-base">
                             <FileText className="h-4 w-4 text-primary" /> Categories
@@ -107,7 +107,7 @@ export function MessagingTemplatesPage() {
                         </p>
                     </CardContent>
                 </Card>
-                <Card className="rounded-3xl border-white/5">
+                <Card className="rounded-3xl border-border">
                     <CardHeader>
                         <CardTitle className="flex items-center gap-2 text-base">
                             <MailPlus className="h-4 w-4 text-primary" /> Defaults
@@ -122,7 +122,7 @@ export function MessagingTemplatesPage() {
                 </Card>
             </div>
 
-            <Card className="border-white/5">
+            <Card className="border-border">
                 <CardHeader>
                     <CardTitle>Templates</CardTitle>
                     <CardDescription>Each template encapsulates HTML + plaintext bodies.</CardDescription>
@@ -135,7 +135,7 @@ export function MessagingTemplatesPage() {
                             ))}
                         </div>
                     ) : templates.length === 0 ? (
-                        <div className="flex flex-col items-center justify-center rounded-3xl border border-dashed border-white/10 py-12 text-center">
+                        <div className="flex flex-col items-center justify-center rounded-3xl border border-dashed border-border py-12 text-center">
                             <FileText className="h-10 w-10 text-muted-foreground" />
                             <h3 className="mt-4 text-xl font-semibold">No templates yet</h3>
                             <p className="mt-2 text-sm text-muted-foreground">
@@ -148,7 +148,7 @@ export function MessagingTemplatesPage() {
                     ) : (
                         <Table>
                             <TableHeader>
-                                <TableRow className="border-white/5 text-xs uppercase tracking-[0.2em] text-muted-foreground">
+                                <TableRow className="border-border text-xs uppercase tracking-[0.2em] text-muted-foreground">
                                     <TableHead>Name</TableHead>
                                     <TableHead>Category</TableHead>
                                     <TableHead>Subject</TableHead>
@@ -158,15 +158,15 @@ export function MessagingTemplatesPage() {
                             </TableHeader>
                             <TableBody>
                                 {templates.map((template) => (
-                                    <TableRow key={template.id} className="border-white/5">
+                                    <TableRow key={template.id} className="border-border">
                                         <TableCell>
                                             <div className="flex flex-col">
-                                                <span className="font-medium text-white">{template.name}</span>
+                                                <span className="font-medium text-foreground">{template.name}</span>
                                                 <span className="text-xs text-muted-foreground">{template.slug}</span>
                                             </div>
                                         </TableCell>
                                         <TableCell>
-                                            <Badge variant="secondary" className="rounded-full border-white/10 bg-white/5">
+                                            <Badge variant="secondary" className="rounded-full">
                                                 {template.category || 'general'}
                                             </Badge>
                                         </TableCell>
@@ -175,7 +175,7 @@ export function MessagingTemplatesPage() {
                                         </TableCell>
                                         <TableCell>
                                             {template.default_provider_id ? (
-                                                <span className="text-sm text-white">
+                                                <span className="text-sm text-foreground">
                                                     {providerLookup.get(template.default_provider_id)?.name || 'Override'}
                                                 </span>
                                             ) : (

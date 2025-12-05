@@ -188,13 +188,13 @@ export function LicenseNewPage() {
                 <Button
                     variant="ghost"
                     size="icon"
-                    className="rounded-2xl border border-white/10 bg-white/5 text-white hover:bg-white/10"
+                    className="rounded-2xl border bg-muted text-foreground hover:bg-muted/80"
                     onClick={() => navigate(-1)}
                 >
                     <ArrowLeft className="h-4 w-4" />
                 </Button>
                 <div className="space-y-3">
-                    <Badge variant="secondary" className="rounded-full border border-white/10 bg-white/5 px-4 py-1 text-xs uppercase tracking-[0.4em] text-muted-foreground">
+                    <Badge variant="secondary" className="rounded-full border bg-muted px-4 py-1 text-xs uppercase tracking-[0.4em] text-muted-foreground">
                         License Minting
                     </Badge>
                     <div>
@@ -207,7 +207,7 @@ export function LicenseNewPage() {
             </div>
 
             <div className="grid gap-6 lg:grid-cols-[2fr_1fr]">
-                <Card className="glass-panel rounded-[32px] border-white/10">
+                <Card className="glass-panel rounded-[32px] border">
                     <CardHeader className="space-y-1">
                         <CardTitle className="flex items-center gap-2 text-2xl">
                             <Key className="h-6 w-6 text-primary" />
@@ -226,10 +226,10 @@ export function LicenseNewPage() {
                                             setFormData((prev) => ({ ...prev, client_id: value }))
                                         }
                                     >
-                                        <SelectTrigger id="client" className="h-12 rounded-2xl border-white/10 bg-white/5">
+                                        <SelectTrigger id="client" className="h-12 rounded-2xl border bg-muted">
                                             <SelectValue placeholder="Select a client" />
                                         </SelectTrigger>
-                                        <SelectContent className="rounded-2xl border-white/10 bg-card/90 backdrop-blur">
+                                        <SelectContent className="rounded-2xl border bg-popover/90 backdrop-blur">
                                             {clients.map((client) => (
                                                 <SelectItem key={client.id} value={client.id}>
                                                     {client.email}
@@ -248,10 +248,10 @@ export function LicenseNewPage() {
                                 <div className="space-y-3">
                                     <Label htmlFor="product" className="text-xs uppercase tracking-[0.3em] text-muted-foreground">Product *</Label>
                                     <Select value={selectedProductId} onValueChange={handleProductChange}>
-                                        <SelectTrigger id="product" className="h-12 rounded-2xl border-white/10 bg-white/5">
+                                        <SelectTrigger id="product" className="h-12 rounded-2xl border bg-muted">
                                             <SelectValue placeholder="Select a product" />
                                         </SelectTrigger>
-                                        <SelectContent className="rounded-2xl border-white/10 bg-card/90 backdrop-blur">
+                                        <SelectContent className="rounded-2xl border bg-popover/90 backdrop-blur">
                                             {products.map((product) => (
                                                 <SelectItem key={product.id} value={product.id}>
                                                     {product.name}
@@ -273,7 +273,7 @@ export function LicenseNewPage() {
                                             Unable to load plans for this product. Please retry.
                                         </div>
                                     ) : plans.length === 0 ? (
-                                        <div className="rounded-2xl border border-dashed border-white/20 p-4 text-sm text-muted-foreground">
+                                        <div className="rounded-2xl border border-dashed p-4 text-sm text-muted-foreground">
                                             No plans configured for this product yet.{' '}
                                             <Link to={`/products/${selectedProductId}`} className="text-primary hover:underline">
                                                 Configure plans
@@ -282,10 +282,10 @@ export function LicenseNewPage() {
                                     ) : (
                                         <>
                                             <Select value={formData.plan_id} onValueChange={handlePlanChange}>
-                                                <SelectTrigger id="plan" className="h-12 rounded-2xl border-white/10 bg-white/5">
+                                                <SelectTrigger id="plan" className="h-12 rounded-2xl border bg-muted">
                                                     <SelectValue placeholder="Select a plan" />
                                                 </SelectTrigger>
-                                                <SelectContent className="rounded-2xl border-white/10 bg-card/90 backdrop-blur">
+                                                <SelectContent className="rounded-2xl border bg-popover/90 backdrop-blur">
                                                     {plans.map((plan) => (
                                                         <SelectItem key={plan.id} value={plan.id}>
                                                             <div className="flex flex-col gap-0.5">
@@ -303,7 +303,7 @@ export function LicenseNewPage() {
                                                 </SelectContent>
                                             </Select>
                                             {selectedPlan && (
-                                                <div className="mt-3 rounded-2xl border border-white/10 bg-white/5 p-4 space-y-2">
+                                                <div className="mt-3 rounded-2xl border bg-muted p-4 space-y-2">
                                                     <div className="flex items-center justify-between text-sm">
                                                         <span className="text-muted-foreground">Plan</span>
                                                         <span className="font-medium">{selectedPlan.name}</span>
@@ -341,7 +341,7 @@ export function LicenseNewPage() {
                                                 max_devices: parseInt(e.target.value, 10) || 1,
                                             }))
                                         }
-                                        className={`h-12 rounded-2xl border-white/10 bg-white/5 ${priceInfo?.isUnderMinimum ? 'border-destructive' : ''}`}
+                                        className={`h-12 rounded-2xl border bg-muted ${priceInfo?.isUnderMinimum ? 'border-destructive' : ''}`}
                                     />
                                     {selectedPlan && (
                                         <p className={`text-xs ${priceInfo?.isUnderMinimum ? 'text-destructive font-medium' : 'text-muted-foreground'}`}>
@@ -365,7 +365,7 @@ export function LicenseNewPage() {
                                                 duration_days: parseInt(e.target.value, 10) || 365,
                                             }))
                                         }
-                                        className="h-12 rounded-2xl border-white/10 bg-white/5"
+                                        className="h-12 rounded-2xl border bg-muted"
                                     />
                                     <p className="text-xs text-muted-foreground">Determines when the entitlement automatically lapses.</p>
                                 </div>
@@ -381,7 +381,7 @@ export function LicenseNewPage() {
                                 </Alert>
                             )}
 
-                            <Separator className="border-white/10" />
+                            <Separator className="border" />
 
                             <div className="flex flex-wrap gap-3">
                                 <Button
@@ -401,7 +401,7 @@ export function LicenseNewPage() {
                                 <Button
                                     type="button"
                                     variant="outline"
-                                    className="rounded-2xl border-white/20 text-white hover:bg-white/10"
+                                    className="rounded-2xl border text-foreground hover:bg-muted"
                                     onClick={() => navigate(-1)}
                                 >
                                     Cancel
@@ -412,7 +412,7 @@ export function LicenseNewPage() {
                 </Card>
 
                 <div className="space-y-6">
-                    <Card className="glass-panel rounded-[32px] border-white/10">
+                    <Card className="glass-panel rounded-[32px] border">
                         <CardHeader>
                             <CardTitle className="flex items-center gap-2 text-lg">
                                 <Users className="h-5 w-5 text-secondary" />
@@ -424,7 +424,7 @@ export function LicenseNewPage() {
                             {selectedClient ? (
                                 <>
                                     <p className="text-muted-foreground">{selectedClient.email}</p>
-                                    <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
+                                    <div className="rounded-2xl border bg-muted p-4">
                                         <p className="text-xs uppercase tracking-[0.3em] text-muted-foreground">Client ID</p>
                                         <p className="font-mono text-sm text-primary">{selectedClient.id}</p>
                                     </div>
@@ -433,7 +433,7 @@ export function LicenseNewPage() {
                                     </p>
                                 </>
                             ) : (
-                                <div className="rounded-2xl border border-dashed border-white/20 p-4 text-muted-foreground">
+                                <div className="rounded-2xl border border-dashed p-4 text-muted-foreground">
                                     Select a client to preview their identity.
                                 </div>
                             )}
@@ -441,7 +441,7 @@ export function LicenseNewPage() {
                     </Card>
 
                     {priceInfo && priceInfo.totalPrice > 0 && !priceInfo.isUnderMinimum && (
-                        <Card className="glass-panel rounded-[32px] border-white/10 border-primary/30 bg-primary/5">
+                        <Card className="glass-panel rounded-[32px] border border-primary/30 bg-primary/5">
                             <CardHeader>
                                 <CardTitle className="flex items-center gap-2 text-lg">
                                     <DollarSign className="h-5 w-5 text-primary" />
@@ -459,7 +459,7 @@ export function LicenseNewPage() {
                                         </span>
                                     </span>
                                 </div>
-                                <Separator className="border-white/10" />
+                                <Separator className="border" />
                                 <div className="space-y-2 text-sm">
                                     <div className="flex justify-between">
                                         <span className="text-muted-foreground">Price per device</span>
@@ -480,32 +480,32 @@ export function LicenseNewPage() {
                         </Card>
                     )}
 
-                    <Card className="glass-panel rounded-[32px] border-white/10">
+                    <Card className="glass-panel rounded-[32px] border">
                         <CardHeader>
                             <CardTitle className="flex items-center gap-2 text-lg">
-                                <ShieldCheck className="h-5 w-5 text-emerald-300" />
+                                <ShieldCheck className="h-5 w-5 text-primary" />
                                 Integrity Checks
                             </CardTitle>
                             <CardDescription>Pre-flight validation summary</CardDescription>
                         </CardHeader>
                         <CardContent className="space-y-3 text-sm">
-                            <div className="flex items-center justify-between rounded-2xl border border-white/10 bg-white/5 px-4 py-2">
+                            <div className="flex items-center justify-between rounded-2xl border bg-muted px-4 py-2">
                                 <span className="text-muted-foreground">Client linked</span>
-                                <Badge variant={formData.client_id ? 'secondary' : 'outline'} className={formData.client_id ? 'bg-emerald-400/20 text-emerald-200' : ''}>
+                                <Badge variant={formData.client_id ? 'secondary' : 'outline'} className={formData.client_id ? 'bg-primary/20 text-primary' : ''}>
                                     {formData.client_id ? 'Ready' : 'Missing'}
                                 </Badge>
                             </div>
-                            <div className="flex items-center justify-between rounded-2xl border border-white/10 bg-white/5 px-4 py-2">
+                            <div className="flex items-center justify-between rounded-2xl border bg-muted px-4 py-2">
                                 <span className="text-muted-foreground">Product + Plan</span>
-                                <Badge variant={formData.plan_id ? 'secondary' : 'outline'} className={formData.plan_id ? 'bg-emerald-400/20 text-emerald-200' : ''}>
+                                <Badge variant={formData.plan_id ? 'secondary' : 'outline'} className={formData.plan_id ? 'bg-primary/20 text-primary' : ''}>
                                     {formData.plan_id ? 'Aligned' : 'Pending'}
                                 </Badge>
                             </div>
-                            <div className="flex items-center justify-between rounded-2xl border border-white/10 bg-white/5 px-4 py-2">
+                            <div className="flex items-center justify-between rounded-2xl border bg-muted px-4 py-2">
                                 <span className="text-muted-foreground">Device count</span>
                                 <Badge
                                     variant={priceInfo?.isUnderMinimum ? 'destructive' : 'secondary'}
-                                    className={!priceInfo?.isUnderMinimum ? 'bg-emerald-400/20 text-emerald-200' : ''}
+                                    className={!priceInfo?.isUnderMinimum ? 'bg-primary/20 text-primary' : ''}
                                 >
                                     {formData.max_devices} {priceInfo?.isUnderMinimum && `(min ${priceInfo.minDevices})`}
                                 </Badge>

@@ -13,6 +13,7 @@ A hardened license server and client that leverage pluggable signing providers (
 - **Pluggable storage:** choose in-memory, SQLite, or JSON-on-disk storage via environment variables; disk snapshots are written atomically with `0600` permissions.
 - **Secure client storage:** the CLI enforces `chmod 600` on `~/.licensing/.license.dat`, verifies server signatures, and refuses to run if the payload or fingerprint diverge.
 - **Plan-aware entitlements:** every license carries a `plan_slug` so your application can unlock features based on the purchased plan without additional lookups.
+- **CORS support:** built-in CORS middleware for frontend integration with configurable allowed origins.
 
 ## Requirements
 
@@ -59,6 +60,10 @@ A hardened license server and client that leverage pluggable signing providers (
    export LICENSE_SERVER_KEY_PASSPHRASE="change-me"
    # When using "tpm" target a specific device path (defaults to /dev/tpmrm0)
    export LICENSE_SERVER_TPM_DEVICE="/dev/tpmrm0"
+
+   # CORS configuration (optional)
+   # Comma-separated list of allowed origins for frontend applications
+   export LICENSE_SERVER_ALLOWED_ORIGINS="http://localhost:5173,http://localhost:3000,https://your-production-domain.com"
    ```
 
    > Upgrading from an older release? Follow the SQLite migration guide in `docs/sqlite_migration.md` after deploying the new binaries.

@@ -4,6 +4,11 @@ import { Plus, Key, Trash2, Copy, AlertTriangle } from 'lucide-react';
 import api from '@/services/api';
 import { Button } from '@/components/ui/button';
 import {
+    Tooltip,
+    TooltipContent,
+    TooltipTrigger,
+} from '@/components/ui/tooltip';
+import {
     Card,
     CardContent,
     CardDescription,
@@ -186,9 +191,16 @@ export function AdminAPIKeysPage() {
                                         <TableCell>
                                             <AlertDialog>
                                                 <AlertDialogTrigger asChild>
-                                                    <Button variant="ghost" size="icon">
-                                                        <Trash2 className="h-4 w-4" />
-                                                    </Button>
+                                                    <Tooltip>
+                                                        <TooltipTrigger asChild>
+                                                            <Button variant="ghost" size="icon">
+                                                                <Trash2 className="h-4 w-4" />
+                                                            </Button>
+                                                        </TooltipTrigger>
+                                                        <TooltipContent>
+                                                            <p>Delete API key</p>
+                                                        </TooltipContent>
+                                                    </Tooltip>
                                                 </AlertDialogTrigger>
                                                 <AlertDialogContent>
                                                     <AlertDialogHeader>
@@ -240,7 +252,14 @@ export function AdminAPIKeysPage() {
                             size="icon"
                             onClick={() => copyToClipboard(newKeyValue)}
                         >
-                            <Copy className="h-4 w-4" />
+                            <Tooltip>
+                                <TooltipTrigger asChild>
+                                    <Copy className="h-4 w-4" />
+                                </TooltipTrigger>
+                                <TooltipContent>
+                                    <p>Copy to clipboard</p>
+                                </TooltipContent>
+                            </Tooltip>
                         </Button>
                     </div>
                     <DialogFooter>

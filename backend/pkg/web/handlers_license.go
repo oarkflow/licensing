@@ -39,11 +39,25 @@ func (ws *WebServer) handleAPILicenses(w http.ResponseWriter, r *http.Request) {
 			CheckIntervalSecond int64  `json:"check_interval_seconds"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			ws.respondAPIError(w, http.StatusBadRequest, "Invalid request body")
+			ws.respondAPIError(w, http.StatusBadRequest, "Invalid request body", map[string]interface{}{
+				"expected": "JSON object with client_id and plan_slug fields",
+				"example": map[string]string{
+					"client_id": "client-123",
+					"plan_slug": "enterprise",
+				},
+				"error_type": "json_decode_failed",
+			})
 			return
 		}
 		if strings.TrimSpace(req.ClientID) == "" || strings.TrimSpace(req.PlanSlug) == "" {
-			ws.respondAPIError(w, http.StatusBadRequest, "client_id and plan_slug are required")
+			ws.respondAPIError(w, http.StatusBadRequest, "Required fields are missing", map[string]interface{}{
+				"missing_fields": []string{
+					"client_id",
+					"plan_slug",
+				},
+				"validation_type": "required_field",
+				"documentation":   "https://docs.licensecloud.com/api/licenses#create",
+			})
 			return
 		}
 		if req.DurationDays <= 0 {
@@ -72,7 +86,12 @@ func (ws *WebServer) handleAPILicenses(w http.ResponseWriter, r *http.Request) {
 			opts,
 		)
 		if err != nil {
-			ws.respondAPIError(w, http.StatusBadRequest, err.Error())
+			ws.respondAPIError(w, http.StatusBadRequest, "Failed to create license", map[string]interface{}{
+				"internal_error":   err.Error(),
+				"error_type":       "license_creation_failed",
+				"suggested_action": "Check that the client exists and the plan is valid",
+				"support_code":     "LICENSE_CREATE_ERR_001",
+			})
 			return
 		}
 		ws.respondJSON(w, http.StatusCreated, license)
@@ -161,7 +180,15 @@ func (ws *WebServer) handleAPILicenseDeactivateDevice(w http.ResponseWriter, r *
 		Fingerprint string `json:"fingerprint"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		ws.respondAPIError(w, http.StatusBadRequest, "Invalid request body")
+		ws.respondAPIError(w, http.StatusBadRequest, "Invalid request body", map[string]interface{}{
+			"expected": "JSON object with device fingerprint",
+			"example": map[string]interface{}{
+				"fingerprint": "device-fingerprint-string",
+			},
+			"error_type":       "json_decode_failed",
+			"parse_error":      err.Error(),
+			"suggested_action": "Ensure the request body contains valid JSON with a 'fingerprint' field",
+		})
 		return
 	}
 	if strings.TrimSpace(req.Fingerprint) == "" {
@@ -242,7 +269,15 @@ func (ws *WebServer) handleAPIClients(w http.ResponseWriter, r *http.Request) {
 			Email string `json:"email"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			ws.respondAPIError(w, http.StatusBadRequest, "Invalid request body")
+			ws.respondAPIError(w, http.StatusBadRequest, "Invalid request body", map[string]interface{}{
+				"expected": "JSON object with client email",
+				"example": map[string]interface{}{
+					"email": "client@example.com",
+				},
+				"error_type":       "json_decode_failed",
+				"parse_error":      err.Error(),
+				"suggested_action": "Ensure the request body contains valid JSON with an 'email' field",
+			})
 			return
 		}
 		if strings.TrimSpace(req.Email) == "" {

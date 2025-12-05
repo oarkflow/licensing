@@ -5,6 +5,11 @@ import { useNavigate } from 'react-router-dom';
 import api from '@/services/api';
 import { Button } from '@/components/ui/button';
 import {
+    Tooltip,
+    TooltipContent,
+    TooltipTrigger,
+} from '@/components/ui/tooltip';
+import {
     Card,
     CardContent,
     CardDescription,
@@ -218,9 +223,16 @@ export function MessagingComposePage() {
     return (
         <div className="space-y-6">
             <div className="flex items-center gap-3">
-                <Button variant="ghost" size="icon" onClick={() => navigate(-1)} className="rounded-full">
-                    <ArrowLeft className="h-4 w-4" />
-                </Button>
+                <Tooltip>
+                    <TooltipTrigger asChild>
+                        <Button variant="ghost" size="icon" onClick={() => navigate(-1)} className="rounded-full">
+                            <ArrowLeft className="h-4 w-4" />
+                        </Button>
+                    </TooltipTrigger>
+                    <TooltipContent>
+                        <p>Go back</p>
+                    </TooltipContent>
+                </Tooltip>
                 <div>
                     <p className="text-xs uppercase tracking-[0.4em] text-muted-foreground">Messaging</p>
                     <h1 className="text-3xl font-semibold tracking-tight">Broadcast Center</h1>
@@ -232,7 +244,7 @@ export function MessagingComposePage() {
 
             <div className="grid gap-6 lg:grid-cols-[2fr_1fr]">
                 <div className="space-y-6">
-                    <Card className="border-white/5">
+                    <Card className="border-border">
                         <CardHeader>
                             <CardTitle className="flex items-center gap-2">
                                 <MailPlus className="h-5 w-5 text-primary" /> Template & recipients
@@ -243,7 +255,7 @@ export function MessagingComposePage() {
                             <div className="space-y-2">
                                 <Label>Template</Label>
                                 <Select value={selectedTemplateId} onValueChange={setSelectedTemplateId}>
-                                    <SelectTrigger className="rounded-2xl border border-white/10 bg-transparent">
+                                    <SelectTrigger className="rounded-2xl border border-border bg-transparent">
                                         <SelectValue placeholder="Pick a template" />
                                     </SelectTrigger>
                                     <SelectContent>
@@ -269,7 +281,7 @@ export function MessagingComposePage() {
                                             {selectedClientIds.length} selected
                                         </Badge>
                                     </div>
-                                    <div className="rounded-2xl border border-white/5">
+                                    <div className="rounded-2xl border border-border">
                                         <ScrollArea className="h-72 p-4">
                                             {isLoadingClients ? (
                                                 <p className="text-sm text-muted-foreground">Loading clients…</p>
@@ -288,7 +300,7 @@ export function MessagingComposePage() {
                                                             }
                                                         />
                                                         <Label htmlFor={`client-${client.id}`} className="flex flex-col gap-0 text-sm">
-                                                            <span className="font-medium text-white">{client.email}</span>
+                                                            <span className="font-medium text-foreground">{client.email}</span>
                                                             <span className="text-xs text-muted-foreground">{client.id.substring(0, 8)}…</span>
                                                         </Label>
                                                     </div>
@@ -312,7 +324,7 @@ export function MessagingComposePage() {
                         </CardContent>
                     </Card>
 
-                    <Card className="border-white/5">
+                    <Card className="border-border">
                         <CardHeader>
                             <CardTitle>Template variables</CardTitle>
                             <CardDescription>JSON payload merged into the template context.</CardDescription>
@@ -331,7 +343,7 @@ export function MessagingComposePage() {
                         </CardContent>
                     </Card>
 
-                    <Card className="border-white/5">
+                    <Card className="border-border">
                         <CardHeader>
                             <CardTitle className="flex items-center gap-2">
                                 <Paperclip className="h-5 w-5 text-primary" /> Attachments
@@ -368,7 +380,7 @@ export function MessagingComposePage() {
                                     {attachments.map((att, index) => (
                                         <div
                                             key={index}
-                                            className="flex items-center justify-between rounded-xl border border-white/10 bg-black/20 px-4 py-2"
+                                            className="flex items-center justify-between rounded-xl border border-border bg-muted px-4 py-2"
                                         >
                                             <div className="flex items-center gap-3">
                                                 <Paperclip className="h-4 w-4 text-muted-foreground" />
@@ -447,7 +459,7 @@ export function MessagingComposePage() {
                 </div>
 
                 <div className="space-y-6">
-                    <Card className="border-white/5">
+                    <Card className="border-border">
                         <CardHeader>
                             <CardTitle className="flex items-center gap-2">
                                 <MailCheck className="h-5 w-5 text-primary" /> Preview
@@ -468,20 +480,20 @@ export function MessagingComposePage() {
                                     {preview.html && (
                                         <div>
                                             <Label>HTML</Label>
-                                            <div className="rounded-2xl border border-white/5 bg-black/20 p-4" dangerouslySetInnerHTML={{ __html: preview.html }} />
+                                            <div className="rounded-2xl border border-border bg-muted p-4" dangerouslySetInnerHTML={{ __html: preview.html }} />
                                         </div>
                                     )}
                                     {preview.text && (
                                         <div>
                                             <Label>Text</Label>
-                                            <pre className="rounded-2xl border border-white/5 bg-black/30 p-4 text-sm text-muted-foreground overflow-auto">
+                                            <pre className="rounded-2xl border border-border bg-muted p-4 text-sm text-muted-foreground overflow-auto">
                                                 {preview.text}
                                             </pre>
                                         </div>
                                     )}
                                 </div>
                             ) : (
-                                <div className="rounded-3xl border border-dashed border-white/10 p-8 text-center text-sm text-muted-foreground">
+                                <div className="rounded-3xl border border-dashed border-border p-8 text-center text-sm text-muted-foreground">
                                     <MailCheck className="mx-auto mb-4 h-10 w-10 text-muted-foreground" />
                                     Preview renders appear here after you select a template, recipients, and click Preview.
                                 </div>
@@ -489,7 +501,7 @@ export function MessagingComposePage() {
                         </CardContent>
                     </Card>
 
-                    <Card className="border-white/5">
+                    <Card className="border-border">
                         <CardHeader>
                             <CardTitle>Delivery health</CardTitle>
                             <CardDescription>Quick stats before sending.</CardDescription>
@@ -497,15 +509,15 @@ export function MessagingComposePage() {
                         <CardContent className="space-y-2 text-sm text-muted-foreground">
                             <div className="flex items-center justify-between">
                                 <span>Templates available</span>
-                                <span className="text-white">{templates.length}</span>
+                                <span className="text-foreground">{templates.length}</span>
                             </div>
                             <div className="flex items-center justify-between">
                                 <span>Clients selected</span>
-                                <span className="text-white">{selectedClientIds.length}</span>
+                                <span className="text-foreground">{selectedClientIds.length}</span>
                             </div>
                             <div className="flex items-center justify-between">
                                 <span>Manual recipients</span>
-                                <span className="text-white">{
+                                <span className="text-foreground">{
                                     additionalEmails
                                         .split(/\r?\n|,/)
                                         .map((value) => value.trim())
@@ -514,7 +526,7 @@ export function MessagingComposePage() {
                             </div>
                             <div className="flex items-center justify-between">
                                 <span>Attachments</span>
-                                <span className="text-white">{attachments.length}</span>
+                                <span className="text-foreground">{attachments.length}</span>
                             </div>
                         </CardContent>
                     </Card>

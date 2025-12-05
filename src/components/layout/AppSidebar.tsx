@@ -127,46 +127,43 @@ export function AppSidebar() {
 
     return (
         <Sidebar className="bg-sidebar">
-            <SidebarContent className="gap-6 p-4">
-                <div className="glass-panel gradient-border rounded-3xl p-4 text-sm text-sidebar-foreground">
-                    <Link to="/" className="flex items-center gap-3">
-                        <div className="rounded-2xl bg-primary/20 p-2 text-primary">
-                            <Key className="h-5 w-5" />
+            <SidebarContent className="gap-0 p-3">
+                <div className="rounded-2xl border bg-gradient-to-br from-primary/5 to-transparent p-3 mb-2">
+                    <Link to="/" className="flex items-center gap-2">
+                        <div className="rounded-lg bg-primary/20 p-1.5 text-primary">
+                            <Key className="h-4 w-4" />
                         </div>
-                        <div>
-                            <p className="text-[0.65rem] uppercase tracking-[0.3em] text-sidebar-foreground/60">License Cloud</p>
-                            <p className="text-lg font-semibold">Command Center</p>
+                        <div className="min-w-0 flex-1">
+                            <p className="text-[0.6rem] font-medium uppercase tracking-wider text-sidebar-foreground/70">License Cloud</p>
+                            <p className="text-sm font-semibold text-sidebar-foreground truncate">Command Center</p>
                         </div>
                     </Link>
-                    <p className="mt-3 text-[0.85rem] text-sidebar-foreground/70">
-                        Issue, revoke and monitor every entitlement in one secure cockpit.
-                    </p>
-                    <div className="mt-4 flex flex-wrap gap-2">
-                        <Badge variant="secondary" className="bg-white/10 text-xs uppercase tracking-wide text-white">
-                            Live sync
+                    <div className="mt-2 flex items-center gap-1.5">
+                        <Badge variant="secondary" className="bg-sidebar-accent/50 text-[0.6rem] px-1.5 py-0.5">
+                            Live
                         </Badge>
-                        <Badge variant="outline" className="border-white/20 text-xs text-white">
-                            SOC2 ready
+                        <Badge variant="outline" className="border-sidebar-border/50 text-[0.6rem] px-1.5 py-0.5">
+                            SOC2
                         </Badge>
                     </div>
                 </div>
 
                 <SidebarGroup>
-                    <SidebarGroupLabel className="text-[0.7rem] uppercase tracking-[0.4em] text-sidebar-foreground/60">
+                    <SidebarGroupLabel className="text-[0.65rem] uppercase tracking-wider text-sidebar-foreground/60 px-2 py-1">
                         Monitor
                     </SidebarGroupLabel>
-                    <SidebarGroupContent>
-                        <SidebarMenu>
+                    <SidebarGroupContent className="mt-1">
+                        <SidebarMenu className='gap-0.5'>
                             {mainNavItems.map((item) => (
                                 <SidebarMenuItem key={item.title}>
                                     <SidebarMenuButton
                                         asChild
                                         isActive={isActive(item.url)}
-                                        className="rounded-2xl border border-white/5 bg-white/5 text-sm font-medium text-sidebar-foreground/90 transition hover:border-white/20 hover:bg-white/10"
+                                        className="rounded-xl text-sm h-8 px-3"
                                     >
                                         <Link to={item.url}>
-                                            <item.icon className="h-4 w-4 text-primary" />
-                                            <span>{item.title}</span>
+                                            <item.icon className="h-4 w-4" />
+                                            <span className="text-sm">{item.title}</span>
                                         </Link>
                                     </SidebarMenuButton>
                                 </SidebarMenuItem>
@@ -178,17 +175,17 @@ export function AppSidebar() {
                 <SidebarGroup>
                     <Collapsible defaultOpen className="group/collapsible">
                         <SidebarGroupLabel asChild>
-                            <CollapsibleTrigger className="flex w-full items-center justify-between rounded-2xl border border-white/5 bg-white/5 px-3 py-2 text-sm text-sidebar-foreground/80">
+                            <CollapsibleTrigger className="flex w-full items-center justify-between rounded-lg px-2 py-1.5 text-[0.65rem] hover:bg-sidebar-accent/50 transition-colors">
                                 <div className="flex items-center gap-2">
-                                    <Mail className="h-4 w-4 text-primary" />
+                                    <Mail className="h-3.5 w-3.5" />
                                     <span>Messaging</span>
                                 </div>
-                                <ChevronDown className="h-4 w-4 transition-transform group-data-[state=open]/collapsible:rotate-180" />
+                                <ChevronDown className="h-3 w-3 transition-transform group-data-[state=open]/collapsible:rotate-180" />
                             </CollapsibleTrigger>
                         </SidebarGroupLabel>
                         <CollapsibleContent>
-                            <SidebarGroupContent className="mt-2">
-                                <SidebarMenu>
+                            <SidebarGroupContent>
+                                <SidebarMenu className="space-y-0.5">
                                     <SidebarMenuItem>
                                         <SidebarMenuSub>
                                             {messagingNavItems.map((item) => (
@@ -196,10 +193,10 @@ export function AppSidebar() {
                                                     <SidebarMenuSubButton
                                                         asChild
                                                         isActive={isActive(item.url)}
-                                                        className="rounded-xl border border-white/5 bg-transparent text-sidebar-foreground/80 hover:border-white/20"
+                                                        className="rounded-lg h-7 px-2 text-xs"
                                                     >
                                                         <Link to={item.url} className="flex items-center gap-2">
-                                                            <item.icon className="h-3.5 w-3.5 text-primary" />
+                                                            <item.icon className="h-3 w-3" />
                                                             <span>{item.title}</span>
                                                         </Link>
                                                     </SidebarMenuSubButton>
@@ -216,17 +213,17 @@ export function AppSidebar() {
                 <SidebarGroup>
                     <Collapsible defaultOpen className="group/collapsible">
                         <SidebarGroupLabel asChild>
-                            <CollapsibleTrigger className="flex w-full items-center justify-between rounded-2xl border border-white/5 bg-white/5 px-3 py-2 text-sm text-sidebar-foreground/80">
+                            <CollapsibleTrigger className="flex w-full items-center justify-between rounded-lg px-2 py-1.5 text-[0.65rem] hover:bg-sidebar-accent/50 transition-colors">
                                 <div className="flex items-center gap-2">
-                                    <Shield className="h-4 w-4 text-secondary" />
+                                    <Shield className="h-3.5 w-3.5" />
                                     <span>Admin</span>
                                 </div>
-                                <ChevronDown className="h-4 w-4 transition-transform group-data-[state=open]/collapsible:rotate-180" />
+                                <ChevronDown className="h-3 w-3 transition-transform group-data-[state=open]/collapsible:rotate-180" />
                             </CollapsibleTrigger>
                         </SidebarGroupLabel>
                         <CollapsibleContent>
-                            <SidebarGroupContent className="mt-2">
-                                <SidebarMenu>
+                            <SidebarGroupContent>
+                                <SidebarMenu className="space-y-0.5">
                                     <SidebarMenuItem>
                                         <SidebarMenuSub>
                                             {adminNavItems.map((item) => (
@@ -234,7 +231,7 @@ export function AppSidebar() {
                                                     <SidebarMenuSubButton
                                                         asChild
                                                         isActive={isActive(item.url)}
-                                                        className="rounded-xl border border-white/5 bg-transparent text-sidebar-foreground/80 hover:border-white/20"
+                                                        className="rounded-lg h-7 px-2 text-xs"
                                                     >
                                                         <Link to={item.url}>{item.title}</Link>
                                                     </SidebarMenuSubButton>
@@ -251,17 +248,17 @@ export function AppSidebar() {
                 <SidebarGroup>
                     <Collapsible defaultOpen className="group/collapsible">
                         <SidebarGroupLabel asChild>
-                            <CollapsibleTrigger className="flex w-full items-center justify-between rounded-2xl border border-white/5 bg-white/5 px-3 py-2 text-sm text-sidebar-foreground/80">
+                            <CollapsibleTrigger className="flex w-full items-center justify-between rounded-lg px-2 py-1.5 text-[0.65rem] hover:bg-sidebar-accent/50 transition-colors">
                                 <div className="flex items-center gap-2">
-                                    <Settings className="h-4 w-4 text-secondary" />
+                                    <Settings className="h-3.5 w-3.5" />
                                     <span>Settings</span>
                                 </div>
-                                <ChevronDown className="h-4 w-4 transition-transform group-data-[state=open]/collapsible:rotate-180" />
+                                <ChevronDown className="h-3 w-3 transition-transform group-data-[state=open]/collapsible:rotate-180" />
                             </CollapsibleTrigger>
                         </SidebarGroupLabel>
                         <CollapsibleContent>
-                            <SidebarGroupContent className="mt-2">
-                                <SidebarMenu>
+                            <SidebarGroupContent>
+                                <SidebarMenu className="space-y-0.5">
                                     <SidebarMenuItem>
                                         <SidebarMenuSub>
                                             {settingsNavItems.map((item) => (
@@ -269,7 +266,7 @@ export function AppSidebar() {
                                                     <SidebarMenuSubButton
                                                         asChild
                                                         isActive={isActive(item.url)}
-                                                        className="rounded-xl border border-white/5 bg-transparent text-sidebar-foreground/80 hover:border-white/20"
+                                                        className="rounded-lg h-7 px-2 text-xs"
                                                     >
                                                         <Link to={item.url}>{item.title}</Link>
                                                     </SidebarMenuSubButton>
@@ -283,39 +280,44 @@ export function AppSidebar() {
                     </Collapsible>
                 </SidebarGroup>
 
-                <div className="mt-auto space-y-4 rounded-3xl border border-white/5 bg-gradient-to-b from-white/5 to-transparent p-4 text-xs text-sidebar-foreground/70">
-                    <div className="flex items-center gap-3 rounded-2xl border border-white/5 bg-white/5 p-3">
-                        <Sparkles className="h-4 w-4 text-primary" />
-                        <div className="flex-1">
-                            <p className="text-[0.65rem] uppercase tracking-[0.4em] text-sidebar-foreground/50">
-                                License health
-                            </p>
-                            <p className="text-sm font-semibold text-white">98% trusted footprint</p>
+                <div className="mt-auto space-y-3">
+                    <div className="rounded-xl border bg-gradient-to-r from-primary/5 to-transparent p-3">
+                        <div className="flex items-center justify-between mb-2">
+                            <div className="flex items-center gap-1.5">
+                                <Sparkles className="h-3.5 w-3.5 text-primary" />
+                                <span className="text-[0.6rem] font-medium uppercase tracking-wider text-sidebar-foreground/70">System Health</span>
+                            </div>
+                            <ShieldCheck className="h-3.5 w-3.5 text-primary" />
                         </div>
-                        <ShieldCheck className="h-4 w-4 text-emerald-400" />
-                    </div>
-                    <div className="space-y-2 text-sm">
-                        <div className="flex items-center justify-between text-emerald-300">
-                            <span className="status-dot">Active</span>
-                            <span className="font-semibold">{stats.total_licenses > 0 ? Math.round((stats.active_licenses / stats.total_licenses) * 100) : 0}%</span>
-                        </div>
-                        <div className="flex items-center justify-between text-amber-200">
-                            <span className="status-dot">Expiring</span>
-                            <span className="font-semibold">{stats.total_licenses > 0 ? Math.round((stats.expired_licenses / stats.total_licenses) * 100) : 0}%</span>
-                        </div>
-                        <div className="flex items-center justify-between text-rose-300">
-                            <span className="status-dot">Revoked</span>
-                            <span className="font-semibold">{stats.total_licenses > 0 ? Math.round((stats.revoked_licenses / stats.total_licenses) * 100) : 0}%</span>
+                        <div className="grid grid-cols-3 gap-2 text-center">
+                            <div className="rounded-lg bg-primary/10 p-1.5">
+                                <div className="text-[0.6rem] text-primary font-medium">Active</div>
+                                <div className="text-xs font-bold text-primary">
+                                    {stats.total_licenses > 0 ? Math.round((stats.active_licenses / stats.total_licenses) * 100) : 0}%
+                                </div>
+                            </div>
+                            <div className="rounded-lg bg-secondary/10 p-1.5">
+                                <div className="text-[0.6rem] text-secondary font-medium">Expiring</div>
+                                <div className="text-xs font-bold text-secondary">
+                                    {stats.total_licenses > 0 ? Math.round((stats.expired_licenses / stats.total_licenses) * 100) : 0}%
+                                </div>
+                            </div>
+                            <div className="rounded-lg bg-destructive/10 p-1.5">
+                                <div className="text-[0.6rem] text-destructive font-medium">Revoked</div>
+                                <div className="text-xs font-bold text-destructive">
+                                    {stats.total_licenses > 0 ? Math.round((stats.revoked_licenses / stats.total_licenses) * 100) : 0}%
+                                </div>
+                            </div>
                         </div>
                     </div>
                     <Button
                         asChild
                         size="sm"
-                        className="w-full rounded-xl bg-primary text-primary-foreground shadow-lg shadow-primary/30"
+                        className="w-full rounded-lg bg-primary text-primary-foreground shadow-md h-8 text-xs"
                     >
-                        <Link to="/licenses/new" className="flex items-center justify-center">
-                            <Terminal className="mr-2 h-4 w-4" />
-                            Issue License
+                        <Link to="/licenses/new" className="flex items-center justify-center gap-1.5">
+                            <Terminal className="h-3.5 w-3.5" />
+                            <span>Issue License</span>
                         </Link>
                     </Button>
                 </div>
