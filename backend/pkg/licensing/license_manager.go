@@ -675,6 +675,8 @@ func (lm *LicenseManager) GenerateLicenseWithOptions(ctx context.Context, client
 
 	var productID, planID string
 	var entitlements *LicenseEntitlements
+	var isTrial bool
+	var trialStartedAt time.Time
 	if opts != nil {
 		productID = strings.TrimSpace(opts.ProductID)
 		planID = strings.TrimSpace(opts.PlanID)
@@ -693,6 +695,11 @@ func (lm *LicenseManager) GenerateLicenseWithOptions(ctx context.Context, client
 			}
 			// Use plan slug from the plan record
 			planSlug = plan.Slug
+			// Check if this is a trial plan
+			if plan.IsTrial {
+				isTrial = true
+				trialStartedAt = time.Now()
+			}
 
 			// Compute entitlements
 			entitlements, err = lm.storage.ComputeLicenseEntitlements(ctx, productID, planID)
@@ -722,6 +729,8 @@ func (lm *LicenseManager) GenerateLicenseWithOptions(ctx context.Context, client
 		CheckMode:          mode,
 		CheckIntervalSecs:  int64(interval.Seconds()),
 		Entitlements:       entitlements,
+		IsTrial:            isTrial,
+		TrialStartedAt:     trialStartedAt,
 	}
 	lm.applyLicenseCheckDefaults(license)
 	refreshLicenseDeviceStats(license)
@@ -1463,6 +1472,8 @@ func (lm *LicenseManager) buildLicensePayload(license *License, identity *Licens
 		if !license.TrialStartedAt.IsZero() {
 			payload["trial_started_at"] = license.TrialStartedAt
 		}
+		// For trial licenses, trial_expires_at equals the license expires_at
+		payload["trial_expires_at"] = license.ExpiresAt
 		if license.TrialDeviceFingerprint != "" {
 			payload["trial_device_fingerprint"] = license.TrialDeviceFingerprint
 		}
