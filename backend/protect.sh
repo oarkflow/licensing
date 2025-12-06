@@ -1,15 +1,67 @@
 #!/bin/bash
 
-# Go Binary Obfuscation Build Script
+# Go Binary Obfuscation Build Script - CROSS-PLATFORM EDITION
 # This script builds hardened Go binaries resistant to reverse engineering
+# Supports: Linux, macOS, Windows (via WSL/MinGW)
 
 set -e
+
+# Cross-platform detection
+OS_TYPE=$(uname -s)
+case "$OS_TYPE" in
+    Linux*)     PLATFORM="linux";;
+    Darwin*)    PLATFORM="macos";;
+    CYGWIN*|MINGW*|MSYS*) PLATFORM="windows";;
+    *)          PLATFORM="unknown"
+esac
+
+# Cross-platform file operations
+if [ "$PLATFORM" = "windows" ]; then
+    # Windows-specific settings
+    CHMOD="chmod"
+    MKDIR="mkdir"
+    RM="rm"
+else
+    # Unix-like systems
+    CHMOD="chmod"
+    MKDIR="mkdir"
+    RM="rm"
+fi
 
 # Configuration
 APP_NAME="${1:-app}"
 SOURCE_FILE="${2:-main.go}"
 OUTPUT_DIR="${3:-./build}"
 BUILD_ID="$(date +%s)_$(openssl rand -hex 4)"
+
+# Cross-platform build targets
+case "$PLATFORM" in
+    "linux")
+        GOOS="linux"
+        GOARCH="amd64"
+        BINARY_EXT=""
+        ;;
+    "macos")
+        GOOS="darwin"
+        GOARCH="amd64"
+        BINARY_EXT=""
+        ;;
+    "windows")
+        GOOS="windows"
+        GOARCH="amd64"
+        BINARY_EXT=".exe"
+        ;;
+    *)
+        GOOS="linux"
+        GOARCH="amd64"
+        BINARY_EXT=""
+        ;;
+esac
+
+# Anti-tampering configuration
+ANTI_TAMPERING=true
+SELF_CHECK=true
+INTEGRITY_VERIFICATION=true
 
 # Colors for output
 RED='\033[0;31m'
@@ -80,25 +132,31 @@ build_obfuscated() {
         go clean -cache -modcache 2>/dev/null || true
         export CGO_ENABLED=0
 
-        # Try the simple working garble command
+        # Try the simple working garble command with cross-platform support
         set +e
-        if garble build -o "$OUTPUT_DIR/$APP_NAME" "$SOURCE_FILE" 2>&1 | tee /tmp/garble_simple.log; then
+
+        # Set cross-platform environment for garble
+        export GOOS="$GOOS"
+        export GOARCH="$GOARCH"
+
+        if garble build -o "$OUTPUT_DIR/$APP_NAME$BINARY_EXT" "$SOURCE_FILE" 2>&1 | tee /tmp/garble_simple.log; then
             # Verify the binary was actually created
-            if [ -f "$OUTPUT_DIR/$APP_NAME" ] && [ -s "$OUTPUT_DIR/$APP_NAME" ]; then
-                log_info "🎉 Garble obfuscation successful: $OUTPUT_DIR/$APP_NAME"
+            FINAL_BINARY="$OUTPUT_DIR/$APP_NAME$BINARY_EXT"
+            if [ -f "$FINAL_BINARY" ] && [ -s "$FINAL_BINARY" ]; then
+                log_info "🎉 Garble obfuscation successful: $FINAL_BINARY"
                 log_info "✅ Binary is now obfuscated and protected"
 
                 # Apply comprehensive post-build hardening
                 log_info "🔒 Applying MAXIMUM security hardening..."
 
                 # 1. Make binary read-only to prevent tampering
-                chmod 555 "$OUTPUT_DIR/$APP_NAME" 2>/dev/null || true
+                chmod 555 "$FINAL_BINARY" 2>/dev/null || true
 
                 # 2. Apply UPX compression for size reduction and analysis prevention
                 if command -v upx &> /dev/null; then
                     log_info "📦 Applying UPX compression (makes reverse engineering harder)..."
-                    upx --best --lzma "$OUTPUT_DIR/$APP_NAME" 2>/dev/null || \
-                    upx --best "$OUTPUT_DIR/$APP_NAME" 2>/dev/null || true
+                    upx --best --lzma "$FINAL_BINARY" 2>/dev/null || \
+                    upx --best "$FINAL_BINARY" 2>/dev/null || true
                 else
                     log_warn "⚠️  UPX not installed - install for better compression"
                 fi
@@ -107,8 +165,8 @@ build_obfuscated() {
                 log_info "🛡️  Applying anti-tampering protection..."
 
                 # 4. Verify binary integrity
-                if [ -f "$OUTPUT_DIR/$APP_NAME" ] && [ -s "$OUTPUT_DIR/$APP_NAME" ]; then
-                    BINARY_SIZE=$(du -h "$OUTPUT_DIR/$APP_NAME" | cut -f1)
+                if [ -f "$FINAL_BINARY" ] && [ -s "$FINAL_BINARY" ]; then
+                    BINARY_SIZE=$(du -h "$FINAL_BINARY" | cut -f1)
                     log_info "📊 Final binary size: $BINARY_SIZE"
 
                     # 5. Generate comprehensive security report
@@ -423,9 +481,11 @@ generate_checksums() {
 
 # Main execution
 main() {
-    log_info "Starting obfuscated build process..."
+    log_info "Starting CROSS-PLATFORM obfuscated build process..."
+    log_info "Platform: $PLATFORM ($OS_TYPE)"
+    log_info "Target: $GOOS/$GOARCH"
     log_info "Source: $SOURCE_FILE"
-    log_info "Output: $OUTPUT_DIR/$APP_NAME"
+    log_info "Output: $OUTPUT_DIR/$APP_NAME$BINARY_EXT"
     echo ""
 
     check_dependencies
