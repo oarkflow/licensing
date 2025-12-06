@@ -12,7 +12,7 @@ import (
 const (
 	secretrProductID   = "secretr"
 	secretrProductSlug = "secretr"
-	defaultTrialDays   = 14
+	defaultTrialDays   = 7
 )
 
 // SecretrCatalogSnapshot captures the canonical product, plan, and feature
@@ -46,7 +46,7 @@ var secretrPlanDefinitions = []secretrPlanDefinition{
 		ID:             "plan_secretr_trial",
 		Name:           "Free Trial",
 		Slug:           "trial",
-		Description:    "Try everything before you buy. Full access to all features with no device limit.",
+		Description:    "All features unlocked",
 		PricePerDevice: 0,
 		MinDevices:     1,
 		StorageLimit:   "Unlimited",
@@ -60,7 +60,7 @@ var secretrPlanDefinitions = []secretrPlanDefinition{
 		ID:             "plan_secretr_personal",
 		Name:           "Personal",
 		Slug:           "personal",
-		Description:    "Core secrets, SSH, generators, GUI for individual developers",
+		Description:    "Core secrets, SSH, generators, GUI",
 		PricePerDevice: 2500, // $25/device/year
 		MinDevices:     1,
 		StorageLimit:   "1 GB",
@@ -74,7 +74,7 @@ var secretrPlanDefinitions = []secretrPlanDefinition{
 		ID:             "plan_secretr_solo",
 		Name:           "Solo",
 		Slug:           "solo",
-		Description:    "For power users and freelancers: adds P2P, audit, 2FA, versioning",
+		Description:    "+ 2FA, P2P sharing, audit, versioning",
 		PricePerDevice: 6000, // $60/device/year
 		MinDevices:     2,
 		StorageLimit:   "5 GB",
@@ -88,7 +88,7 @@ var secretrPlanDefinitions = []secretrPlanDefinition{
 		ID:             "plan_secretr_team",
 		Name:           "Team",
 		Slug:           "team",
-		Description:    "Adds scratchpads, templates, rotation, log viewers, bundles",
+		Description:    "+ Scratchpads, templates, rotation, bundles",
 		PricePerDevice: 9000, // $90/device/year
 		MinDevices:     5,
 		StorageLimit:   "25 GB",
@@ -102,7 +102,7 @@ var secretrPlanDefinitions = []secretrPlanDefinition{
 		ID:             "plan_secretr_business",
 		Name:           "Business",
 		Slug:           "business",
-		Description:    "API server, multi-tenant, ACL, sandbox, transfer system",
+		Description:    "+ API server, user mgmt, ACL, multi-tenant, sandbox",
 		PricePerDevice: 18000, // $180/device/year
 		MinDevices:     15,
 		StorageLimit:   "Unlimited",
@@ -116,7 +116,7 @@ var secretrPlanDefinitions = []secretrPlanDefinition{
 		ID:             "plan_secretr_enterprise",
 		Name:           "Enterprise",
 		Slug:           "enterprise",
-		Description:    "Custom SLAs, compliance programs, HSM, containers, dedicated support.",
+		Description:    "+ Compliance, FIPS, containers, HSM",
 		PricePerDevice: 0, // Custom pricing - contact sales
 		MinDevices:     50,
 		StorageLimit:   "Unlimited",
@@ -246,7 +246,7 @@ func restrictionForPlan(minPlan string) map[string]ScopePermission {
 	}
 }
 
-// CLI Feature with all 83 scopes from ENTITLEMENT_SCOPES.md
+// CLI Feature with all 126 scopes from ENTITLEMENT_SCOPES.md
 var cliFeature = secretrFeatureDefinition{
 	ID:          "feat_cli_001",
 	Name:        "CLI",
@@ -271,9 +271,30 @@ var cliFeature = secretrFeatureDefinition{
 		{ID: "cli_s010", Name: "Files", Slug: "files", Description: "File vault operations"},
 
 		// Sharing & Collaboration
-		{ID: "cli_s011", Name: "Share", Slug: "share", Description: "ACL-based share secrets", MinPlan: "business"},
-		{ID: "cli_s012", Name: "P2P Share", Slug: "p2p-share", Description: "P2P sharing on LAN", MinPlan: "solo"},
-		{ID: "cli_s013", Name: "P2P", Slug: "p2p", Description: "P2P operations", MinPlan: "solo"},
+		{ID: "cli_s011", Name: "Share", Slug: "share", Description: "ACL-based share secrets", MinPlan: "team"},
+		{ID: "cli_s105", Name: "Share Grant", Slug: "share-grant", Description: "Grant share permissions", MinPlan: "team"},
+		{ID: "cli_s106", Name: "Share Revoke", Slug: "share-revoke", Description: "Revoke share permissions", MinPlan: "team"},
+		{ID: "cli_s107", Name: "Share List", Slug: "share-list", Description: "List active shares", MinPlan: "team"},
+		{ID: "cli_s108", Name: "Share Request", Slug: "share-request", Description: "Request access to shares", MinPlan: "team"},
+		{ID: "cli_s109", Name: "Share Approve", Slug: "share-approve", Description: "Approve share requests", MinPlan: "team"},
+		{ID: "cli_s110", Name: "Share Deny", Slug: "share-deny", Description: "Deny share requests", MinPlan: "team"},
+		{ID: "cli_s111", Name: "Share Requests", Slug: "share-requests", Description: "List pending share requests", MinPlan: "team"},
+		{ID: "cli_s112", Name: "Share Link", Slug: "share-link", Description: "Share via links", MinPlan: "team"},
+		{ID: "cli_s113", Name: "Share Link Create", Slug: "share-link-create", Description: "Create share links", MinPlan: "team"},
+		{ID: "cli_s114", Name: "Share Link List", Slug: "share-link-list", Description: "List share links", MinPlan: "team"},
+		{ID: "cli_s115", Name: "Share Link Revoke", Slug: "share-link-revoke", Description: "Revoke share links", MinPlan: "team"},
+		{ID: "cli_s116", Name: "Share Link Redeem", Slug: "share-link-redeem", Description: "Redeem share links", MinPlan: "team"},
+		{ID: "cli_s117", Name: "Share Notifications", Slug: "share-notifications", Description: "Share notifications", MinPlan: "team"},
+		{ID: "cli_s118", Name: "Share Receive", Slug: "share-receive", Description: "Receive shares", MinPlan: "team"},
+		{ID: "cli_s119", Name: "Share Receive Fetch", Slug: "share-receive-fetch", Description: "Fetch received shares", MinPlan: "team"},
+		{ID: "cli_s120", Name: "Share Receive Claim", Slug: "share-receive-claim", Description: "Claim received shares", MinPlan: "team"},
+		{ID: "cli_s121", Name: "Share Receive List", Slug: "share-receive-list", Description: "List received shares", MinPlan: "team"},
+		{ID: "cli_s122", Name: "Share Invitation", Slug: "share-invitation", Description: "Share invitations", MinPlan: "team"},
+		{ID: "cli_s123", Name: "Share Invitation Create", Slug: "share-invitation-create", Description: "Create share invitations", MinPlan: "team"},
+		{ID: "cli_s124", Name: "Share Invitation List", Slug: "share-invitation-list", Description: "List share invitations", MinPlan: "team"},
+		{ID: "cli_s125", Name: "Share Invitation Revoke", Slug: "share-invitation-revoke", Description: "Revoke share invitations", MinPlan: "team"},
+		{ID: "cli_s012", Name: "P2P Share", Slug: "p2p-share", Description: "P2P sharing on LAN", MinPlan: "team"},
+		{ID: "cli_s013", Name: "P2P", Slug: "p2p", Description: "P2P operations", MinPlan: "team"},
 
 		// Container Security
 		{ID: "cli_s014", Name: "Container", Slug: "container", Description: "Container operations", MinPlan: "enterprise"},
@@ -417,7 +438,7 @@ var cliFeature = secretrFeatureDefinition{
 	}),
 }
 
-// GUI Feature with all 37 scopes from ENTITLEMENT_SCOPES.md
+// GUI Feature with all 76 scopes from ENTITLEMENT_SCOPES.md
 var guiFeature = secretrFeatureDefinition{
 	ID:          "feat_gui_001",
 	Name:        "GUI",
@@ -497,10 +518,34 @@ var guiFeature = secretrFeatureDefinition{
 		{ID: "gui_s051", Name: "Transfer Schedule Manage", Slug: "transfer_schedule_manage", Description: "Manage schedules", MinPlan: "business"},
 		{ID: "gui_s052", Name: "Transfer History", Slug: "transfer_history", Description: "Transfer history view", MinPlan: "business"},
 		{ID: "gui_s053", Name: "Transfer Audit", Slug: "transfer_audit", Description: "Transfer audit log", MinPlan: "business"},
+
+		// Share System Views (Team+)
+		{ID: "gui_s056", Name: "Share Dashboard", Slug: "share_dashboard", Description: "Share overview dashboard", MinPlan: "team"},
+		{ID: "gui_s057", Name: "Share Grant", Slug: "share_grant", Description: "Grant share permissions", MinPlan: "team"},
+		{ID: "gui_s058", Name: "Share Revoke", Slug: "share_revoke", Description: "Revoke share permissions", MinPlan: "team"},
+		{ID: "gui_s059", Name: "Share List", Slug: "share_list", Description: "List active shares", MinPlan: "team"},
+		{ID: "gui_s060", Name: "Share Request", Slug: "share_request", Description: "Request access interface", MinPlan: "team"},
+		{ID: "gui_s061", Name: "Share Approve", Slug: "share_approve", Description: "Approve requests interface", MinPlan: "team"},
+		{ID: "gui_s062", Name: "Share Deny", Slug: "share_deny", Description: "Deny requests interface", MinPlan: "team"},
+		{ID: "gui_s063", Name: "Share Requests View", Slug: "share_requests_view", Description: "Pending requests view", MinPlan: "team"},
+		{ID: "gui_s064", Name: "Share Link Create", Slug: "share_link_create", Description: "Create share links", MinPlan: "team"},
+		{ID: "gui_s065", Name: "Share Link List", Slug: "share_link_list", Description: "List share links", MinPlan: "team"},
+		{ID: "gui_s066", Name: "Share Link Revoke", Slug: "share_link_revoke", Description: "Revoke share links", MinPlan: "team"},
+		{ID: "gui_s067", Name: "Share Link Redeem", Slug: "share_link_redeem", Description: "Redeem share links", MinPlan: "team"},
+		{ID: "gui_s068", Name: "Share Notifications", Slug: "share_notifications", Description: "Share notifications", MinPlan: "team"},
+		{ID: "gui_s069", Name: "Share Receive Fetch", Slug: "share_receive_fetch", Description: "Fetch received shares", MinPlan: "team"},
+		{ID: "gui_s070", Name: "Share Receive Claim", Slug: "share_receive_claim", Description: "Claim received shares", MinPlan: "team"},
+		{ID: "gui_s071", Name: "Share Receive List", Slug: "share_receive_list", Description: "List received shares", MinPlan: "team"},
+		{ID: "gui_s072", Name: "Share Invitation Create", Slug: "share_invitation_create", Description: "Create invitations", MinPlan: "team"},
+		{ID: "gui_s073", Name: "Share Invitation List", Slug: "share_invitation_list", Description: "List invitations", MinPlan: "team"},
+		{ID: "gui_s074", Name: "Share Invitation Revoke", Slug: "share_invitation_revoke", Description: "Revoke invitations", MinPlan: "team"},
+		{ID: "gui_s075", Name: "Share Secrets", Slug: "share_secrets", Description: "Share secrets interface", MinPlan: "team"},
+		{ID: "gui_s076", Name: "Share Files", Slug: "share_files", Description: "Share files interface", MinPlan: "team"},
+		{ID: "gui_s077", Name: "Share Scratchpad", Slug: "share_scratchpad", Description: "Share scratchpads interface", MinPlan: "team"},
 	}),
 }
 
-// API Feature with all 69 scopes from ENTITLEMENT_SCOPES.md
+// API Feature with all 99 scopes from ENTITLEMENT_SCOPES.md
 var apiFeature = secretrFeatureDefinition{
 	ID:          "feat_api_001",
 	Name:        "API",
@@ -638,6 +683,12 @@ var apiFeature = secretrFeatureDefinition{
 		// Export/Import (Personal+)
 		{ID: "api_s096", Name: "Export All", Slug: "export_all", Description: "Export all data via API", MinPlan: "personal"},
 		{ID: "api_s097", Name: "Import All", Slug: "import_all", Description: "Import all data via API", MinPlan: "personal"},
+
+		// Compliance & Security (Enterprise)
+		{ID: "api_s098", Name: "Container Inject", Slug: "container_inject", Description: "Container injection via API", MinPlan: "enterprise"},
+		{ID: "api_s099", Name: "Container Extract", Slug: "container_extract", Description: "Container extraction via API", MinPlan: "enterprise"},
+		{ID: "api_s100", Name: "Compliance Check", Slug: "compliance_check", Description: "Compliance checks via API", MinPlan: "enterprise"},
+		{ID: "api_s101", Name: "FIPS Validate", Slug: "fips_validate", Description: "FIPS validation via API", MinPlan: "enterprise"},
 	}),
 }
 

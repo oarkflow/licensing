@@ -78,9 +78,12 @@ const slugify = (value: string) =>
         .replace(/--+/g, '-');
 
 type FeatureFormState = Omit<CreateFeatureRequest, 'product_id'>;
-interface ScopeFormState extends Omit<CreateScopeRequest, 'feature_id'> {
-    description?: string;
+interface ScopeFormState {
+    name: string;
+    slug: string;
+    permission: 'allow' | 'deny' | 'limit';
     limit?: number | string;
+    description?: string;
 }
 
 const defaultFeatureForm: FeatureFormState = {
@@ -109,8 +112,12 @@ export function ProductFeaturesManagerPage() {
     const [selectedFeatureId, setSelectedFeatureId] = useState<string | null>(null);
     const [featureDialogOpen, setFeatureDialogOpen] = useState(false);
     const [scopeDialogOpen, setScopeDialogOpen] = useState(false);
+    const [scopeSearchTerm, setScopeSearchTerm] = useState('');
+    const [scopePermissionFilter, setScopePermissionFilter] = useState<'all' | 'allow' | 'deny' | 'limit'>('all');
     const [featureForm, setFeatureForm] = useState<FeatureFormState>(defaultFeatureForm);
     const [scopeForm, setScopeForm] = useState<ScopeFormState>(defaultScopeForm);
+    const [editingScopeId, setEditingScopeId] = useState<string | null>(null);
+    const [showAddScopeForm, setShowAddScopeForm] = useState(false);
 
     const { data: productResponse, isLoading: productLoading } = useQuery({
         queryKey: ['product', productId],
@@ -188,7 +195,36 @@ export function ProductFeaturesManagerPage() {
         }
     }, [scopeDialogOpen]);
 
+    useEffect(() => {
+        // Reset scope form when toggling add scope form
+        if (!showAddScopeForm) {
+            setScopeForm(defaultScopeForm);
+        }
+    }, [showAddScopeForm]);
+
+    useEffect(() => {
+        // Reset scope filters when changing features
+        setScopeSearchTerm('');
+        setScopePermissionFilter('all');
+        setShowAddScopeForm(false);
+        setEditingScopeId(null);
+    }, [selectedFeatureId]);
+
     const selectedFeature = features.find((feature) => feature.id === selectedFeatureId) || null;
+
+    const filteredScopes = useMemo(() => {
+        const normalizedScopeSearch = scopeSearchTerm.trim().toLowerCase();
+        return scopes.filter((scope) => {
+            const matchesSearch =
+                !normalizedScopeSearch ||
+                scope.name.toLowerCase().includes(normalizedScopeSearch) ||
+                scope.slug.toLowerCase().includes(normalizedScopeSearch) ||
+                (scope.metadata?.description?.toLowerCase().includes(normalizedScopeSearch) ?? false);
+            const matchesPermission =
+                scopePermissionFilter === 'all' || scope.permission === scopePermissionFilter;
+            return matchesSearch && matchesPermission;
+        });
+    }, [scopes, scopeSearchTerm, scopePermissionFilter]);
 
     const createFeatureMutation = useMutation({
         mutationFn: (payload: FeatureFormState) =>
@@ -197,7 +233,7 @@ export function ProductFeaturesManagerPage() {
                 slug: payload.slug.trim(),
                 description: payload.description?.trim(),
                 category: payload.category?.trim(),
-            }),
+            } as any),
         onSuccess: (response) => {
             if (!response.success) {
                 toast({
@@ -221,7 +257,7 @@ export function ProductFeaturesManagerPage() {
 
     const createScopeMutation = useMutation({
         mutationFn: (payload: ScopeFormState) => {
-            const scopePayload: Omit<CreateScopeRequest, 'feature_id'> = {
+            const scopePayload: any = {
                 name: payload.name.trim(),
                 slug: payload.slug.trim(),
                 permission: payload.permission,
@@ -305,6 +341,44 @@ export function ProductFeaturesManagerPage() {
         },
     });
 
+    const updateScopeMutation = useMutation({
+        mutationFn: (payload: { scopeId: string; data: ScopeFormState }) => {
+            const scopePayload: any = {
+                name: payload.data.name.trim(),
+                slug: payload.data.slug.trim(),
+                permission: payload.data.permission,
+            };
+            if (payload.data.permission === 'limit' && payload.data.limit !== undefined && payload.data.limit !== '') {
+                scopePayload.limit = Number(payload.data.limit);
+            }
+            const description = (payload.data.description || '').trim();
+            if (description) {
+                scopePayload.metadata = { description };
+            }
+            return api.updateScope(productId!, selectedFeatureId!, payload.scopeId, scopePayload);
+        },
+        onSuccess: (response) => {
+            if (!response.success) {
+                toast({
+                    title: 'Failed to update scope',
+                    description: response.error || 'Unknown error',
+                    variant: 'destructive',
+                });
+                return;
+            }
+            queryClient.invalidateQueries({ queryKey: ['scopes', productId, selectedFeatureId] });
+            toast({ title: 'Scope updated successfully' });
+            setEditingScopeId(null);
+        },
+        onError: (error) => {
+            toast({
+                title: 'Failed to update scope',
+                description: error instanceof Error ? error.message : 'Unknown error',
+                variant: 'destructive',
+            });
+        },
+    });
+
     const handleCreateFeature = async (event: React.FormEvent) => {
         event.preventDefault();
         if (!productId) return;
@@ -322,6 +396,16 @@ export function ProductFeaturesManagerPage() {
         const response = await createScopeMutation.mutateAsync(scopeForm);
         if (response.success) {
             setScopeDialogOpen(false);
+            setShowAddScopeForm(false);
+        }
+    };
+
+    const handleUpdateScope = async (event: React.FormEvent, scopeId: string) => {
+        event.preventDefault();
+        if (!productId || !selectedFeatureId) return;
+        const response = await updateScopeMutation.mutateAsync({ scopeId, data: scopeForm });
+        if (response.success) {
+            setEditingScopeId(null);
         }
     };
 
@@ -499,231 +583,259 @@ export function ProductFeaturesManagerPage() {
                 </div>
             </div>
 
-            <div className="grid gap-6 lg:grid-cols-[320px_1fr]">
-                <Card>
-                    <CardHeader>
-                        <CardTitle className="flex items-center gap-2">
-                            <Settings2 className="h-4 w-4" /> Feature Catalog
-                        </CardTitle>
-                        <CardDescription>Filter by CLI, GUI, API, or custom scopes</CardDescription>
-                    </CardHeader>
-                    <CardContent className="space-y-4">
-                        <div className="space-y-2">
-                            <Label htmlFor="feature-search" className="text-xs uppercase text-muted-foreground">
-                                Search
-                            </Label>
-                            <div className="flex items-center gap-2">
-                                <Filter className="h-4 w-4 text-muted-foreground" />
-                                <Input
-                                    id="feature-search"
-                                    placeholder="Find feature..."
-                                    value={searchTerm}
-                                    onChange={(e) => setSearchTerm(e.target.value)}
-                                />
-                            </div>
-                        </div>
-                        <div className="flex flex-wrap gap-2">
-                            {categoryOptions.map((category) => (
-                                <Button
-                                    key={category}
-                                    size="sm"
-                                    variant={categoryFilter === category ? 'default' : 'outline'}
-                                    onClick={() => setCategoryFilter(category)}
-                                >
-                                    {categoryLabel(category)}
-                                </Button>
-                            ))}
-                        </div>
-                        <Separator />
-                        {featuresLoading ? (
-                            <div className="space-y-2">
-                                {[...Array(4)].map((_, index) => (
-                                    <Skeleton key={index} className="h-12 w-full" />
-                                ))}
-                            </div>
-                        ) : filteredFeatures.length === 0 ? (
-                            <div className="text-center text-sm text-muted-foreground">
-                                No features match your filters
-                            </div>
-                        ) : (
-                            <div className="space-y-2">
-                                {filteredFeatures.map((feature) => (
-                                    <button
-                                        key={feature.id}
-                                        className={cn(
-                                            'w-full rounded-md border px-4 py-3 text-left transition hover:bg-muted',
-                                            selectedFeatureId === feature.id
-                                                ? 'border-primary bg-primary/5'
-                                                : 'border-muted'
-                                        )}
-                                        onClick={() => setSelectedFeatureId(feature.id)}
-                                    >
-                                        <div className="flex items-center justify-between">
-                                            <div>
-                                                <p className="font-medium">{feature.name}</p>
-                                                <p className="font-mono text-xs text-muted-foreground">
-                                                    {feature.slug}
-                                                </p>
-                                            </div>
-                                            <Badge variant="outline">
-                                                {(feature.category || 'uncategorized').toUpperCase()}
-                                            </Badge>
-                                        </div>
-                                    </button>
-                                ))}
-                            </div>
-                        )}
-                    </CardContent>
-                </Card>
-
-                <Card className="min-h-[480px]">
-                    <CardHeader className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-                        <div>
-                            <CardTitle className="flex items-center gap-2">
-                                <Puzzle className="h-5 w-5" />
-                                {selectedFeature ? selectedFeature.name : 'Select a feature'}
-                            </CardTitle>
-                            <CardDescription>
-                                {selectedFeature
-                                    ? selectedFeature.description || 'No description provided'
-                                    : 'Choose a feature to manage scopes'}
-                            </CardDescription>
-                        </div>
-                        {selectedFeature && (
-                            <div className="flex flex-wrap gap-2">
-                                <Button asChild variant="outline" size="sm">
-                                    <Link to={`/products/${productId}/features/${selectedFeature.id}`}>
-                                        View Details
-                                    </Link>
-                                </Button>
-                                <Button asChild variant="outline" size="sm">
-                                    <Link to={`/products/${productId}/features/${selectedFeature.id}/edit`}>
-                                        <Edit className="mr-2 h-4 w-4" />
-                                        Edit
-                                    </Link>
-                                </Button>
-                                <AlertDialog>
-                                    <AlertDialogTrigger asChild>
-                                        <Button variant="destructive" size="sm">
-                                            <Trash2 className="mr-2 h-4 w-4" />
-                                            Delete
-                                        </Button>
-                                    </AlertDialogTrigger>
-                                    <AlertDialogContent>
-                                        <AlertDialogHeader>
-                                            <AlertDialogTitle>Delete feature?</AlertDialogTitle>
-                                            <AlertDialogDescription>
-                                                This removes the feature and all scopes across plans.
-                                            </AlertDialogDescription>
-                                        </AlertDialogHeader>
-                                        <AlertDialogFooter>
-                                            <AlertDialogCancel>Cancel</AlertDialogCancel>
-                                            <AlertDialogAction
-                                                onClick={() => handleDeleteFeature(selectedFeature.id)}
-                                                className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-                                            >
-                                                Delete feature
-                                            </AlertDialogAction>
-                                        </AlertDialogFooter>
-                                    </AlertDialogContent>
-                                </AlertDialog>
-                            </div>
-                        )}
-                    </CardHeader>
-                    <CardContent className="space-y-6">
-                        {selectedFeature ? (
-                            <>
-                                <div className="grid gap-4 md:grid-cols-3">
-                                    <div>
-                                        <Label className="text-xs uppercase text-muted-foreground">Slug</Label>
-                                        <p className="font-mono text-sm">{selectedFeature.slug}</p>
-                                    </div>
-                                    <div>
-                                        <Label className="text-xs uppercase text-muted-foreground">Category</Label>
-                                        <Badge variant="outline" className="mt-1">
-                                            {(selectedFeature.category || 'uncategorized').toUpperCase()}
-                                        </Badge>
-                                    </div>
-                                    <div>
-                                        <Label className="text-xs uppercase text-muted-foreground">Updated</Label>
-                                        <p className="text-sm text-muted-foreground">
-                                            {new Date(selectedFeature.updated_at).toLocaleString()}
-                                        </p>
+            <div className="grid gap-6 lg:grid-cols-[320px_1fr] h-[calc(100vh-200px)]">
+                <div className="overflow-y-auto">
+                    <div className="sticky top-0 z-10">
+                        <Card className="h-fit">
+                            <CardHeader>
+                                <CardTitle className="flex items-center gap-2">
+                                    <Settings2 className="h-4 w-4" /> Feature Catalog
+                                </CardTitle>
+                                <CardDescription>Filter by CLI, GUI, API, or custom scopes</CardDescription>
+                            </CardHeader>
+                            <CardContent className="space-y-4">
+                                <div className="space-y-2">
+                                    <Label htmlFor="feature-search" className="text-xs uppercase text-muted-foreground">
+                                        Search
+                                    </Label>
+                                    <div className="flex items-center gap-2">
+                                        <Filter className="h-4 w-4 text-muted-foreground" />
+                                        <Input
+                                            id="feature-search"
+                                            placeholder="Find feature..."
+                                            value={searchTerm}
+                                            onChange={(e) => setSearchTerm(e.target.value)}
+                                        />
                                     </div>
                                 </div>
+                                <div className="flex flex-wrap gap-2">
+                                    {categoryOptions.map((category) => (
+                                        <Button
+                                            key={category}
+                                            size="sm"
+                                            variant={categoryFilter === category ? 'default' : 'outline'}
+                                            onClick={() => setCategoryFilter(category)}
+                                        >
+                                            {categoryLabel(category)}
+                                        </Button>
+                                    ))}
+                                </div>
                                 <Separator />
-                                <div className="flex items-center justify-between">
-                                    <div>
-                                        <h3 className="text-lg font-semibold">Scopes</h3>
-                                        <p className="text-sm text-muted-foreground">
-                                            Define CLI/GUI/API permissions for this feature
-                                        </p>
+                                {featuresLoading ? (
+                                    <div className="space-y-2">
+                                        {[...Array(4)].map((_, index) => (
+                                            <Skeleton key={index} className="h-12 w-full" />
+                                        ))}
                                     </div>
-                                    <Dialog open={scopeDialogOpen} onOpenChange={setScopeDialogOpen}>
-                                        <DialogTrigger asChild>
-                                            <Button disabled={!selectedFeature}>
-                                                <Plus className="mr-2 h-4 w-4" />
-                                                Add Scope
-                                            </Button>
-                                        </DialogTrigger>
-                                        <DialogContent>
-                                            <DialogHeader>
-                                                <DialogTitle>New Scope</DialogTitle>
-                                                <DialogDescription>
-                                                    Create a granular permission inside this feature.
-                                                </DialogDescription>
-                                            </DialogHeader>
-                                            <form onSubmit={handleCreateScope} className="space-y-4">
-                                                <div className="space-y-2">
-                                                    <Label htmlFor="scope-name">Name *</Label>
-                                                    <Input
-                                                        id="scope-name"
-                                                        value={scopeForm.name}
-                                                        onChange={(e) =>
-                                                            setScopeForm((prev) => ({ ...prev, name: e.target.value }))
-                                                        }
-                                                        onBlur={() =>
-                                                            !scopeForm.slug &&
-                                                            setScopeForm((prev) => ({ ...prev, slug: slugify(prev.name) }))
-                                                        }
-                                                        placeholder="activate"
-                                                        required
-                                                    />
+                                ) : filteredFeatures.length === 0 ? (
+                                    <div className="text-center text-sm text-muted-foreground">
+                                        No features match your filters
+                                    </div>
+                                ) : (
+                                    <div className="space-y-2">
+                                        {filteredFeatures.map((feature) => (
+                                            <button
+                                                key={feature.id}
+                                                className={cn(
+                                                    'w-full rounded-md border px-4 py-3 text-left transition hover:bg-muted',
+                                                    selectedFeatureId === feature.id
+                                                        ? 'border-primary bg-primary/5'
+                                                        : 'border-muted'
+                                                )}
+                                                onClick={() => setSelectedFeatureId(feature.id)}
+                                            >
+                                                <div className="flex items-center justify-between">
+                                                    <div>
+                                                        <p className="font-medium">{feature.name}</p>
+                                                        <p className="font-mono text-xs text-muted-foreground">
+                                                            {feature.slug}
+                                                        </p>
+                                                    </div>
+                                                    <Badge variant="outline">
+                                                        {(feature.category || 'uncategorized').toUpperCase()}
+                                                    </Badge>
                                                 </div>
-                                                <div className="space-y-2">
-                                                    <Label htmlFor="scope-slug">Slug *</Label>
-                                                    <div className="flex gap-2">
+                                            </button>
+                                        ))}
+                                    </div>
+                                )}
+                            </CardContent>
+                        </Card>
+                    </div>
+                </div>
+
+                <div className="overflow-y-auto">
+                    <Card>
+                        <CardHeader className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                            <div>
+                                <CardTitle className="flex items-center gap-2">
+                                    <Puzzle className="h-5 w-5" />
+                                    {selectedFeature ? selectedFeature.name : 'Select a feature'}
+                                </CardTitle>
+                                <CardDescription>
+                                    {selectedFeature
+                                        ? selectedFeature.description || 'No description provided'
+                                        : 'Choose a feature to manage scopes'}
+                                </CardDescription>
+                            </div>
+                            {selectedFeature && (
+                                <div className="flex flex-wrap gap-2">
+                                    <Button asChild variant="outline" size="sm">
+                                        <Link to={`/products/${productId}/features/${selectedFeature.id}`}>
+                                            View Details
+                                        </Link>
+                                    </Button>
+                                    <Button asChild variant="outline" size="sm">
+                                        <Link to={`/products/${productId}/features/${selectedFeature.id}/edit`}>
+                                            <Edit className="mr-2 h-4 w-4" />
+                                            Edit
+                                        </Link>
+                                    </Button>
+                                    <AlertDialog>
+                                        <AlertDialogTrigger asChild>
+                                            <Button variant="destructive" size="sm">
+                                                <Trash2 className="mr-2 h-4 w-4" />
+                                                Delete
+                                            </Button>
+                                        </AlertDialogTrigger>
+                                        <AlertDialogContent>
+                                            <AlertDialogHeader>
+                                                <AlertDialogTitle>Delete feature?</AlertDialogTitle>
+                                                <AlertDialogDescription>
+                                                    This removes the feature and all scopes across plans.
+                                                </AlertDialogDescription>
+                                            </AlertDialogHeader>
+                                            <AlertDialogFooter>
+                                                <AlertDialogCancel>Cancel</AlertDialogCancel>
+                                                <AlertDialogAction
+                                                    onClick={() => handleDeleteFeature(selectedFeature.id)}
+                                                    className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                                                >
+                                                    Delete feature
+                                                </AlertDialogAction>
+                                            </AlertDialogFooter>
+                                        </AlertDialogContent>
+                                    </AlertDialog>
+                                </div>
+                            )}
+                        </CardHeader>
+                        <CardContent className="space-y-6">
+                            {selectedFeature ? (
+                                <>
+                                    <div className="grid gap-4 md:grid-cols-3">
+                                        <div>
+                                            <Label className="text-xs uppercase text-muted-foreground">Slug</Label>
+                                            <p className="font-mono text-sm">{selectedFeature.slug}</p>
+                                        </div>
+                                        <div>
+                                            <Label className="text-xs uppercase text-muted-foreground">Category</Label>
+                                            <Badge variant="outline" className="mt-1">
+                                                {(selectedFeature.category || 'uncategorized').toUpperCase()}
+                                            </Badge>
+                                        </div>
+                                        <div>
+                                            <Label className="text-xs uppercase text-muted-foreground">Updated</Label>
+                                            <p className="text-sm text-muted-foreground">
+                                                {new Date(selectedFeature.updated_at).toLocaleString()}
+                                            </p>
+                                        </div>
+                                    </div>
+                                    <Separator />
+                                    <div className="flex items-center justify-between">
+                                        <div>
+                                            <h3 className="text-lg font-semibold">Scopes</h3>
+                                            <p className="text-sm text-muted-foreground">
+                                                Define CLI/GUI/API permissions for this feature
+                                            </p>
+                                        </div>
+                                        {!showAddScopeForm && (
+                                            <Button onClick={() => setShowAddScopeForm(true)} disabled={!selectedFeature}>
+                                                <Plus className="mr-2 h-4 w-4" />
+                                                New Scope
+                                            </Button>
+                                        )}
+                                    </div>
+                                    <div className="space-y-4">
+                                        <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+                                            <div className="flex flex-1 items-center gap-2">
+                                                <Filter className="h-4 w-4 text-muted-foreground" />
+                                                <Input
+                                                    placeholder="Search scopes..."
+                                                    value={scopeSearchTerm}
+                                                    onChange={(e) => setScopeSearchTerm(e.target.value)}
+                                                    className="flex-1"
+                                                />
+                                            </div>
+                                            <Select value={scopePermissionFilter} onValueChange={(value: any) => setScopePermissionFilter(value)}>
+                                                <SelectTrigger className="w-40">
+                                                    <SelectValue />
+                                                </SelectTrigger>
+                                                <SelectContent>
+                                                    <SelectItem value="all">All Permissions</SelectItem>
+                                                    <SelectItem value="allow">Allow</SelectItem>
+                                                    <SelectItem value="deny">Deny</SelectItem>
+                                                    <SelectItem value="limit">Limit</SelectItem>
+                                                </SelectContent>
+                                            </Select>
+                                        </div>
+                                    </div>
+                                    {showAddScopeForm ? (
+                                        <div className="rounded-md border bg-slate-50/50 dark:bg-slate-900/20 p-3">
+                                            <form onSubmit={handleCreateScope} className="space-y-2">
+                                                {/* Row 1: All Fields */}
+                                                <div className="grid grid-cols-[1fr_1fr_auto_auto] gap-2 items-end">
+                                                    <div className="space-y-1">
+                                                        <Label htmlFor="form-scope-name" className="text-xs">Name *</Label>
                                                         <Input
-                                                            id="scope-slug"
-                                                            value={scopeForm.slug}
+                                                            id="form-scope-name"
+                                                            value={scopeForm.name}
                                                             onChange={(e) =>
-                                                                setScopeForm((prev) => ({ ...prev, slug: e.target.value }))
+                                                                setScopeForm((prev) => ({ ...prev, name: e.target.value }))
                                                             }
-                                                            placeholder="activate"
-                                                            className="font-mono"
-                                                            required
-                                                        />
-                                                        <Button
-                                                            type="button"
-                                                            variant="outline"
-                                                            onClick={() =>
+                                                            onBlur={() =>
+                                                                !scopeForm.slug &&
                                                                 setScopeForm((prev) => ({ ...prev, slug: slugify(prev.name) }))
                                                             }
-                                                        >
-                                                            Auto
-                                                        </Button>
+                                                            placeholder="activate"
+                                                            className="h-8 text-sm"
+                                                            required
+                                                        />
                                                     </div>
-                                                </div>
-                                                <div className="grid gap-4 md:grid-cols-2">
-                                                    <div className="space-y-2">
-                                                        <Label>Permission</Label>
+                                                    <div className="space-y-1">
+                                                        <Label htmlFor="form-scope-slug" className="text-xs">Slug *</Label>
+                                                        <div className="flex gap-1">
+                                                            <Input
+                                                                id="form-scope-slug"
+                                                                value={scopeForm.slug}
+                                                                onChange={(e) =>
+                                                                    setScopeForm((prev) => ({ ...prev, slug: e.target.value }))
+                                                                }
+                                                                placeholder="activate"
+                                                                className="font-mono h-8 text-sm"
+                                                                required
+                                                            />
+                                                            <Button
+                                                                type="button"
+                                                                variant="ghost"
+                                                                onClick={() =>
+                                                                    setScopeForm((prev) => ({ ...prev, slug: slugify(prev.name) }))
+                                                                }
+                                                                size="sm"
+                                                                className="px-2 h-8"
+                                                            >
+                                                                Auto
+                                                            </Button>
+                                                        </div>
+                                                    </div>
+                                                    <div className="space-y-1">
+                                                        <Label htmlFor="form-scope-permission" className="text-xs">Permission *</Label>
                                                         <Select
                                                             value={scopeForm.permission}
                                                             onValueChange={(value: 'allow' | 'deny' | 'limit') =>
                                                                 setScopeForm((prev) => ({ ...prev, permission: value }))
                                                             }
                                                         >
-                                                            <SelectTrigger>
+                                                            <SelectTrigger id="form-scope-permission" className="h-8 text-xs w-24">
                                                                 <SelectValue />
                                                             </SelectTrigger>
                                                             <SelectContent>
@@ -733,10 +845,10 @@ export function ProductFeaturesManagerPage() {
                                                             </SelectContent>
                                                         </Select>
                                                     </div>
-                                                    <div className="space-y-2">
-                                                        <Label htmlFor="scope-limit">Limit</Label>
+                                                    <div className="space-y-1">
+                                                        <Label htmlFor="form-scope-limit" className="text-xs">Limit</Label>
                                                         <Input
-                                                            id="scope-limit"
+                                                            id="form-scope-limit"
                                                             type="number"
                                                             min="0"
                                                             disabled={scopeForm.permission !== 'limit'}
@@ -744,153 +856,307 @@ export function ProductFeaturesManagerPage() {
                                                             onChange={(e) =>
                                                                 setScopeForm((prev) => ({ ...prev, limit: e.target.value }))
                                                             }
-                                                            placeholder={
-                                                                scopeForm.permission === 'limit'
-                                                                    ? 'Max operations'
-                                                                    : 'Enable "limit" permission'
-                                                            }
+                                                            placeholder={scopeForm.permission === 'limit' ? 'Max' : 'N/A'}
+                                                            className="h-8 text-sm w-20"
                                                         />
                                                     </div>
                                                 </div>
-                                                <div className="space-y-2">
-                                                    <Label htmlFor="scope-description">Description</Label>
-                                                    <Textarea
-                                                        id="scope-description"
-                                                        value={scopeForm.description ?? ''}
-                                                        onChange={(e) =>
-                                                            setScopeForm((prev) => ({ ...prev, description: e.target.value }))
-                                                        }
-                                                        rows={3}
-                                                        placeholder="Explain what this scope controls"
-                                                    />
+                                                {/* Row 2: Description and Actions */}
+                                                <div className="flex gap-2 items-end">
+                                                    <div className="flex-1 space-y-1">
+                                                        <Label htmlFor="form-scope-description" className="text-xs">Description</Label>
+                                                        <Textarea
+                                                            id="form-scope-description"
+                                                            value={scopeForm.description ?? ''}
+                                                            onChange={(e) =>
+                                                                setScopeForm((prev) => ({ ...prev, description: e.target.value }))
+                                                            }
+                                                            rows={1}
+                                                            placeholder="What does this scope do?"
+                                                            className="resize-none text-xs"
+                                                        />
+                                                    </div>
+                                                    <div className="flex gap-2">
+                                                        <Button
+                                                            type="button"
+                                                            variant="ghost"
+                                                            size="sm"
+                                                            onClick={() => {
+                                                                setShowAddScopeForm(false);
+                                                                setScopeForm(defaultScopeForm);
+                                                            }}
+                                                        >
+                                                            Cancel
+                                                        </Button>
+                                                        <Button
+                                                            type="submit"
+                                                            size="sm"
+                                                            disabled={
+                                                                createScopeMutation.isPending ||
+                                                                !scopeForm.name.trim() ||
+                                                                !scopeForm.slug.trim()
+                                                            }
+                                                        >
+                                                            {createScopeMutation.isPending ? (
+                                                                <>
+                                                                    <Loader2 className="mr-1 h-3 w-3 animate-spin" />
+                                                                    Creating...
+                                                                </>
+                                                            ) : (
+                                                                'Create'
+                                                            )}
+                                                        </Button>
+                                                    </div>
                                                 </div>
-                                                <DialogFooter>
-                                                    <Button
-                                                        type="submit"
-                                                        disabled={
-                                                            createScopeMutation.isPending ||
-                                                            !scopeForm.name.trim() ||
-                                                            !scopeForm.slug.trim()
-                                                        }
-                                                    >
-                                                        {createScopeMutation.isPending ? (
-                                                            <>
-                                                                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                                                                Creating...
-                                                            </>
-                                                        ) : (
-                                                            'Create Scope'
-                                                        )}
-                                                    </Button>
-                                                </DialogFooter>
                                             </form>
-                                        </DialogContent>
-                                    </Dialog>
-                                </div>
-                                {scopesLoading ? (
-                                    <div className="space-y-2">
-                                        {[...Array(3)].map((_, index) => (
-                                            <Skeleton key={index} className="h-12 w-full" />
-                                        ))}
-                                    </div>
-                                ) : scopes.length === 0 ? (
-                                    <div className="flex flex-col items-center justify-center rounded-md border border-dashed py-12 text-center">
-                                        <Target className="h-10 w-10 text-muted-foreground" />
-                                        <p className="mt-2 text-sm text-muted-foreground">
-                                            No scopes yet for this feature.
-                                        </p>
-                                        <Button className="mt-4" onClick={() => setScopeDialogOpen(true)}>
-                                            <Plus className="mr-2 h-4 w-4" /> Add Scope
-                                        </Button>
-                                    </div>
-                                ) : (
-                                    <div className="rounded-md border">
-                                        <Table>
-                                            <TableHeader>
-                                                <TableRow>
-                                                    <TableHead>Name</TableHead>
-                                                    <TableHead>Slug</TableHead>
-                                                    <TableHead>Permission</TableHead>
-                                                    <TableHead>Limit</TableHead>
-                                                    <TableHead>Description</TableHead>
-                                                    <TableHead className="w-[120px]">Actions</TableHead>
-                                                </TableRow>
-                                            </TableHeader>
-                                            <TableBody>
-                                                {scopes.map((scope) => (
-                                                    <TableRow key={scope.id}>
-                                                        <TableCell className="font-medium">{scope.name}</TableCell>
-                                                        <TableCell className="font-mono text-sm">{scope.slug}</TableCell>
-                                                        <TableCell>
-                                                            <Badge
-                                                                variant={
-                                                                    scope.permission === 'allow'
-                                                                        ? 'secondary'
-                                                                        : scope.permission === 'deny'
-                                                                            ? 'destructive'
-                                                                            : 'outline'
-                                                                }
-                                                                className="uppercase"
-                                                            >
-                                                                {scope.permission}
-                                                            </Badge>
-                                                        </TableCell>
-                                                        <TableCell>
-                                                            {scope.permission === 'limit' && typeof scope.limit === 'number'
-                                                                ? scope.limit
-                                                                : '—'}
-                                                        </TableCell>
-                                                        <TableCell className="text-sm text-muted-foreground">
-                                                            {scope.metadata?.description || '—'}
-                                                        </TableCell>
-                                                        <TableCell>
-                                                            <div className="flex gap-2">
-                                                                <Button asChild variant="ghost" size="sm">
-                                                                    <Link
-                                                                        to={`/products/${productId}/features/${selectedFeature.id}/scopes/${scope.id}/edit`}
-                                                                    >
-                                                                        Edit
-                                                                    </Link>
-                                                                </Button>
-                                                                <AlertDialog>
-                                                                    <AlertDialogTrigger asChild>
-                                                                        <Button variant="ghost" size="icon">
-                                                                            <Trash2 className="h-4 w-4" />
-                                                                        </Button>
-                                                                    </AlertDialogTrigger>
-                                                                    <AlertDialogContent>
-                                                                        <AlertDialogHeader>
-                                                                            <AlertDialogTitle>Delete scope?</AlertDialogTitle>
-                                                                            <AlertDialogDescription>
-                                                                                This action cannot be undone.
-                                                                            </AlertDialogDescription>
-                                                                        </AlertDialogHeader>
-                                                                        <AlertDialogFooter>
-                                                                            <AlertDialogCancel>Cancel</AlertDialogCancel>
-                                                                            <AlertDialogAction onClick={() => handleDeleteScope(scope.id)}>
-                                                                                Delete
-                                                                            </AlertDialogAction>
-                                                                        </AlertDialogFooter>
-                                                                    </AlertDialogContent>
-                                                                </AlertDialog>
-                                                            </div>
-                                                        </TableCell>
-                                                    </TableRow>
+                                        </div>
+                                    ) : null}
+                                    <div className="overflow-y-auto h-[calc(100vh-600px)]">
+                                        {scopesLoading ? (
+                                            <div className="space-y-2">
+                                                {[...Array(3)].map((_, index) => (
+                                                    <Skeleton key={index} className="h-12 w-full" />
                                                 ))}
-                                            </TableBody>
-                                        </Table>
+                                            </div>
+                                        ) : scopes.length === 0 && !showAddScopeForm ? (
+                                            <div className="flex flex-col items-center justify-center rounded-md border border-dashed py-12 text-center">
+                                                <Target className="h-10 w-10 text-muted-foreground" />
+                                                <p className="mt-2 text-sm text-muted-foreground">
+                                                    No scopes yet for this feature.
+                                                </p>
+                                                <Button className="mt-4" onClick={() => setShowAddScopeForm(true)}>
+                                                    <Plus className="mr-2 h-4 w-4" /> Add Scope
+                                                </Button>
+                                            </div>
+                                        ) : filteredScopes.length === 0 ? (
+                                            <div className="flex flex-col items-center justify-center rounded-md border border-dashed py-12 text-center">
+                                                <Target className="h-10 w-10 text-muted-foreground" />
+                                                <p className="mt-2 text-sm text-muted-foreground">
+                                                    No scopes match your filters.
+                                                </p>
+                                            </div>
+                                        ) : (
+                                            <div className="space-y-3">
+                                                {filteredScopes.map((scope) => (
+                                                    <div key={scope.id} className="rounded-md border p-3 hover:bg-slate-50/30 dark:hover:bg-slate-900/30 transition">
+                                                        {editingScopeId === scope.id ? (
+                                                            <form onSubmit={(e) => handleUpdateScope(e, scope.id)} className="space-y-2">
+                                                                {/* Row 1: Fields */}
+                                                                <div className="grid grid-cols-[1fr_1fr_auto_auto] gap-2 items-end">
+                                                                    <div className="space-y-1">
+                                                                        <Label htmlFor={`edit-scope-name-${scope.id}`} className="text-xs">Name *</Label>
+                                                                        <Input
+                                                                            id={`edit-scope-name-${scope.id}`}
+                                                                            value={scopeForm.name}
+                                                                            onChange={(e) =>
+                                                                                setScopeForm((prev) => ({ ...prev, name: e.target.value }))
+                                                                            }
+                                                                            onBlur={() =>
+                                                                                !scopeForm.slug &&
+                                                                                setScopeForm((prev) => ({ ...prev, slug: slugify(prev.name) }))
+                                                                            }
+                                                                            className="h-8 text-sm"
+                                                                            required
+                                                                        />
+                                                                    </div>
+                                                                    <div className="space-y-1">
+                                                                        <Label htmlFor={`edit-scope-slug-${scope.id}`} className="text-xs">Slug *</Label>
+                                                                        <div className="flex gap-1">
+                                                                            <Input
+                                                                                id={`edit-scope-slug-${scope.id}`}
+                                                                                value={scopeForm.slug}
+                                                                                onChange={(e) =>
+                                                                                    setScopeForm((prev) => ({ ...prev, slug: e.target.value }))
+                                                                                }
+                                                                                className="font-mono h-8 text-sm"
+                                                                                required
+                                                                            />
+                                                                            <Button
+                                                                                type="button"
+                                                                                variant="ghost"
+                                                                                onClick={() =>
+                                                                                    setScopeForm((prev) => ({ ...prev, slug: slugify(prev.name) }))
+                                                                                }
+                                                                                size="sm"
+                                                                                className="px-2 h-8"
+                                                                            >
+                                                                                Auto
+                                                                            </Button>
+                                                                        </div>
+                                                                    </div>
+                                                                    <div className="space-y-1">
+                                                                        <Label htmlFor={`edit-scope-permission-${scope.id}`} className="text-xs">Permission *</Label>
+                                                                        <Select
+                                                                            value={scopeForm.permission}
+                                                                            onValueChange={(value: 'allow' | 'deny' | 'limit') =>
+                                                                                setScopeForm((prev) => ({ ...prev, permission: value }))
+                                                                            }
+                                                                        >
+                                                                            <SelectTrigger id={`edit-scope-permission-${scope.id}`} className="h-8 text-xs w-24">
+                                                                                <SelectValue />
+                                                                            </SelectTrigger>
+                                                                            <SelectContent>
+                                                                                <SelectItem value="allow">Allow</SelectItem>
+                                                                                <SelectItem value="deny">Deny</SelectItem>
+                                                                                <SelectItem value="limit">Limit</SelectItem>
+                                                                            </SelectContent>
+                                                                        </Select>
+                                                                    </div>
+                                                                    <div className="space-y-1">
+                                                                        <Label htmlFor={`edit-scope-limit-${scope.id}`} className="text-xs">Limit</Label>
+                                                                        <Input
+                                                                            id={`edit-scope-limit-${scope.id}`}
+                                                                            type="number"
+                                                                            min="0"
+                                                                            disabled={scopeForm.permission !== 'limit'}
+                                                                            value={scopeForm.limit ?? ''}
+                                                                            onChange={(e) =>
+                                                                                setScopeForm((prev) => ({ ...prev, limit: e.target.value }))
+                                                                            }
+                                                                            placeholder={scopeForm.permission === 'limit' ? 'Max' : 'N/A'}
+                                                                            className="h-8 text-sm w-20"
+                                                                        />
+                                                                    </div>
+                                                                </div>
+                                                                {/* Row 2: Description and Actions */}
+                                                                <div className="flex gap-2 items-end">
+                                                                    <div className="flex-1 space-y-1">
+                                                                        <Label htmlFor={`edit-scope-description-${scope.id}`} className="text-xs">Description</Label>
+                                                                        <Textarea
+                                                                            id={`edit-scope-description-${scope.id}`}
+                                                                            value={scopeForm.description ?? ''}
+                                                                            onChange={(e) =>
+                                                                                setScopeForm((prev) => ({ ...prev, description: e.target.value }))
+                                                                            }
+                                                                            rows={1}
+                                                                            placeholder="What does this scope do?"
+                                                                            className="resize-none text-xs"
+                                                                        />
+                                                                    </div>
+                                                                    <div className="flex gap-2">
+                                                                        <Button
+                                                                            type="button"
+                                                                            variant="ghost"
+                                                                            size="sm"
+                                                                            onClick={() => setEditingScopeId(null)}
+                                                                        >
+                                                                            Cancel
+                                                                        </Button>
+                                                                        <Button
+                                                                            type="submit"
+                                                                            size="sm"
+                                                                            disabled={
+                                                                                updateScopeMutation.isPending ||
+                                                                                !scopeForm.name.trim() ||
+                                                                                !scopeForm.slug.trim()
+                                                                            }
+                                                                        >
+                                                                            {updateScopeMutation.isPending ? (
+                                                                                <>
+                                                                                    <Loader2 className="mr-1 h-3 w-3 animate-spin" />
+                                                                                    Saving...
+                                                                                </>
+                                                                            ) : (
+                                                                                'Save'
+                                                                            )}
+                                                                        </Button>
+                                                                    </div>
+                                                                </div>
+                                                            </form>
+                                                        ) : (
+                                                            <div className="space-y-3">
+                                                                <div className="flex items-start justify-between">
+                                                                    <div>
+                                                                        <p className="font-medium">{scope.name}</p>
+                                                                        <p className="font-mono text-xs text-muted-foreground">{scope.slug}</p>
+                                                                    </div>
+                                                                    <div className="flex gap-2">
+                                                                        <Button
+                                                                            variant="outline"
+                                                                            size="sm"
+                                                                            onClick={() => {
+                                                                                setScopeForm({
+                                                                                    name: scope.name,
+                                                                                    slug: scope.slug,
+                                                                                    permission: scope.permission as 'allow' | 'deny' | 'limit',
+                                                                                    limit: scope.limit ?? '',
+                                                                                    description: scope.metadata?.description ?? '',
+                                                                                });
+                                                                                setEditingScopeId(scope.id);
+                                                                            }}
+                                                                        >
+                                                                            <Edit className="h-4 w-4" />
+                                                                        </Button>
+                                                                        <AlertDialog>
+                                                                            <AlertDialogTrigger asChild>
+                                                                                <Button variant="destructive" size="sm">
+                                                                                    <Trash2 className="h-4 w-4" />
+                                                                                </Button>
+                                                                            </AlertDialogTrigger>
+                                                                            <AlertDialogContent>
+                                                                                <AlertDialogHeader>
+                                                                                    <AlertDialogTitle>Delete scope?</AlertDialogTitle>
+                                                                                    <AlertDialogDescription>
+                                                                                        This action cannot be undone.
+                                                                                    </AlertDialogDescription>
+                                                                                </AlertDialogHeader>
+                                                                                <AlertDialogFooter>
+                                                                                    <AlertDialogCancel>Cancel</AlertDialogCancel>
+                                                                                    <AlertDialogAction onClick={() => handleDeleteScope(scope.id)}>
+                                                                                        Delete
+                                                                                    </AlertDialogAction>
+                                                                                </AlertDialogFooter>
+                                                                            </AlertDialogContent>
+                                                                        </AlertDialog>
+                                                                    </div>
+                                                                </div>
+                                                                <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
+                                                                    <div>
+                                                                        <p className="text-xs uppercase text-muted-foreground">Permission</p>
+                                                                        <Badge
+                                                                            variant={
+                                                                                scope.permission === 'allow'
+                                                                                    ? 'secondary'
+                                                                                    : scope.permission === 'deny'
+                                                                                        ? 'destructive'
+                                                                                        : 'outline'
+                                                                            }
+                                                                            className="mt-1 uppercase"
+                                                                        >
+                                                                            {scope.permission}
+                                                                        </Badge>
+                                                                    </div>
+                                                                    {scope.permission === 'limit' && typeof scope.limit === 'number' && (
+                                                                        <div>
+                                                                            <p className="text-xs uppercase text-muted-foreground">Limit</p>
+                                                                            <p className="mt-1 font-medium">{scope.limit}</p>
+                                                                        </div>
+                                                                    )}
+                                                                    {scope.metadata?.description && (
+                                                                        <div className="sm:col-span-2">
+                                                                            <p className="text-xs uppercase text-muted-foreground">Description</p>
+                                                                            <p className="mt-1 text-sm">{scope.metadata.description}</p>
+                                                                        </div>
+                                                                    )}
+                                                                </div>
+                                                            </div>
+                                                        )}
+                                                    </div>
+                                                ))}
+                                            </div>
+                                        )}
                                     </div>
-                                )}
-                            </>
-                        ) : (
-                            <div className="flex h-full items-center justify-center text-center">
-                                <p className="text-sm text-muted-foreground">
-                                    Select a feature from the left panel to manage its scopes.
-                                </p>
-                            </div>
-                        )}
-                    </CardContent>
-                </Card>
+                                </>
+                            ) : (
+                                <div className="flex h-full items-center justify-center text-center">
+                                    <p className="text-sm text-muted-foreground">
+                                        Select a feature from the left panel to manage its scopes.
+                                    </p>
+                                </div>
+                            )}
+                        </CardContent>
+                    </Card>
+                </div>
             </div>
         </div>
     );

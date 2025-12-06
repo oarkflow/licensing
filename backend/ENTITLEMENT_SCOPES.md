@@ -82,12 +82,33 @@ The `cli` feature controls command-line interface access.
 #### Sharing & Collaboration
 ```json
 {
-  "share": { "scope_id": "cli_s011", "scope_slug": "share", "permission": "allow", "min_plan": "business" },
-  "p2p-share": { "scope_id": "cli_s012", "scope_slug": "p2p-share", "permission": "allow", "min_plan": "solo" },
-  "p2p": { "scope_id": "cli_s013", "scope_slug": "p2p", "permission": "allow", "min_plan": "solo" }
+  "share": { "scope_id": "cli_s011", "scope_slug": "share", "permission": "allow", "min_plan": "team" },
+  "share-grant": { "scope_id": "cli_s105", "scope_slug": "share-grant", "permission": "allow", "min_plan": "team" },
+  "share-revoke": { "scope_id": "cli_s106", "scope_slug": "share-revoke", "permission": "allow", "min_plan": "team" },
+  "share-list": { "scope_id": "cli_s107", "scope_slug": "share-list", "permission": "allow", "min_plan": "team" },
+  "share-request": { "scope_id": "cli_s108", "scope_slug": "share-request", "permission": "allow", "min_plan": "team" },
+  "share-approve": { "scope_id": "cli_s109", "scope_slug": "share-approve", "permission": "allow", "min_plan": "team" },
+  "share-deny": { "scope_id": "cli_s110", "scope_slug": "share-deny", "permission": "allow", "min_plan": "team" },
+  "share-requests": { "scope_id": "cli_s111", "scope_slug": "share-requests", "permission": "allow", "min_plan": "team" },
+  "share-link": { "scope_id": "cli_s112", "scope_slug": "share-link", "permission": "allow", "min_plan": "team" },
+  "share-link-create": { "scope_id": "cli_s113", "scope_slug": "share-link-create", "permission": "allow", "min_plan": "team" },
+  "share-link-list": { "scope_id": "cli_s114", "scope_slug": "share-link-list", "permission": "allow", "min_plan": "team" },
+  "share-link-revoke": { "scope_id": "cli_s115", "scope_slug": "share-link-revoke", "permission": "allow", "min_plan": "team" },
+  "share-link-redeem": { "scope_id": "cli_s116", "scope_slug": "share-link-redeem", "permission": "allow", "min_plan": "team" },
+  "share-notifications": { "scope_id": "cli_s117", "scope_slug": "share-notifications", "permission": "allow", "min_plan": "team" },
+  "share-receive": { "scope_id": "cli_s118", "scope_slug": "share-receive", "permission": "allow", "min_plan": "team" },
+  "share-receive-fetch": { "scope_id": "cli_s119", "scope_slug": "share-receive-fetch", "permission": "allow", "min_plan": "team" },
+  "share-receive-claim": { "scope_id": "cli_s120", "scope_slug": "share-receive-claim", "permission": "allow", "min_plan": "team" },
+  "share-receive-list": { "scope_id": "cli_s121", "scope_slug": "share-receive-list", "permission": "allow", "min_plan": "team" },
+  "share-invitation": { "scope_id": "cli_s122", "scope_slug": "share-invitation", "permission": "allow", "min_plan": "team" },
+  "share-invitation-create": { "scope_id": "cli_s123", "scope_slug": "share-invitation-create", "permission": "allow", "min_plan": "team" },
+  "share-invitation-list": { "scope_id": "cli_s124", "scope_slug": "share-invitation-list", "permission": "allow", "min_plan": "team" },
+  "share-invitation-revoke": { "scope_id": "cli_s125", "scope_slug": "share-invitation-revoke", "permission": "allow", "min_plan": "team" },
+  "p2p-share": { "scope_id": "cli_s012", "scope_slug": "p2p-share", "permission": "allow", "min_plan": "team" },
+  "p2p": { "scope_id": "cli_s013", "scope_slug": "p2p", "permission": "allow", "min_plan": "team" }
 }
 ```
-*Note: P2P sharing requires Solo plan or higher. ACL-based sharing requires Business plan or higher*
+*Note: All sharing features (ACL-based, P2P, invitations) require Team plan or higher. Share works for secrets, files, and scratchpads.*
 
 #### Container Security
 ```json
@@ -518,6 +539,35 @@ The `gui` feature controls desktop GUI application access.
 }
 ```
 
+#### Share System Views
+```json
+{
+  "share_dashboard": { "scope_id": "gui_s056", "scope_slug": "share_dashboard", "permission": "allow", "min_plan": "team" },
+  "share_grant": { "scope_id": "gui_s057", "scope_slug": "share_grant", "permission": "allow", "min_plan": "team" },
+  "share_revoke": { "scope_id": "gui_s058", "scope_slug": "share_revoke", "permission": "allow", "min_plan": "team" },
+  "share_list": { "scope_id": "gui_s059", "scope_slug": "share_list", "permission": "allow", "min_plan": "team" },
+  "share_request": { "scope_id": "gui_s060", "scope_slug": "share_request", "permission": "allow", "min_plan": "team" },
+  "share_approve": { "scope_id": "gui_s061", "scope_slug": "share_approve", "permission": "allow", "min_plan": "team" },
+  "share_deny": { "scope_id": "gui_s062", "scope_slug": "share_deny", "permission": "allow", "min_plan": "team" },
+  "share_requests_view": { "scope_id": "gui_s063", "scope_slug": "share_requests_view", "permission": "allow", "min_plan": "team" },
+  "share_link_create": { "scope_id": "gui_s064", "scope_slug": "share_link_create", "permission": "allow", "min_plan": "team" },
+  "share_link_list": { "scope_id": "gui_s065", "scope_slug": "share_link_list", "permission": "allow", "min_plan": "team" },
+  "share_link_revoke": { "scope_id": "gui_s066", "scope_slug": "share_link_revoke", "permission": "allow", "min_plan": "team" },
+  "share_link_redeem": { "scope_id": "gui_s067", "scope_slug": "share_link_redeem", "permission": "allow", "min_plan": "team" },
+  "share_notifications": { "scope_id": "gui_s068", "scope_slug": "share_notifications", "permission": "allow", "min_plan": "team" },
+  "share_receive_fetch": { "scope_id": "gui_s069", "scope_slug": "share_receive_fetch", "permission": "allow", "min_plan": "team" },
+  "share_receive_claim": { "scope_id": "gui_s070", "scope_slug": "share_receive_claim", "permission": "allow", "min_plan": "team" },
+  "share_receive_list": { "scope_id": "gui_s071", "scope_slug": "share_receive_list", "permission": "allow", "min_plan": "team" },
+  "share_invitation_create": { "scope_id": "gui_s072", "scope_slug": "share_invitation_create", "permission": "allow", "min_plan": "team" },
+  "share_invitation_list": { "scope_id": "gui_s073", "scope_slug": "share_invitation_list", "permission": "allow", "min_plan": "team" },
+  "share_invitation_revoke": { "scope_id": "gui_s074", "scope_slug": "share_invitation_revoke", "permission": "allow", "min_plan": "team" },
+  "share_secrets": { "scope_id": "gui_s075", "scope_slug": "share_secrets", "permission": "allow", "min_plan": "team" },
+  "share_files": { "scope_id": "gui_s076", "scope_slug": "share_files", "permission": "allow", "min_plan": "team" },
+  "share_scratchpad": { "scope_id": "gui_s077", "scope_slug": "share_scratchpad", "permission": "allow", "min_plan": "team" }
+}
+```
+*Note: Share system views require Team plan or higher*
+
 ---
 
 ## 3. API Feature Scopes
@@ -704,32 +754,20 @@ The `api` feature controls HTTP API access.
 #### Transfer System
 ```json
 {
-  "transfer_devices_list": { "scope_id": "api_s070", "scope_slug": "transfer_devices_list", "permission": "allow", "min_plan": "business" },
-  "transfer_devices_add": { "scope_id": "api_s071", "scope_slug": "transfer_devices_add", "permission": "allow", "min_plan": "business" },
-  "transfer_devices_remove": { "scope_id": "api_s072", "scope_slug": "transfer_devices_remove", "permission": "allow", "min_plan": "business" },
-  "transfer_devices_verify": { "scope_id": "api_s073", "scope_slug": "transfer_devices_verify", "permission": "allow", "min_plan": "business" },
-  "transfer_send": { "scope_id": "api_s074", "scope_slug": "transfer_send", "permission": "allow", "min_plan": "business" },
-  "transfer_receive": { "scope_id": "api_s075", "scope_slug": "transfer_receive", "permission": "allow", "min_plan": "business" },
-  "transfer_status": { "scope_id": "api_s076", "scope_slug": "transfer_status", "permission": "allow", "min_plan": "business" },
-  "transfer_cancel": { "scope_id": "api_s077", "scope_slug": "transfer_cancel", "permission": "allow", "min_plan": "business" },
-  "transfer_cloud_upload": { "scope_id": "api_s078", "scope_slug": "transfer_cloud_upload", "permission": "allow", "min_plan": "business" },
-  "transfer_cloud_download": { "scope_id": "api_s079", "scope_slug": "transfer_cloud_download", "permission": "allow", "min_plan": "business" },
-  "transfer_cloud_list": { "scope_id": "api_s080", "scope_slug": "transfer_cloud_list", "permission": "allow", "min_plan": "business" },
-  "transfer_bundle_create": { "scope_id": "api_s081", "scope_slug": "transfer_bundle_create", "permission": "allow", "min_plan": "business" },
-  "transfer_bundle_import": { "scope_id": "api_s082", "scope_slug": "transfer_bundle_import", "permission": "allow", "min_plan": "business" },
-  "transfer_bundle_qr_generate": { "scope_id": "api_s083", "scope_slug": "transfer_bundle_qr_generate", "permission": "allow", "min_plan": "business" },
-  "transfer_bundle_qr_scan": { "scope_id": "api_s084", "scope_slug": "transfer_bundle_qr_scan", "permission": "allow", "min_plan": "business" },
-  "transfer_schedule_list": { "scope_id": "api_s085", "scope_slug": "transfer_schedule_list", "permission": "allow", "min_plan": "business" },
-  "transfer_schedule_create": { "scope_id": "api_s086", "scope_slug": "transfer_schedule_create", "permission": "allow", "min_plan": "business" },
-  "transfer_schedule_update": { "scope_id": "api_s087", "scope_slug": "transfer_schedule_update", "permission": "allow", "min_plan": "business" },
-  "transfer_schedule_delete": { "scope_id": "api_s088", "scope_slug": "transfer_schedule_delete", "permission": "allow", "min_plan": "business" },
-  "transfer_schedule_pause": { "scope_id": "api_s089", "scope_slug": "transfer_schedule_pause", "permission": "allow", "min_plan": "business" },
-  "transfer_schedule_resume": { "scope_id": "api_s090", "scope_slug": "transfer_schedule_resume", "permission": "allow", "min_plan": "business" },
-  "transfer_schedule_run": { "scope_id": "api_s091", "scope_slug": "transfer_schedule_run", "permission": "allow", "min_plan": "business" },
-  "transfer_history": { "scope_id": "api_s092", "scope_slug": "transfer_history", "permission": "allow", "min_plan": "business" },
-  "transfer_audit": { "scope_id": "api_s093", "scope_slug": "transfer_audit", "permission": "allow", "min_plan": "business" },
-  "transfer_manifest_get": { "scope_id": "api_s094", "scope_slug": "transfer_manifest_get", "permission": "allow", "min_plan": "business" },
-  "transfer_manifest_verify": { "scope_id": "api_s095", "scope_slug": "transfer_manifest_verify", "permission": "allow", "min_plan": "business" }
+  "transfer_devices_list":     { "scope_id": "api_s070", "scope_slug": "transfer_devices_list", "permission": "allow", "min_plan": "business" },
+  "transfer_devices_trust":    { "scope_id": "api_s071", "scope_slug": "transfer_devices_trust", "permission": "allow", "min_plan": "business" },
+  "transfer_devices_revoke":   { "scope_id": "api_s072", "scope_slug": "transfer_devices_revoke", "permission": "allow", "min_plan": "business" },
+  "transfer_device_initiate":  { "scope_id": "api_s073", "scope_slug": "transfer_device_initiate", "permission": "allow", "min_plan": "business" },
+  "transfer_device_status":    { "scope_id": "api_s074", "scope_slug": "transfer_device_status", "permission": "allow", "min_plan": "business" },
+  "transfer_cloud_config":     { "scope_id": "api_s075", "scope_slug": "transfer_cloud_config", "permission": "allow", "min_plan": "business" },
+  "transfer_cloud_upload":     { "scope_id": "api_s076", "scope_slug": "transfer_cloud_upload", "permission": "allow", "min_plan": "business" },
+  "transfer_cloud_download":   { "scope_id": "api_s077", "scope_slug": "transfer_cloud_download", "permission": "allow", "min_plan": "business" },
+  "transfer_history_list":     { "scope_id": "api_s078", "scope_slug": "transfer_history_list", "permission": "allow", "min_plan": "business" },
+  "transfer_history_detail":   { "scope_id": "api_s079", "scope_slug": "transfer_history_detail", "permission": "allow", "min_plan": "business" },
+  "transfer_schedules_list":   { "scope_id": "api_s080", "scope_slug": "transfer_schedules_list", "permission": "allow", "min_plan": "business" },
+  "transfer_schedules_create": { "scope_id": "api_s081", "scope_slug": "transfer_schedules_create", "permission": "allow", "min_plan": "business" },
+  "transfer_schedules_update": { "scope_id": "api_s082", "scope_slug": "transfer_schedules_update", "permission": "allow", "min_plan": "business" },
+  "transfer_schedules_delete": { "scope_id": "api_s083", "scope_slug": "transfer_schedules_delete", "permission": "allow", "min_plan": "business" }
 }
 ```
 *Note: Transfer system API endpoints require Business plan or higher*
@@ -741,6 +779,18 @@ The `api` feature controls HTTP API access.
   "import_all": { "scope_id": "api_s097", "scope_slug": "import_all", "permission": "allow" }
 }
 ```
+
+#### Share System API
+```json
+{
+  "share_fetch": { "scope_id": "api_s098", "scope_slug": "share_fetch", "permission": "allow", "min_plan": "team" },
+  "share_link_fetch": { "scope_id": "api_s099", "scope_slug": "share_link_fetch", "permission": "allow", "min_plan": "team" },
+  "share_access_check": { "scope_id": "api_s100", "scope_slug": "share_access_check", "permission": "allow", "min_plan": "team" },
+  "share_my_secrets": { "scope_id": "api_s101", "scope_slug": "share_my_secrets", "permission": "allow", "min_plan": "team" },
+  "share_link_validate": { "scope_id": "api_s102", "scope_slug": "share_link_validate", "permission": "allow", "min_plan": "team" }
+}
+```
+*Note: Share system API endpoints require Team plan or higher*
 
 ---
 
@@ -774,6 +824,27 @@ The `api` feature controls HTTP API access.
       "p2p-share": { "permission": "deny" },
       "p2p": { "permission": "deny" },
       "share": { "permission": "deny" },
+      "share-grant": { "permission": "deny" },
+      "share-revoke": { "permission": "deny" },
+      "share-list": { "permission": "deny" },
+      "share-request": { "permission": "deny" },
+      "share-approve": { "permission": "deny" },
+      "share-deny": { "permission": "deny" },
+      "share-requests": { "permission": "deny" },
+      "share-link": { "permission": "deny" },
+      "share-link-create": { "permission": "deny" },
+      "share-link-list": { "permission": "deny" },
+      "share-link-revoke": { "permission": "deny" },
+      "share-link-redeem": { "permission": "deny" },
+      "share-notifications": { "permission": "deny" },
+      "share-receive": { "permission": "deny" },
+      "share-receive-fetch": { "permission": "deny" },
+      "share-receive-claim": { "permission": "deny" },
+      "share-receive-list": { "permission": "deny" },
+      "share-invitation": { "permission": "deny" },
+      "share-invitation-create": { "permission": "deny" },
+      "share-invitation-list": { "permission": "deny" },
+      "share-invitation-revoke": { "permission": "deny" },
       "scratchpad": { "permission": "deny" },
       "template": { "permission": "deny" },
       "rotate": { "permission": "deny" },
@@ -873,6 +944,29 @@ The `api` feature controls HTTP API access.
       "template": { "permission": "deny" },
       "rotate": { "permission": "deny" },
       "share": { "permission": "deny" },
+      "share-grant": { "permission": "deny" },
+      "share-revoke": { "permission": "deny" },
+      "share-list": { "permission": "deny" },
+      "share-request": { "permission": "deny" },
+      "share-approve": { "permission": "deny" },
+      "share-deny": { "permission": "deny" },
+      "share-requests": { "permission": "deny" },
+      "share-link": { "permission": "deny" },
+      "share-link-create": { "permission": "deny" },
+      "share-link-list": { "permission": "deny" },
+      "share-link-revoke": { "permission": "deny" },
+      "share-link-redeem": { "permission": "deny" },
+      "share-notifications": { "permission": "deny" },
+      "share-receive": { "permission": "deny" },
+      "share-receive-fetch": { "permission": "deny" },
+      "share-receive-claim": { "permission": "deny" },
+      "share-receive-list": { "permission": "deny" },
+      "share-invitation": { "permission": "deny" },
+      "share-invitation-create": { "permission": "deny" },
+      "share-invitation-list": { "permission": "deny" },
+      "share-invitation-revoke": { "permission": "deny" },
+      "p2p-share": { "permission": "deny" },
+      "p2p": { "permission": "deny" },
       "container": { "permission": "deny" },
       "sandbox": { "permission": "deny" },
       "secure-sandbox": { "permission": "deny" },
@@ -1289,7 +1383,7 @@ When `scopes` is an empty object `{}`, all operations within that feature are al
 | CLI Basic Operations | 6 | All plans |
 | CLI SSH Management | 3 | Personal+ |
 | CLI File Operations | 1 | All plans |
-| CLI Sharing | 3 | Solo+ (P2P requires 2 devices) |
+| CLI Sharing (ACL, P2P, Invitations) | 24 | Team+ |
 | CLI Container Security | 1 | Enterprise |
 | CLI Backup/Import/Export | 7 | Personal+ |
 | CLI Generators | 5 | Personal+ |
@@ -1315,7 +1409,8 @@ When `scopes` is an empty object `{}`, all operations within that feature are al
 | CLI Config Injection | 2 | Business+ |
 | CLI Container Security Audit | 2 | Enterprise |
 | CLI Transfer System | 19 | Business+ |
-| **Total CLI Scopes** | **102** | |
+| CLI Share System | 21 | Team+ |
+| **Total CLI Scopes** | **144** | |
 | | | |
 | GUI CRUD Operations | 6 | All plans |
 | GUI Secret Management | 4 | Personal+ |
@@ -1328,7 +1423,8 @@ When `scopes` is an empty object `{}`, all operations within that feature are al
 | GUI Transfer System Views | 17 | Business+ |
 | GUI Compliance Views | 6 | Enterprise |
 | GUI Security Views | 2 | Solo+ |
-| **Total GUI Scopes** | **54** | |
+| GUI Share System Views | 22 | Team+ |
+| **Total GUI Scopes** | **76** | |
 | | | |
 | API Setup & Config | 3 | Business+ (requires HTTP API) |
 | API Authentication | 3 | Business+ |
@@ -1346,11 +1442,12 @@ When `scopes` is an empty object `{}`, all operations within that feature are al
 | API User Management | 11 | Business+ |
 | API Tenant Management | 6 | Business+ |
 | API Groups/Namespaces | 2 | Business+ |
-| API Transfer System | 26 | Business+ |
+| API Transfer System | 14 | Business+ |
 | API Export/Import | 2 | Personal+ |
-| **Total API Scopes** | **95** | |
+| API Share System | 5 | Team+ |
+| **Total API Scopes** | **102** | |
 | | | |
-| **Grand Total** | **251** | |
+| **Grand Total** | **322** | |
 
 ---
 

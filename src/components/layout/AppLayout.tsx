@@ -34,7 +34,7 @@ export function AppLayout() {
                 <SidebarInset className="bg-background/20">
                     <AppNavbar />
                     <main className="flex-1 overflow-auto px-4 pb-10 pt-6 lg:px-10">
-                        <div className="mx-auto flex w-full max-w-7xl flex-col gap-8">
+                        <div className="mx-auto flex w-full flex-col gap-8">
                             <Outlet />
                         </div>
                     </main>
