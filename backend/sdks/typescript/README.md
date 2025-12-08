@@ -1,14 +1,22 @@
 # TypeScript/Node.js Licensing SDK
 
-A TypeScript SDK for integrating hardware-bound software licensing into Node.js applications. This SDK provides secure license validation, signature verification, and encrypted license storage.
+A TypeScript SDK for integrating hardware-bound software licensing into Node.js applications with enterprise-grade security features. This SDK provides secure license validation, signature verification, encrypted license storage, and comprehensive cryptographic utilities.
 
 ## Features
 
+### Core Licensing
 - 🔐 **AES-256-GCM encryption** for secure license transport and storage
 - ✅ **RSA-PSS signature verification** to ensure license authenticity
 - 🖥️ **Hardware fingerprinting** for device-bound licenses
 - 📦 **Zero external crypto dependencies** - uses Node.js built-in crypto
 - 🧪 **Fixture-based testing** for cross-language compatibility
+
+### Security Features (New in v2.0)
+- 🔑 **Ed25519 key generation and signing** for SSH authentication
+- 🛡️ **SHA-256 hashing** for integrity verification
+- 🔒 **Secure random byte generation**
+- 🗝️ **Secure file deletion** with overwriting
+- 📊 **Additional AES-GCM encryption** helpers
 
 ## Requirements
 
@@ -27,7 +35,26 @@ pnpm add @oarkflow/licensing-client
 
 ## Quick Start
 
-### 1. Activate a License (using Go CLI)
+### 1. Generate SSH Keys (Recommended)
+
+For enhanced security, generate SSH keys for client authentication:
+
+```bash
+# Using ssh-keygen
+ssh-keygen -t ed25519 -f ~/.ssh/licensing_client -N ""
+
+# Or using TypeScript
+import { generateEd25519KeyPair } from '@oarkflow/licensing-client';
+import { writeFileSync } from 'fs';
+
+const { privateKey, publicKey } = generateEd25519KeyPair();
+writeFileSync('private_key.pem', privateKey, { mode: 0o600 });
+writeFileSync('public_key.pem', publicKey);
+```
+
+Register your public key with the licensing server before activation.
+
+### 2. Activate a License (using Go CLI)
 
 Currently, activation requires the Go CLI. The TypeScript SDK can then load and decrypt the activated license:
 
@@ -35,15 +62,16 @@ Currently, activation requires the Go CLI. The TypeScript SDK can then load and 
 # Install the Go CLI
 go install github.com/oarkflow/licensing/cmd/license-cli@latest
 
-# Activate
+# Activate with SSH authentication
 license-cli activate \
   --server https://licensing.example.com \
   --email user@example.com \
   --client-id client-123 \
-  --license-key ABCD-EFGH-IJKL-MNOP-QRST-UVWX-YZ12-3456
+  --license-key ABCD-EFGH-IJKL-MNOP-QRST-UVWX-YZ12-3456 \
+  --ssh-key ~/.ssh/licensing_client
 ```
 
-### 2. Load and Verify the License
+### 3. Load and Verify the License
 
 ```typescript
 import { loadLicenseFile, decryptStoredLicense } from '@oarkflow/licensing-client';
@@ -336,23 +364,246 @@ npm run build
 npm test
 ```
 
-## Security Notes
+## Security Best Practices
 
-1. **Never log license data** - It contains sensitive cryptographic material
-2. **Protect license files** - They should have `600` permissions
-3. **Use TLS in production** - Never set `allowInsecureHttp: true` in production
-4. **Validate expiration client-side** - Don't rely solely on server checks
+### 1. Use SSH Key Authentication
+
+Always use SSH keys for enhanced security:
+
+```typescript
+import { generateEd25519KeyPair, signEd25519, verifyEd25519 } from '@oarkflow/licensing-client';
+import { readFileSync, writeFileSync } from 'fs';
+
+// Generate Ed25519 key pair
+const { privateKey, publicKey } = generateEd25519KeyPair();
+writeFileSync('/secure/path/private_key.pem', privateKey, { mode: 0o600 });
+writeFileSync('/secure/path/public_key.pem', publicKey);
+
+// Sign requests with private key
+const privateKeyPem = readFileSync('/secure/path/private_key.pem', 'utf8');
+const data = Buffer.from('sensitive data');
+const signature = signEd25519(privateKeyPem, data);
+
+// Verify signature with public key
+const publicKeyPem = readFileSync('/secure/path/public_key.pem', 'utf8');
+const valid = verifyEd25519(publicKeyPem, data, signature);
+```
+
+### 2. Implement Integrity Verification
+
+Compute and verify file hashes to detect tampering:
+
+```typescript
+import { computeFileSHA256, computeSHA256 } from '@oarkflow/licensing-client';
+
+// Compute hash of license file
+const hash = computeFileSHA256(licensePath);
+
+// Verify against expected hash
+if (hash !== expectedHash) {
+    throw new Error('License file has been tampered with');
+}
+
+// For sensitive data
+const dataHash = computeSHA256(Buffer.from(sensitiveData));
+```
+
+### 3. Secure Sensitive Files
+
+Use secure deletion for sensitive data:
+
+```typescript
+import { secureDelete } from '@oarkflow/licensing-client';
+
+// Securely delete temporary files
+await secureDelete('/tmp/sensitive_data.tmp');
+
+// Overwrites file 3 times with random data before deletion
+```
+
+### 4. Use Cryptographically Secure Random
+
+Always use secure random generation:
+
+```typescript
+import { secureRandomBytes } from '@oarkflow/licensing-client';
+
+// Generate secure random bytes
+const nonce = secureRandomBytes(12);  // For AES-GCM
+const sessionId = secureRandomBytes(32).toString('hex');
+```
+
+### 5. Encrypt Cached Data
+
+If caching license data, encrypt it:
+
+```typescript
+import { encryptAesGcm, decryptAesGcm, secureRandomBytes } from '@oarkflow/licensing-client';
+import { writeFileSync, readFileSync } from 'fs';
+
+// Encrypt before caching
+const key = secureRandomBytes(32);
+const nonce = secureRandomBytes(12);
+const plaintext = Buffer.from(JSON.stringify(license));
+const encrypted = encryptAesGcm(plaintext, nonce, key);
+
+// Store encrypted data
+writeFileSync(cachePath, JSON.stringify({
+    data: encrypted.toString('base64'),
+    nonce: nonce.toString('base64'),
+}), { mode: 0o600 });
+
+// Decrypt when loading
+const cached = JSON.parse(readFileSync(cachePath, 'utf8'));
+const decrypted = decryptAesGcm(
+    Buffer.from(cached.data, 'base64'),
+    Buffer.from(cached.nonce, 'base64'),
+    key
+);
+```
+
+### 6. Protect License Files
+
+Set strict file permissions:
+
+```typescript
+import { chmodSync } from 'fs';
+
+// After writing license file
+chmodSync(licensePath, 0o600);  // Owner read/write only
+```
+
+### 7. Use TLS in Production
+
+```typescript
+import https from 'https';
+
+// ❌ NEVER do this in production:
+const agent = new https.Agent({
+    rejectUnauthorized: false  // DANGEROUS
+});
+
+// ✅ Always verify certificates in production
+const agent = new https.Agent({
+    rejectUnauthorized: true,
+    ca: readFileSync('/path/to/ca-bundle.crt'),
+});
+```
+
+### 8. Never Log Sensitive Data
+
+```typescript
+// ❌ Don't do this
+console.log('License data:', license);
+console.log('Session key:', sessionKey);
+
+// ✅ Log only non-sensitive information
+console.log('License ID:', license.id);
+console.log('Expires:', license.expires_at);
+```
+
+### 9. Validate Expiration
+
+Always check expiration:
+
+```typescript
+const expiresAt = new Date(license.expires_at);
+const now = new Date();
+
+if (expiresAt < now) {
+    throw new Error('License expired');
+}
+
+// Warn before expiration
+const daysUntilExpiry = Math.floor((expiresAt.getTime() - now.getTime()) / (1000 * 60 * 60 * 24));
+if (daysUntilExpiry < 7) {
+    console.warn(`License expires in ${daysUntilExpiry} days`);
+}
+```
+
+### 10. Implement Rate Limiting
+
+Protect against brute force attacks:
+
+```typescript
+import { RateLimiter } from 'limiter';
+
+const limiter = new RateLimiter({ tokensPerInterval: 10, interval: 'minute' });
+
+async function verifyLicense() {
+    const hasToken = await limiter.removeTokens(1);
+    if (!hasToken) {
+        throw new Error('Too many verification attempts');
+    }
+    // ... verification logic
+}
+```
+
+## Cryptographic Operations
+
+The SDK provides comprehensive cryptographic utilities:
+
+```typescript
+import {
+    generateEd25519KeyPair,
+    signEd25519,
+    verifyEd25519,
+    encryptAesGcm,
+    decryptAesGcm,
+    computeSHA256,
+    computeFileSHA256,
+    secureRandomBytes,
+    secureDelete,
+} from '@oarkflow/licensing-client';
+
+// Ed25519 Key Generation
+const { privateKey, publicKey } = generateEd25519KeyPair();
+// Returns: { privateKey: '...PEM...', publicKey: '...PEM...' }
+
+// Ed25519 Signing
+const signature = signEd25519(privateKeyPem, data);
+// Returns: Base64-encoded signature string
+
+// Ed25519 Verification
+const valid = verifyEd25519(publicKeyPem, data, signature);
+// Returns: boolean
+
+// AES-256-GCM Encryption
+const encrypted = encryptAesGcm(plaintext, nonce, key);
+// Returns: Buffer with ciphertext and authentication tag
+
+// AES-256-GCM Decryption
+const plaintext = decryptAesGcm(ciphertext, nonce, key);
+// Returns: Buffer with plaintext
+
+// SHA-256 Hashing
+const hash = computeSHA256(data);  // Hex string
+const binaryHash = computeSHA256(data, 'binary' as BufferEncoding);  // Binary
+const fileHash = computeFileSHA256(filepath);
+
+// Secure Random
+const randomBytes = secureRandomBytes(32);  // Returns Buffer
+
+// Secure File Deletion
+await secureDelete(filepath);  // Overwrites then deletes
+```
 
 ## Roadmap
 
 - [ ] HTTP activation flow (currently requires Go CLI)
 - [ ] Device fingerprint generation for Node.js
 - [ ] Background verification scheduler
+- [x] Ed25519 key generation and signing
+- [x] SHA-256 hashing utilities
+- [x] Secure random byte generation
+- [x] Secure file deletion
 - [ ] Checksum file validation
 - [ ] Offline grace period handling
+- [ ] Multi-layer integrity verification
 
 ## Related Documentation
 
+- [Client Security Guide](../../backend/CLIENT_SECURITY.md)
 - [SDK Developer Guide](../../docs/SDK_GUIDE.md)
 - [SDK Protocol Specification](../../docs/sdk_protocol.md)
 - [OpenAPI Specification](../../docs/api/licensing_openapi.yaml)

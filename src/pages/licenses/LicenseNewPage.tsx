@@ -3,6 +3,7 @@ import { useQuery, useMutation } from '@tanstack/react-query';
 import { useNavigate, Link, useSearchParams } from 'react-router-dom';
 import { ArrowLeft, Key, Users, Loader2, AlertCircle, ShieldCheck, DollarSign } from 'lucide-react';
 import api from '@/services/api';
+import { FeatureScopeSelector } from '@/components/licenses/FeatureScopeSelector';
 import { Button } from '@/components/ui/button';
 import {
     Card,
@@ -25,7 +26,8 @@ import { Badge } from '@/components/ui/badge';
 import { Separator } from '@/components/ui/separator';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Alert, AlertDescription } from '@/components/ui/alert';
-import type { Client, Product, Plan, CreateLicenseRequest } from '@/types/api';
+import type { Client, Product, Plan, CreateLicenseRequest, FeatureScopeSelection } from '@/types/api';
+import { entitlementsToSelections } from '@/lib/entitlements';
 
 export function LicenseNewPage() {
     const navigate = useNavigate();
@@ -40,6 +42,8 @@ export function LicenseNewPage() {
         duration_days: undefined,
         max_devices: undefined,
     });
+    const [featureScopes, setFeatureScopes] = useState<FeatureScopeSelection[]>([]);
+    const [lastPlanWithScopes, setLastPlanWithScopes] = useState<string | null>(null);
 
     const { data: clientsResponse } = useQuery({
         queryKey: ['clients'],
@@ -63,6 +67,14 @@ export function LicenseNewPage() {
     const clients: Client[] = clientsResponse?.data || [];
     const products: Product[] = productsResponse?.data || [];
     const plans: Plan[] = plansResponse?.data || [];
+
+    const hasPlanSelection = Boolean(selectedProductId && formData.plan_id);
+    const { data: entitlementsResponse, isFetching: entitlementsLoading } = useQuery({
+        queryKey: ['plan-entitlements', selectedProductId, formData.plan_id],
+        queryFn: () => api.getPlanEntitlements(selectedProductId, formData.plan_id!),
+        enabled: hasPlanSelection,
+        staleTime: 1000 * 30,
+    });
 
     // Get the selected plan
     const selectedPlan = useMemo(() => {
@@ -119,6 +131,22 @@ export function LicenseNewPage() {
         }
     }, [searchParams, plans, formData.plan_id]);
 
+    useEffect(() => {
+        if (!formData.plan_id) {
+            setFeatureScopes([]);
+            setLastPlanWithScopes(null);
+            return;
+        }
+        if (!entitlementsResponse?.data) {
+            return;
+        }
+        if (lastPlanWithScopes === formData.plan_id) {
+            return;
+        }
+        setFeatureScopes(entitlementsToSelections(entitlementsResponse.data));
+        setLastPlanWithScopes(formData.plan_id);
+    }, [formData.plan_id, entitlementsResponse?.data, lastPlanWithScopes]);
+
     const createMutation = useMutation({
         mutationFn: (data: CreateLicenseRequest) => api.createLicense(data),
         onSuccess: (response) => {
@@ -146,6 +174,7 @@ export function LicenseNewPage() {
             ...formData,
             max_devices: formData.max_devices || (selectedPlan?.min_devices || 1),
             duration_days: formData.duration_days || (selectedPlan?.is_trial ? (selectedPlan.trial_days || 30) : 365),
+            feature_scopes: featureScopes.length > 0 ? featureScopes : undefined,
         };
 
         // Enforce minimum devices
@@ -174,6 +203,8 @@ export function LicenseNewPage() {
             // Set is_trial flag based on plan
             is_trial: plan?.is_trial || false,
         }));
+        setFeatureScopes([]);
+        setLastPlanWithScopes(null);
     };
 
     const selectedClient = useMemo(
@@ -188,6 +219,19 @@ export function LicenseNewPage() {
             plan_id: '',
             plan_slug: '',
         }));
+        setFeatureScopes([]);
+        setLastPlanWithScopes(null);
+    };
+
+    const handleFeatureScopeChange = (next: FeatureScopeSelection[]) => {
+        setFeatureScopes(next);
+    };
+
+    const handleResetFeatureScopes = () => {
+        if (entitlementsResponse?.data) {
+            setFeatureScopes(entitlementsToSelections(entitlementsResponse.data));
+            setLastPlanWithScopes(formData.plan_id || null);
+        }
     };
 
     const formatCurrency = (amount: number, currency: string) => {
@@ -209,7 +253,8 @@ export function LicenseNewPage() {
         !formData.client_id ||
         !formData.product_id ||
         !formData.plan_id ||
-        (priceInfo?.isUnderMinimum ?? false);
+        (priceInfo?.isUnderMinimum ?? false) ||
+        (hasPlanSelection && entitlementsLoading);
 
     return (
         <div className="space-y-8">
@@ -364,6 +409,17 @@ export function LicenseNewPage() {
                                         </>
                                     )}
                                 </div>
+                            )}
+
+                            {selectedPlan && (
+                                <FeatureScopeSelector
+                                    selections={featureScopes}
+                                    initialSelections={entitlementsResponse?.data ? entitlementsToSelections(entitlementsResponse.data) : undefined}
+                                    onChange={handleFeatureScopeChange}
+                                    loading={entitlementsLoading}
+                                    disabled={createMutation.isPending}
+                                    onReset={entitlementsResponse?.data ? handleResetFeatureScopes : undefined}
+                                />
                             )}
 
                             <div className="grid gap-6 md:grid-cols-2">

@@ -643,8 +643,9 @@ func (lm *LicenseManager) UnbanClient(ctx context.Context, clientID string) (*Cl
 
 // GenerateLicenseOptions contains optional parameters for license generation.
 type GenerateLicenseOptions struct {
-	ProductID string
-	PlanID    string
+	ProductID     string
+	PlanID        string
+	FeatureScopes []FeatureScopeSelection
 }
 
 func (lm *LicenseManager) GenerateLicense(ctx context.Context, clientID string, duration time.Duration, maxDevices int, planSlug string, mode LicenseCheckMode, interval time.Duration) (*License, error) {
@@ -674,14 +675,17 @@ func (lm *LicenseManager) GenerateLicenseWithOptions(ctx context.Context, client
 	}
 
 	var productID, planID string
+	var featureSelections []FeatureScopeSelection
 	var entitlements *LicenseEntitlements
 	var isTrial bool
 	var trialStartedAt time.Time
 	if opts != nil {
 		productID = strings.TrimSpace(opts.ProductID)
 		planID = strings.TrimSpace(opts.PlanID)
+		if len(opts.FeatureScopes) > 0 {
+			featureSelections = opts.FeatureScopes
+		}
 
-		// If product and plan IDs are provided, validate and compute entitlements
 		if productID != "" && planID != "" {
 			plan, err := lm.storage.GetPlan(ctx, planID)
 			if err != nil {
@@ -693,20 +697,22 @@ func (lm *LicenseManager) GenerateLicenseWithOptions(ctx context.Context, client
 			if !plan.IsActive {
 				return nil, fmt.Errorf("plan is not active")
 			}
-			// Use plan slug from the plan record
 			planSlug = plan.Slug
-			// Check if this is a trial plan
 			if plan.IsTrial {
 				isTrial = true
 				trialStartedAt = time.Now()
 			}
-
-			// Compute entitlements
 			entitlements, err = lm.storage.ComputeLicenseEntitlements(ctx, productID, planID)
 			if err != nil {
 				return nil, fmt.Errorf("failed to compute entitlements: %w", err)
 			}
 		}
+	}
+	if len(featureSelections) > 0 && (productID == "" || planID == "") {
+		return nil, fmt.Errorf("feature scopes require both product_id and plan_id")
+	}
+	if entitlements != nil && len(featureSelections) > 0 {
+		applyFeatureScopeSelections(entitlements, featureSelections)
 	}
 
 	licenseKey := lm.generateLicenseKey(client.Email, client.ID)
@@ -742,6 +748,74 @@ func (lm *LicenseManager) GenerateLicenseWithOptions(ctx context.Context, client
 		return nil, fmt.Errorf("failed to save license: %w", err)
 	}
 	return license, nil
+}
+
+// UpdateLicenseEntitlements recomputes a license's entitlements and applies overrides.
+func (lm *LicenseManager) UpdateLicenseEntitlements(ctx context.Context, licenseID string, selections []FeatureScopeSelection) (*License, error) {
+	if strings.TrimSpace(licenseID) == "" {
+		return nil, fmt.Errorf("license_id is required")
+	}
+	license, err := lm.storage.GetLicense(ctx, licenseID)
+	if err != nil {
+		return nil, err
+	}
+	productID := strings.TrimSpace(license.ProductID)
+	planID := strings.TrimSpace(license.PlanID)
+	if productID == "" || planID == "" {
+		return nil, fmt.Errorf("license is missing product or plan information")
+	}
+	entitlements, err := lm.storage.ComputeLicenseEntitlements(ctx, productID, planID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to compute entitlements: %w", err)
+	}
+	if len(selections) > 0 {
+		applyFeatureScopeSelections(entitlements, selections)
+	}
+	license.Entitlements = entitlements
+	if err := lm.storage.UpdateLicense(ctx, license); err != nil {
+		return nil, fmt.Errorf("failed to persist license entitlements: %w", err)
+	}
+	return license, nil
+}
+
+func applyFeatureScopeSelections(entitlements *LicenseEntitlements, selections []FeatureScopeSelection) {
+	if entitlements == nil || len(selections) == 0 {
+		return
+	}
+	for _, feature := range selections {
+		slug := strings.TrimSpace(feature.FeatureSlug)
+		if slug == "" {
+			continue
+		}
+		grant, ok := entitlements.Features[slug]
+		if !ok {
+			continue
+		}
+		grant.Enabled = feature.Enabled
+		if len(feature.Scopes) > 0 && grant.Scopes == nil {
+			grant.Scopes = make(map[string]ScopeGrant)
+		}
+		for _, scope := range feature.Scopes {
+			scopeSlug := strings.TrimSpace(scope.ScopeSlug)
+			if scopeSlug == "" {
+				continue
+			}
+			scopeGrant, exists := grant.Scopes[scopeSlug]
+			if !exists {
+				continue
+			}
+			scopeGrant.Permission = scope.Permission
+			scopeGrant.Limit = scope.Limit
+			grant.Scopes[scopeSlug] = scopeGrant
+		}
+		if !feature.Enabled {
+			for key, scopeGrant := range grant.Scopes {
+				scopeGrant.Permission = ScopePermissionDeny
+				grant.Scopes[key] = scopeGrant
+			}
+		}
+		entitlements.Features[slug] = grant
+	}
 }
 
 // TrialLicenseRequest contains the parameters for generating a trial license.

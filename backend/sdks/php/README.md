@@ -1,19 +1,28 @@
 # PHP Licensing SDK
 
-A PHP SDK for integrating hardware-bound software licensing into PHP applications. This SDK provides secure license validation, signature verification, and encrypted license storage.
+A PHP SDK for integrating hardware-bound software licensing into PHP applications with enterprise-grade security features. This SDK provides secure license validation, signature verification, encrypted license storage, and comprehensive cryptographic utilities.
 
 ## Features
 
+### Core Licensing
 - 🔐 **AES-256-GCM encryption** for secure license transport and storage
 - ✅ **RSA-PSS signature verification** to ensure license authenticity
 - 🖥️ **Hardware fingerprinting** for device-bound licenses
-- 📦 **Minimal dependencies** - only requires phpseclib3 for RSA-PSS
+- 📦 **Minimal dependencies** - only requires phpseclib3 for cryptography
 - 🧪 **Fixture-based testing** for cross-language compatibility
+
+### Security Features (New in v2.0)
+- 🔑 **Ed25519 key generation and signing** for SSH authentication
+- 🛡️ **SHA-256 hashing** for integrity verification
+- 🔒 **Secure random byte generation**
+- 🗝️ **Secure file deletion** with overwriting
+- 📊 **Additional AES-GCM encryption** helpers
 
 ## Requirements
 
 - PHP 8.2 or later
 - OpenSSL extension (for AES-GCM)
+- phpseclib3 (for RSA-PSS and Ed25519)
 - Composer
 
 ## Installation
@@ -33,7 +42,27 @@ composer install
 
 ## Quick Start
 
-### 1. Activate a License (using Go CLI)
+### 1. Generate SSH Keys (Recommended)
+
+For enhanced security, generate SSH keys for client authentication:
+
+```bash
+# Using ssh-keygen
+ssh-keygen -t ed25519 -f ~/.ssh/licensing_client -N ""
+
+# Or using PHP
+php -r "
+require 'vendor/autoload.php';
+use Oarkflow\Licensing\Crypto;
+\$keys = Crypto::generateEd25519KeyPair();
+file_put_contents('private_key.pem', \$keys['private']);
+file_put_contents('public_key.pem', \$keys['public']);
+"
+```
+
+Register your public key with the licensing server before activation.
+
+### 2. Activate a License (using Go CLI)
 
 Currently, activation requires the Go CLI. The PHP SDK can then load and decrypt the activated license:
 
@@ -41,15 +70,16 @@ Currently, activation requires the Go CLI. The PHP SDK can then load and decrypt
 # Install the Go CLI
 go install github.com/oarkflow/licensing/cmd/license-cli@latest
 
-# Activate
+# Activate with SSH authentication
 license-cli activate \
   --server https://licensing.example.com \
   --email user@example.com \
   --client-id client-123 \
-  --license-key ABCD-EFGH-IJKL-MNOP-QRST-UVWX-YZ12-3456
+  --license-key ABCD-EFGH-IJKL-MNOP-QRST-UVWX-YZ12-3456 \
+  --ssh-key ~/.ssh/licensing_client
 ```
 
-### 2. Load and Verify the License
+### 3. Load and Verify the License
 
 ```php
 <?php
@@ -469,13 +499,208 @@ class LicenseTest extends TestCase
 }
 ```
 
-## Security Notes
+## Security Best Practices
 
-1. **Never log license data** - It contains sensitive cryptographic material
-2. **Protect license files** - They should have `600` permissions
-3. **Use TLS in production** - Never disable certificate verification
-4. **Validate expiration server-side** - Don't trust client-only checks
-5. **Store session keys securely** - If caching, use encrypted storage
+### 1. Use SSH Key Authentication
+
+Always use SSH keys for enhanced security:
+
+```php
+// Generate Ed25519 key pair
+$keys = \Oarkflow\Licensing\Crypto::generateEd25519KeyPair();
+file_put_contents('/secure/path/private_key.pem', $keys['private'], 0600);
+file_put_contents('/secure/path/public_key.pem', $keys['public']);
+
+// Sign requests with private key
+$privateKey = file_get_contents('/secure/path/private_key.pem');
+$signature = \Oarkflow\Licensing\Crypto::signEd25519($privateKey, $data);
+
+// Verify signature with public key
+$publicKey = file_get_contents('/secure/path/public_key.pem');
+$valid = \Oarkflow\Licensing\Crypto::verifyEd25519($publicKey, $data, $signature);
+```
+
+### 2. Implement Integrity Verification
+
+Compute and verify file hashes to detect tampering:
+
+```php
+use Oarkflow\Licensing\Crypto;
+
+// Compute hash of license file
+$hash = Crypto::computeFileSHA256($licensePath);
+
+// Verify against expected hash
+if ($hash !== $expectedHash) {
+    throw new \RuntimeException('License file has been tampered with');
+}
+
+// For sensitive data
+$dataHash = Crypto::computeSHA256($sensitiveData);
+```
+
+### 3. Secure Sensitive Files
+
+Use secure deletion for sensitive data:
+
+```php
+use Oarkflow\Licensing\Crypto;
+
+// Securely delete temporary files
+Crypto::secureDelete('/tmp/sensitive_data.tmp');
+
+// Overwrites file 3 times with random data before deletion
+```
+
+### 4. Use Cryptographically Secure Random
+
+Always use secure random generation:
+
+```php
+use Oarkflow\Licensing\Crypto;
+
+// Generate secure random bytes
+$nonce = Crypto::secureRandomBytes(12);  // For AES-GCM
+$sessionId = bin2hex(Crypto::secureRandomBytes(32));
+```
+
+### 5. Encrypt Cached Data
+
+If caching license data, encrypt it:
+
+```php
+use Oarkflow\Licensing\Crypto;
+
+// Encrypt before caching
+$key = Crypto::secureRandomBytes(32);
+$nonce = Crypto::secureRandomBytes(12);
+$encrypted = Crypto::encryptAesGcm(json_encode($license), $nonce, $key);
+
+// Store encrypted data
+file_put_contents($cachePath, json_encode([
+    'data' => base64_encode($encrypted),
+    'nonce' => base64_encode($nonce),
+]), 0600);
+
+// Decrypt when loading
+$cached = json_decode(file_get_contents($cachePath), true);
+$decrypted = Crypto::decryptAesGcm(
+    base64_decode($cached['data']),
+    base64_decode($cached['nonce']),
+    $key
+);
+```
+
+### 6. Protect License Files
+
+Set strict file permissions:
+
+```php
+// After writing license file
+chmod($licensePath, 0600);  // Owner read/write only
+chmod(dirname($licensePath), 0700);  // Owner access only
+```
+
+### 7. Use TLS in Production
+
+```php
+// NEVER do this in production:
+$context = stream_context_create([
+    'ssl' => [
+        'verify_peer' => false,  // ❌ DANGEROUS
+    ],
+]);
+
+// ✅ Always verify certificates in production
+$context = stream_context_create([
+    'ssl' => [
+        'verify_peer' => true,
+        'verify_peer_name' => true,
+        'cafile' => '/path/to/ca-bundle.crt',
+    ],
+]);
+```
+
+### 8. Never Log Sensitive Data
+
+```php
+// ❌ Don't do this
+error_log("License data: " . json_encode($license));
+error_log("Session key: " . $sessionKey);
+
+// ✅ Log only non-sensitive information
+error_log("License ID: " . $license['id']);
+error_log("Expires: " . $license['expires_at']);
+```
+
+### 9. Validate Expiration Server-Side
+
+Don't trust client-only checks:
+
+```php
+// Client-side check (can be bypassed)
+if (new \DateTimeImmutable($license['expires_at']) < new \DateTimeImmutable()) {
+    throw new \RuntimeException('License expired');
+}
+
+// ✅ Also verify server-side periodically
+// Make periodic verification requests to licensing server
+```
+
+### 10. Implement Rate Limiting
+
+Protect against brute force attacks:
+
+```php
+// Rate limit verification attempts
+$attempts = apcu_inc('license_verify_attempts', 1, $success);
+if (!$success || $attempts > 10) {
+    apcu_store('license_verify_attempts', 1, 60);  // Reset after 60s
+    $attempts = 1;
+}
+
+if ($attempts > 10) {
+    throw new \RuntimeException('Too many verification attempts');
+}
+```
+
+## Cryptographic Operations
+
+The SDK provides comprehensive cryptographic utilities:
+
+```php
+use Oarkflow\Licensing\Crypto;
+
+// Ed25519 Key Generation
+$keys = Crypto::generateEd25519KeyPair();
+// Returns: ['private' => '...PEM...', 'public' => '...PEM...']
+
+// Ed25519 Signing
+$signature = Crypto::signEd25519($privateKeyPem, $data);
+// Returns: Base64-encoded signature
+
+// Ed25519 Verification
+$valid = Crypto::verifyEd25519($publicKeyPem, $data, $signature);
+// Returns: true/false
+
+// AES-256-GCM Encryption
+$encrypted = Crypto::encryptAesGcm($plaintext, $nonce, $key);
+// Returns: ciphertext with appended authentication tag
+
+// AES-256-GCM Decryption
+$plaintext = Crypto::decryptAesGcm($ciphertext, $nonce, $key);
+
+// SHA-256 Hashing
+$hash = Crypto::computeSHA256($data);  // Hex string
+$binaryHash = Crypto::computeSHA256($data, true);  // Binary
+$fileHash = Crypto::computeFileSHA256($filepath);
+
+// Secure Random
+$randomBytes = Crypto::secureRandomBytes(32);
+
+// Secure File Deletion
+Crypto::secureDelete($filepath);  // Overwrites then deletes
+```
 
 ## RSA-PSS Salt Length
 
@@ -494,11 +719,17 @@ The salt length is calculated dynamically from the key size.
 - [ ] HTTP activation flow (currently requires Go CLI)
 - [ ] Device fingerprint generation for PHP
 - [ ] Background verification scheduler (for long-running processes)
+- [x] Ed25519 key generation and signing
+- [x] SHA-256 hashing utilities
+- [x] Secure random byte generation
+- [x] Secure file deletion
 - [ ] Checksum file validation
 - [ ] Offline grace period handling
+- [ ] Multi-layer integrity verification
 
 ## Related Documentation
 
+- [Client Security Guide](../../backend/CLIENT_SECURITY.md)
 - [SDK Developer Guide](../../docs/SDK_GUIDE.md)
 - [SDK Protocol Specification](../../docs/sdk_protocol.md)
 - [OpenAPI Specification](../../docs/api/licensing_openapi.yaml)

@@ -33,14 +33,21 @@ func (ws *WebServer) handleAPILicenses(w http.ResponseWriter, r *http.Request) {
 		ws.respondJSON(w, http.StatusOK, filtered)
 	case http.MethodPost:
 		var req struct {
-			ClientID            string `json:"client_id"`
-			ProductID           string `json:"product_id"`
-			PlanID              string `json:"plan_id"`
-			PlanSlug            string `json:"plan_slug"`
-			DurationDays        int    `json:"duration_days"`
-			MaxDevices          int    `json:"max_devices"`
-			CheckMode           string `json:"check_mode"`
-			CheckIntervalSecond int64  `json:"check_interval_seconds"`
+			ClientID            string                            `json:"client_id"`
+			ProductID           string                            `json:"product_id"`
+			PlanID              string                            `json:"plan_id"`
+			PlanSlug            string                            `json:"plan_slug"`
+			DurationDays        int                               `json:"duration_days"`
+			MaxDevices          int                               `json:"max_devices"`
+			CheckMode           string                            `json:"check_mode"`
+			CheckIntervalSecond int64                             `json:"check_interval_seconds"`
+			FeatureScopes       []licensing.FeatureScopeSelection `json:"feature_scopes"`
+		}
+		if len(req.FeatureScopes) > 0 {
+			if strings.TrimSpace(req.ProductID) == "" || strings.TrimSpace(req.PlanID) == "" {
+				ws.respondAPIError(w, http.StatusBadRequest, "feature scopes require product_id and plan_id context")
+				return
+			}
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			ws.respondAPIError(w, http.StatusBadRequest, "Invalid request body", map[string]interface{}{
@@ -73,10 +80,11 @@ func (ws *WebServer) handleAPILicenses(w http.ResponseWriter, r *http.Request) {
 		mode := licensing.ParseLicenseCheckMode(req.CheckMode)
 		interval := time.Duration(req.CheckIntervalSecond) * time.Second
 		var opts *licensing.GenerateLicenseOptions
-		if strings.TrimSpace(req.ProductID) != "" || strings.TrimSpace(req.PlanID) != "" {
+		if strings.TrimSpace(req.ProductID) != "" || strings.TrimSpace(req.PlanID) != "" || len(req.FeatureScopes) > 0 {
 			opts = &licensing.GenerateLicenseOptions{
-				ProductID: req.ProductID,
-				PlanID:    req.PlanID,
+				ProductID:     req.ProductID,
+				PlanID:        req.PlanID,
+				FeatureScopes: req.FeatureScopes,
 			}
 		}
 		license, err := ws.lm.GenerateLicenseWithOptions(
@@ -144,6 +152,8 @@ func (ws *WebServer) handleAPILicenseDetail(w http.ResponseWriter, r *http.Reque
 		ws.handleAPILicenseDeactivateDevice(w, r, ctx, licenseID)
 	case "activations":
 		ws.handleAPILicenseActivations(w, r, ctx, licenseID)
+	case "entitlements":
+		ws.handleAPILicenseEntitlements(w, r, ctx, licenseID)
 	default:
 		ws.respondAPIError(w, http.StatusNotFound, "Invalid license action")
 	}
@@ -221,6 +231,26 @@ func (ws *WebServer) handleAPILicenseActivations(w http.ResponseWriter, r *http.
 		return
 	}
 	ws.respondJSON(w, http.StatusOK, records)
+}
+
+func (ws *WebServer) handleAPILicenseEntitlements(w http.ResponseWriter, r *http.Request, ctx context.Context, licenseID string) {
+	if r.Method != http.MethodPut && r.Method != http.MethodPost {
+		ws.respondAPIError(w, http.StatusMethodNotAllowed, "Method not allowed")
+		return
+	}
+	var req struct {
+		FeatureScopes []licensing.FeatureScopeSelection `json:"feature_scopes"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		ws.respondAPIError(w, http.StatusBadRequest, "Invalid request body")
+		return
+	}
+	license, err := ws.lm.UpdateLicenseEntitlements(ctx, licenseID, req.FeatureScopes)
+	if err != nil {
+		ws.respondAPIError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	ws.respondJSON(w, http.StatusOK, license)
 }
 
 func filterLicensesByQuery(licenses []*licensing.License, filter string) []*licensing.License {

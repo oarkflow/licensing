@@ -266,17 +266,34 @@ type banClientRequest struct {
 	Reason string `json:"reason"`
 }
 
+// FeatureScopeSelection represents the desired feature/scopes state for a license.
+type FeatureScopeSelection struct {
+	FeatureID   string           `json:"feature_id,omitempty"`
+	FeatureSlug string           `json:"feature_slug"`
+	Enabled     bool             `json:"enabled"`
+	Scopes      []ScopeSelection `json:"scopes,omitempty"`
+}
+
+// ScopeSelection represents the desired permission for a scope.
+type ScopeSelection struct {
+	ScopeID    string          `json:"scope_id,omitempty"`
+	ScopeSlug  string          `json:"scope_slug"`
+	Permission ScopePermission `json:"permission"`
+	Limit      int             `json:"limit,omitempty"`
+}
+
 type createLicenseRequest struct {
-	ClientID             string            `json:"client_id"`
-	ProductID            string            `json:"product_id,omitempty"`
-	PlanID               string            `json:"plan_id,omitempty"`
-	DurationDays         int               `json:"duration_days"`
-	MaxDevices           int               `json:"max_devices"`
-	CheckMode            string            `json:"check_mode,omitempty"`
-	CheckIntervalSeconds int64             `json:"check_interval_seconds,omitempty"`
-	PlanSlug             string            `json:"plan_slug"`
-	IsTrial              bool              `json:"is_trial,omitempty"`
-	Metadata             map[string]string `json:"metadata,omitempty"`
+	ClientID             string                  `json:"client_id"`
+	ProductID            string                  `json:"product_id,omitempty"`
+	PlanID               string                  `json:"plan_id,omitempty"`
+	DurationDays         int                     `json:"duration_days"`
+	MaxDevices           int                     `json:"max_devices"`
+	CheckMode            string                  `json:"check_mode,omitempty"`
+	CheckIntervalSeconds int64                   `json:"check_interval_seconds,omitempty"`
+	PlanSlug             string                  `json:"plan_slug"`
+	IsTrial              bool                    `json:"is_trial,omitempty"`
+	Metadata             map[string]string       `json:"metadata,omitempty"`
+	FeatureScopes        []FeatureScopeSelection `json:"feature_scopes,omitempty"`
 }
 
 type licenseMutationRequest struct {

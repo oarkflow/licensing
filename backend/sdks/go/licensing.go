@@ -1,14 +1,20 @@
-// Package licensing provides a Go SDK for the hardware-key licensing service.
+// Package licensing provides a secure Go SDK for the hardware-key licensing service.
 //
-// This package re-exports the core client functionality from the main licensing
-// module, providing a clean API for Go applications to integrate license
-// activation, verification, and management.
+// This package provides enterprise-grade security features including:
+// - SSH key authentication
+// - TLS 1.3 with certificate pinning
+// - Multi-layer license verification
+// - Tamper detection
+// - Automatic key rotation support
+// - Comprehensive audit logging
 //
 // # Quick Start
 //
 //	cfg := licensing.Config{
 //	    ServerURL: "https://licensing.example.com",
-//	    ProductID: "my-product",  // Your product ID or slug (validates license belongs to this product)
+//	    ProductID: "my-product",
+//	    SSHKeyPath: "/path/to/client_key",  // Optional: SSH key authentication
+//	    CertPinning: true,                   // Optional: Enable certificate pinning
 //	}
 //	client, err := licensing.NewClient(cfg)
 //	if err != nil {
@@ -21,12 +27,34 @@
 //	    log.Fatal(err)
 //	}
 //
-//	// Verify existing license
+//	// Verify with multi-layer verification
 //	license, err := client.Verify()
 //	if err != nil {
 //	    log.Fatal(err)
 //	}
 //	fmt.Printf("Licensed plan: %s\n", license.PlanSlug)
+//
+// # Security Features
+//
+// SSH Key Authentication:
+//
+//	cfg := licensing.Config{
+//	    ServerURL: "https://licensing.example.com",
+//	    SSHKeyPath: "/home/user/.ssh/licensing_client",
+//	    ClientID: "client-12345",
+//	}
+//
+// TLS Certificate Pinning:
+//
+//	cfg := licensing.Config{
+//	    ServerURL: "https://licensing.example.com",
+//	    CertPinning: true,
+//	    PinnedCertHash: []byte{...}, // SHA256 hash of server cert
+//	}
+//
+// Tamper Detection:
+//
+//	client.EnableTamperDetection(true)
 package licensing
 
 import (

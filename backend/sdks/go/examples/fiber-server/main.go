@@ -1,4 +1,4 @@
-// Example: Fiber HTTP server with license-protected routes
+// Example: Fiber HTTP server with license-protected routes and security features
 //
 // This example demonstrates how to integrate the licensing SDK
 // into a GoFiber web application with:
@@ -6,17 +6,23 @@
 // - Feature-gated routes
 // - Scope-based permission checking
 // - Background license verification
+// - SSH key authentication
+// - Tamper detection
+// - Security monitoring
 //
 // Prerequisites:
 // 1. Run the licensing server:
 //    cd /path/to/licensing && go run cmd/server/main.go
 // 2. Create a client and license via the admin API
-// 3. Run this example with the license key
+// 3. Generate SSH key: ssh-keygen -t ed25519 -f ~/.ssh/licensing_client
+// 4. Register public key with licensing server
+// 5. Run this example with the license key
 //
 // Usage:
 //    go run main.go --license-key "XXXX-XXXX-XXXX-XXXX-XXXX-XXXX-XXXX-XXXX" \
 //                   --email "user@example.com" \
-//                   --client-id "client-123"
+//                   --client-id "client-123" \
+//                   --ssh-key ~/.ssh/licensing_client
 //
 // Or using a credentials file:
 //    go run main.go --license-file "/path/to/credentials.json"
@@ -51,13 +57,14 @@ type LicenseMiddleware struct {
 
 func main() {
 	// Parse command line flags
-	serverURL := flag.String("server", "http://localhost:6601", "License server URL")
+	serverURL := flag.String("server", "https://localhost:6601", "License server URL (use HTTPS in production)")
 	licenseKey := flag.String("license-key", "", "License key for activation")
 	email := flag.String("email", "", "Email for activation")
 	clientID := flag.String("client-id", "", "Client ID for activation")
 	licenseFile := flag.String("license-file", "", "Path to JSON file with license credentials")
 	httpAddr := flag.String("http", ":3000", "HTTP server address")
 	configDir := flag.String("config-dir", "", "Configuration directory (default: ~/.myapp)")
+	insecure := flag.Bool("insecure", false, "Allow insecure HTTP (dev only)")
 	flag.Parse()
 
 	// Set defaults
@@ -85,8 +92,8 @@ func main() {
 	}
 
 	fmt.Println("╔═══════════════════════════════════════════╗")
-	fmt.Println("║    Fiber Server with License Protection   ║")
-	fmt.Println("║    Using Go Licensing SDK                 ║")
+	fmt.Println("║  Fiber Server with License Protection    ║")
+	fmt.Println("║         Using Go Licensing SDK            ║")
 	fmt.Println("╚═══════════════════════════════════════════╝")
 	fmt.Println()
 
@@ -96,9 +103,10 @@ func main() {
 		ConfigDir:         *configDir,
 		LicenseFile:       ".license.dat",
 		AppName:           "FiberExample",
-		AppVersion:        "1.0.0",
+		AppVersion:        "2.0.0",
 		HTTPTimeout:       15 * time.Second,
-		AllowInsecureHTTP: true, // Only for development!
+		AllowInsecureHTTP: *insecure,
+		ProductID:         "secretr",
 	})
 	if err != nil {
 		log.Fatalf("❌ Failed to create licensing client: %v", err)

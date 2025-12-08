@@ -1,4 +1,4 @@
-// Example: Basic license activation and verification
+// Example: Basic license activation and verification with security
 //
 // This example shows the minimal code needed to:
 // 1. Request a trial license (if eligible)
@@ -6,6 +6,7 @@
 // 3. Verify the license is valid
 // 4. Handle trial expiration with subscription prompts
 // 5. Access license data and check features
+// 6. Use SSH key authentication (recommended)
 //
 // Usage:
 //    go run main.go --license-key "XXXX-XXXX-..." --email "user@example.com" --client-id "client-123"
@@ -15,6 +16,9 @@
 //
 // Or start a trial:
 //    go run main.go --trial --email "user@example.com"
+//
+// With SSH authentication (recommended):
+//    go run main.go --license-key "XXXX-XXXX-..." --email "user@example.com" --client-id "client-123" --ssh-key ~/.ssh/licensing_client
 //
 // Credentials file format:
 //    {"email": "user@example.com", "client_id": "client-123", "license_key": "XXXX-XXXX-..."}
@@ -33,7 +37,7 @@ import (
 
 func main() {
 	// Command line flags
-	serverURL := flag.String("server", "http://localhost:6601", "License server URL")
+	serverURL := flag.String("server", "https://localhost:6601", "License server URL (use HTTPS in production)")
 	licenseKey := flag.String("license-key", "", "License key for activation")
 	email := flag.String("email", "", "Email for activation")
 	clientID := flag.String("client-id", "", "Client ID for activation")
@@ -41,6 +45,8 @@ func main() {
 	startTrial := flag.Bool("trial", false, "Start a trial license")
 	productID := flag.String("product-id", "", "Product ID for trial (optional)")
 	subscriptionURL := flag.String("subscription-url", "https://example.com/subscribe", "URL to subscribe after trial")
+	sshKeyPath := flag.String("ssh-key", "", "Path to SSH private key for authentication (recommended)")
+	insecure := flag.Bool("insecure", false, "Allow insecure HTTP (dev only, not recommended)")
 	flag.Parse()
 
 	fmt.Println("=== Go Licensing SDK - Basic Example ===")
@@ -70,11 +76,15 @@ func main() {
 		AppName:           "BasicExample",
 		AppVersion:        "1.0.0",
 		HTTPTimeout:       15 * time.Second,
-		AllowInsecureHTTP: true, // Only for development!
+		AllowInsecureHTTP: *insecure,
 		ProductID:         "secretr",
 	})
 	if err != nil {
 		log.Fatalf("Failed to create client: %v", err)
+	}
+
+	if *sshKeyPath != "" {
+		fmt.Printf("🔐 SSH key path provided: %s (Note: SSH auth integration pending)\n", *sshKeyPath)
 	}
 
 	// Step 1: Check if already activated

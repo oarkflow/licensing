@@ -1495,10 +1495,15 @@ func (s *Server) handleLicenses(w http.ResponseWriter, r *http.Request) {
 		var opts *GenerateLicenseOptions
 		productID := strings.TrimSpace(req.ProductID)
 		planID := strings.TrimSpace(req.PlanID)
-		if productID != "" || planID != "" {
+		if len(req.FeatureScopes) > 0 && (productID == "" || planID == "") {
+			s.respondError(w, http.StatusBadRequest, "feature scopes require product_id and plan_id")
+			return
+		}
+		if productID != "" || planID != "" || len(req.FeatureScopes) > 0 {
 			opts = &GenerateLicenseOptions{
-				ProductID: productID,
-				PlanID:    planID,
+				ProductID:     productID,
+				PlanID:        planID,
+				FeatureScopes: req.FeatureScopes,
 			}
 		}
 
@@ -1870,6 +1875,23 @@ func (s *Server) handleLicenseActions(w http.ResponseWriter, r *http.Request) {
 			activations = []*ActivationRecord{}
 		}
 		s.respondJSON(w, http.StatusOK, activations)
+	case "entitlements":
+		if r.Method != http.MethodPut && r.Method != http.MethodPost {
+			s.respondError(w, http.StatusMethodNotAllowed, "Method not allowed")
+			return
+		}
+		var req struct {
+			FeatureScopes []FeatureScopeSelection `json:"feature_scopes"`
+		}
+		if !s.decodeJSONBody(w, r, &req, maxAdminPayloadBytes) {
+			return
+		}
+		license, err := s.lm.UpdateLicenseEntitlements(r.Context(), licenseID, req.FeatureScopes)
+		if err != nil {
+			s.respondError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		s.respondJSON(w, http.StatusOK, license)
 	default:
 		http.NotFound(w, r)
 	}

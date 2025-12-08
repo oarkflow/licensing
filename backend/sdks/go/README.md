@@ -1,15 +1,26 @@
 # Go Licensing SDK
 
-A Go SDK for integrating hardware-bound software licensing into Go applications. This SDK provides the full licensing client with activation, verification, background scheduling, and encrypted license storage.
+A Go SDK for integrating hardware-bound software licensing into Go applications with enterprise-grade security features. This SDK provides the full licensing client with activation, verification, background scheduling, encrypted license storage, and comprehensive security controls.
 
 ## Features
 
+### Core Licensing
 - 🔐 **AES-256-GCM encryption** for secure license transport and storage
 - ✅ **RSA-PSS signature verification** to ensure license authenticity
 - 🖥️ **Hardware fingerprinting** for device-bound licenses
 - ⏰ **Background verification** with configurable check modes
 - 🔄 **Automatic retry** with exponential backoff for network failures
 - 📦 **Zero external dependencies** for crypto operations
+
+### Security Features (New in v2.0)
+- 🔑 **SSH Key Authentication** using Ed25519 cryptography
+- 🛡️ **Tamper Detection** with multi-layer integrity verification
+- 🔒 **TLS 1.3** with optional certificate pinning
+- 📊 **Security Monitoring** and audit logging
+- 🔐 **Multi-Layer Verification** (signature, integrity, hardware, time)
+- 🗝️ **Key Rotation** support for long-lived deployments
+- 📴 **Offline Grace Period** with configurable limits
+- 🎯 **Hardware Binding** with multiple fingerprint strategies
 
 ## Requirements
 
@@ -23,7 +34,84 @@ go get github.com/oarkflow/licensing/sdks/golang
 
 ## Quick Start
 
-### 1. Basic Usage
+### 1. Generate SSH Keys (Recommended)
+
+For enhanced security, generate SSH keys for client authentication:
+
+```bash
+# Generate Ed25519 key pair
+ssh-keygen -t ed25519 -f ~/.ssh/licensing_client -N ""
+
+# Or use the SDK helper
+go run examples/secure/main.go --generate-key
+```
+
+Register your public key with the licensing server before activation.
+
+### 2. Basic Usage with SSH Authentication
+
+```go
+package main
+
+import (
+    "log"
+    "os"
+    "time"
+
+    licensing "github.com/oarkflow/licensing/sdks/go"
+)
+
+func main() {
+    // Create client with security features
+    client, err := licensing.NewClient(licensing.Config{
+        ServerURL:          "https://licensing.example.com",
+        ConfigDir:          os.Getenv("HOME") + "/.myapp",
+        LicenseFile:        ".license.dat",
+        AppName:            "MyApp",
+        AppVersion:         "2.0.0",
+
+        // Security features
+        SSHKeyPath:         os.Getenv("HOME") + "/.ssh/licensing_client",
+        ClientID:           "client-123",
+        TamperDetection:    true,
+        CertPinning:        true,
+        OfflineGracePeriod: 7 * 24 * time.Hour,
+        MaxOfflineDays:     30,
+    })
+    if err != nil {
+        log.Fatalf("failed to create client: %v", err)
+    }
+
+    // Check if already activated
+    if !client.IsActivated() {
+        // Activate with SSH key authentication
+        err := client.Activate(
+            "user@example.com",
+            "client-123",
+            "ABCD-EFGH-IJKL-MNOP-QRST-UVWX-YZ12-3456",
+        )
+        if err != nil {
+            log.Fatalf("activation failed: %v", err)
+        }
+    }
+
+    // Verify license with integrity checks
+    license, integrityResult, err := client.VerifyWithIntegrity()
+    if err != nil {
+        log.Fatalf("verification failed: %v", err)
+    }
+
+    if !integrityResult.IsValid {
+        log.Fatalf("integrity check failed: %v", integrityResult.FailedChecks)
+    }
+
+    log.Printf("License: %s (plan: %s)", license.ID, license.PlanSlug)
+    log.Printf("Expires: %s", license.ExpiresAt)
+    log.Printf("Integrity Score: %.2f%%", integrityResult.Score*100)
+}
+```
+
+### 3. Feature Gating with Entitlements
 
 ```go
 package main
@@ -109,22 +197,32 @@ if feature, ok := license.GetFeature("api"); ok {
 ```go
 import (
     "context"
+### 4. Background Verification with Security Monitoring
+
+```go
+import (
+    "context"
     "log"
     "os"
     "os/signal"
     "syscall"
+    "time"
 )
 
 func main() {
-    client, _ := licensing.New(cfg)
+    client, _ := licensing.NewClient(cfg)
 
-    // Initial verification
-    license, err := client.Verify()
+    // Initial verification with integrity checks
+    license, integrityResult, err := client.VerifyWithIntegrity()
     if err != nil {
         log.Fatalf("verification failed: %v", err)
     }
 
-    // Start background verification
+    if !integrityResult.IsValid {
+        log.Fatalf("integrity check failed: score=%.2f%%", integrityResult.Score*100)
+    }
+
+    // Start background verification with security monitoring
     ctx, cancel := context.WithCancel(context.Background())
     go client.RunBackgroundVerification(
         ctx,
@@ -133,14 +231,37 @@ func main() {
         func(updated *licensing.LicenseData) {
             // Handle license updates
             log.Printf("License updated: %s", updated.ID)
+
+            // Check security metrics
+            metrics := client.GetSecurityMetrics()
+            if metrics.TamperingAttempts > 0 {
+                log.Printf("WARNING: %d tampering attempts detected", metrics.TamperingAttempts)
+            }
         },
     )
+
+    // Periodic security checks
+    ticker := time.NewTicker(15 * time.Minute)
+    go func() {
+        for {
+            select {
+            case <-ticker.C:
+                result := client.RunIntegrityChecks()
+                if result.TamperingDetected {
+                    log.Printf("ALERT: Tampering detected: %v", result.FailedChecks)
+                }
+            case <-ctx.Done():
+                return
+            }
+        }
+    }()
 
     // Handle graceful shutdown
     sigCh := make(chan os.Signal, 1)
     signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
     <-sigCh
 
+    ticker.Stop()
     cancel() // Stop background verification
 }
 ```
@@ -151,6 +272,7 @@ func main() {
 
 ```go
 type Config struct {
+    // Basic Configuration
     ConfigDir         string        // Directory for license storage (default: ~/.licensing)
     LicenseFile       string        // License filename (default: .license.dat)
     ServerURL         string        // License server URL (default: https://localhost:6601)
@@ -159,6 +281,17 @@ type Config struct {
     HTTPTimeout       time.Duration // HTTP request timeout (default: 15s)
     CACertPath        string        // Custom CA certificate path
     AllowInsecureHTTP bool          // Allow non-TLS connections (dev only!)
+
+    // Security Configuration (v2.0+)
+    SSHKeyPath         string        // Path to SSH private key for authentication
+    ClientID           string        // Client identifier for SSH auth
+    TamperDetection    bool          // Enable runtime tamper detection
+    CertPinning        bool          // Enable TLS certificate pinning
+    OfflineGracePeriod time.Duration // Grace period for offline validation (default: 7 days)
+    MaxOfflineDays     int           // Maximum offline days allowed (default: 30)
+
+    // Hardware Fingerprinting
+    FingerprintStrategy string       // "auto", "cpu-serial", "mac-address", "disk-serial"
 }
 ```
 
@@ -174,7 +307,10 @@ The SDK respects these environment variables:
 | `LICENSE_CLIENT_EMAIL` | Activation email | — |
 | `LICENSE_CLIENT_ID` | Client identifier | — |
 | `LICENSE_CLIENT_LICENSE_KEY` | License key | — |
+| `LICENSE_CLIENT_SSH_KEY` | Path to SSH private key | — |
 | `LICENSE_CLIENT_ALLOW_INSECURE_HTTP` | Allow non-TLS | `false` |
+| `LICENSE_CLIENT_TAMPER_DETECTION` | Enable tamper detection | `false` |
+| `LICENSE_CLIENT_CERT_PINNING` | Enable certificate pinning | `false` |
 
 ## API Reference
 
@@ -606,29 +742,146 @@ func TestLicenseValidation(t *testing.T) {
 
 ## Security Best Practices
 
-1. **Always use TLS in production**
-   ```go
-   // NEVER do this in production:
-   // AllowInsecureHTTP: true  ❌
-   ```
+### 1. Use SSH Key Authentication
 
-2. **Protect license files** - The SDK sets `0600` permissions automatically
+**Always use SSH keys** in production for enhanced security:
 
-3. **Handle expiration proactively**
-   ```go
-   if time.Until(license.ExpiresAt) < 7*24*time.Hour {
-       log.Warn("License expires in less than 7 days!")
-   }
-   ```
+```go
+client, err := licensing.NewClient(licensing.Config{
+    ServerURL:  "https://licensing.example.com",
+    SSHKeyPath: "/path/to/private_key",
+    ClientID:   "your-client-id",
+})
+```
 
-4. **Don't embed license keys in code**
-   ```go
-   // ❌ Don't do this
-   licenseKey := "ABCD-..."
+Generate keys using:
+```bash
+# Using SDK
+go run examples/secure/main.go --generate-key
 
-   // ✅ Use environment variables
-   licenseKey := os.Getenv("LICENSE_KEY")
-   ```
+# Or using ssh-keygen
+ssh-keygen -t ed25519 -f ~/.ssh/licensing_client -N ""
+```
+
+### 2. Enable Tamper Detection
+
+Enable runtime integrity monitoring to detect tampering attempts:
+
+```go
+client, err := licensing.NewClient(licensing.Config{
+    TamperDetection: true,
+    // ...
+})
+
+// Periodic integrity checks
+result := client.RunIntegrityChecks()
+if result.TamperingDetected {
+    log.Fatalf("Tampering detected: %v", result.FailedChecks)
+}
+```
+
+### 3. Use TLS with Certificate Pinning
+
+**Always use TLS in production** and consider certificate pinning:
+
+```go
+client, err := licensing.NewClient(licensing.Config{
+    ServerURL:   "https://licensing.example.com",
+    CertPinning: true,  // Enable certificate pinning
+    CACertPath:  "/path/to/ca-cert.pem",  // Optional: custom CA
+})
+
+// NEVER do this in production:
+// AllowInsecureHTTP: true  ❌
+```
+
+### 4. Configure Offline Grace Period
+
+Set appropriate offline validation limits:
+
+```go
+client, err := licensing.NewClient(licensing.Config{
+    OfflineGracePeriod: 7 * 24 * time.Hour,  // 7 days grace period
+    MaxOfflineDays:     30,                   // 30 days maximum
+})
+```
+
+### 5. Monitor Security Metrics
+
+Regularly check security metrics for anomalies:
+
+```go
+metrics := client.GetSecurityMetrics()
+if metrics.TamperingAttempts > 0 {
+    log.Printf("WARNING: %d tampering attempts detected", metrics.TamperingAttempts)
+    // Take appropriate action (notify admin, block access, etc.)
+}
+if metrics.FailedVerifications > 10 {
+    log.Printf("WARNING: High failure rate: %d/%d",
+        metrics.FailedVerifications, metrics.TotalVerifications)
+}
+```
+
+### 6. Protect License Files
+
+The SDK automatically sets `0600` permissions on license files. Ensure the config directory is also protected:
+
+```bash
+chmod 700 ~/.myapp
+```
+
+### 7. Handle Expiration Proactively
+
+Alert users before expiration:
+
+```go
+if time.Until(license.ExpiresAt) < 7*24*time.Hour {
+    log.Warn("License expires in less than 7 days!")
+    // Show renewal prompt to user
+}
+```
+
+### 8. Don't Embed Secrets in Code
+
+```go
+// ❌ Don't do this
+licenseKey := "ABCD-EFGH-..."
+sshKey := "/home/hardcoded/.ssh/key"
+
+// ✅ Use environment variables or config files
+licenseKey := os.Getenv("LICENSE_KEY")
+sshKey := os.Getenv("SSH_KEY_PATH")
+```
+
+### 9. Use Multi-Layer Verification
+
+For critical applications, use `VerifyWithIntegrity()` instead of basic `Verify()`:
+
+```go
+// Basic verification (fast)
+license, err := client.Verify()
+
+// Multi-layer verification (recommended for security-critical apps)
+license, integrity, err := client.VerifyWithIntegrity()
+if err != nil || !integrity.IsValid {
+    log.Fatalf("Security verification failed")
+}
+```
+
+### 10. Implement Secure Error Handling
+
+Don't expose detailed error messages to end users:
+
+```go
+if err := client.Activate(...); err != nil {
+    // ❌ Don't show technical details to users
+    // fmt.Printf("Activation failed: %v", err)
+
+    // ✅ Show user-friendly message, log details
+    log.Printf("Activation error: %v", err)
+    fmt.Println("Unable to activate license. Please contact support.")
+}
+```
 
 ## Protocol Details
 
@@ -637,6 +890,7 @@ func TestLicenseValidation(t *testing.T) {
 - **Transport Key**: `SHA-256(fingerprint + hex(nonce))` → 32-byte AES key
 - **Encryption**: AES-256-GCM with 12-byte nonce
 - **Signature**: RSA-PSS with SHA-256 (max salt length = 222 bytes for 2048-bit keys)
+- **SSH Authentication**: Ed25519 signature with SHA-512
 - **Checksum Key**: `SHA-256("github.com/oarkflow/licensing/client-checksum/v1" + fingerprint)`
 
 ### Device Fingerprint
@@ -645,8 +899,48 @@ func TestLicenseValidation(t *testing.T) {
 fingerprint = SHA256("HOST:<hostname>|OS:<os>|ARCH:<arch>|MAC:<mac>|CPU:<cpu_hash>")
 ```
 
+### Multi-Layer Verification
+
+The SDK performs these checks during `VerifyWithIntegrity()`:
+
+1. **Signature Layer**: Verify RSA-PSS signature on license data
+2. **Integrity Layer**: Check for file tampering and unauthorized modifications
+3. **Hardware Layer**: Validate device fingerprint matches
+4. **Time Layer**: Verify license not expired and within grace period
+5. **Network Layer**: Check revocation status (if online)
+
+## Cryptographic Operations
+
+The SDK provides helper functions for advanced cryptographic operations:
+
+```go
+// Generate Ed25519 key pair
+privateKeyPEM, publicKeyPEM, err := licensing.GenerateEd25519KeyPair()
+
+// Sign data with Ed25519
+signature, err := licensing.SignRequest(privateKey, data)
+
+// Verify Ed25519 signature
+valid := licensing.VerifyEd25519Signature(publicKey, data, signature)
+
+// AES-256-GCM encryption/decryption
+ciphertext, err := licensing.EncryptAESGCM(key, plaintext)
+plaintext, err := licensing.DecryptAESGCM(key, ciphertext)
+
+// Compute SHA-256 hash
+hash := licensing.ComputeSHA256(data)
+fileHash, err := licensing.ComputeFileSHA256("/path/to/file")
+
+// Secure random bytes
+randomBytes, err := licensing.SecureRandomBytes(32)
+
+// Secure file deletion
+err := licensing.SecureDelete("/path/to/sensitive/file")
+```
+
 ## Related Documentation
 
+- [Client Security Guide](../../backend/CLIENT_SECURITY.md)
 - [SDK Developer Guide](../../docs/SDK_GUIDE.md)
 - [SDK Protocol Specification](../../docs/sdk_protocol.md)
 - [OpenAPI Specification](../../docs/api/licensing_openapi.yaml)

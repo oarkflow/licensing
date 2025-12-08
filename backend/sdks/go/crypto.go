@@ -4,13 +4,18 @@ import (
 	"crypto"
 	"crypto/aes"
 	"crypto/cipher"
+	"crypto/ed25519"
+	"crypto/rand"
 	"crypto/rsa"
 	"crypto/sha256"
 	"crypto/x509"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"encoding/pem"
 	"fmt"
+	"io/ioutil"
+	"os"
 )
 
 // DecryptStoredLicense decrypts a stored license blob using the device fingerprint.
@@ -115,4 +120,196 @@ func BuildStoredLicenseFromResponse(resp *ActivationResponse, fingerprint string
 		DeviceFingerprint: fingerprint,
 		ExpiresAt:         resp.ExpiresAt,
 	}, nil
+}
+
+// GenerateEd25519KeyPair generates an Ed25519 key pair for SSH authentication.
+// Returns private key PEM, public key PEM, and any error.
+func GenerateEd25519KeyPair() (privateKeyPEM, publicKeyPEM []byte, err error) {
+	// Generate Ed25519 key pair
+	publicKey, privateKey, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to generate key: %w", err)
+	}
+
+	// Marshal private key to PKCS8 format
+	privateKeyBytes, err := x509.MarshalPKCS8PrivateKey(privateKey)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to marshal private key: %w", err)
+	}
+
+	// Create PEM block for private key
+	privateKeyPEMBlock := &pem.Block{
+		Type:  "PRIVATE KEY",
+		Bytes: privateKeyBytes,
+	}
+	privateKeyPEM = pem.EncodeToMemory(privateKeyPEMBlock)
+
+	// Marshal public key
+	publicKeyBytes, err := x509.MarshalPKIXPublicKey(publicKey)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to marshal public key: %w", err)
+	}
+
+	// Create PEM block for public key
+	publicKeyPEMBlock := &pem.Block{
+		Type:  "PUBLIC KEY",
+		Bytes: publicKeyBytes,
+	}
+	publicKeyPEM = pem.EncodeToMemory(publicKeyPEMBlock)
+
+	return privateKeyPEM, publicKeyPEM, nil
+}
+
+// SaveKeyPairToFiles saves Ed25519 key pair to files with secure permissions.
+func SaveKeyPairToFiles(privateKeyPath, publicKeyPath string, privateKeyPEM, publicKeyPEM []byte) error {
+	// Write private key with 600 permissions (owner read/write only)
+	if err := ioutil.WriteFile(privateKeyPath, privateKeyPEM, 0600); err != nil {
+		return fmt.Errorf("failed to write private key: %w", err)
+	}
+
+	// Write public key with 644 permissions
+	if err := ioutil.WriteFile(publicKeyPath, publicKeyPEM, 0644); err != nil {
+		return fmt.Errorf("failed to write public key: %w", err)
+	}
+
+	return nil
+}
+
+// LoadEd25519PrivateKey loads an Ed25519 private key from a PEM file.
+func LoadEd25519PrivateKey(path string) (ed25519.PrivateKey, error) {
+	keyData, err := ioutil.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read key file: %w", err)
+	}
+
+	block, _ := pem.Decode(keyData)
+	if block == nil {
+		return nil, fmt.Errorf("failed to decode PEM block")
+	}
+
+	key, err := x509.ParsePKCS8PrivateKey(block.Bytes)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse private key: %w", err)
+	}
+
+	privateKey, ok := key.(ed25519.PrivateKey)
+	if !ok {
+		return nil, fmt.Errorf("key is not Ed25519 private key")
+	}
+
+	return privateKey, nil
+}
+
+// SignRequest signs request data using Ed25519 private key.
+// Returns base64-encoded signature.
+func SignRequest(privateKey ed25519.PrivateKey, data []byte) string {
+	signature := ed25519.Sign(privateKey, data)
+	return base64.StdEncoding.EncodeToString(signature)
+}
+
+// VerifyEd25519Signature verifies an Ed25519 signature.
+func VerifyEd25519Signature(publicKey ed25519.PublicKey, data []byte, signatureB64 string) error {
+	signature, err := base64.StdEncoding.DecodeString(signatureB64)
+	if err != nil {
+		return fmt.Errorf("invalid signature encoding: %w", err)
+	}
+
+	if !ed25519.Verify(publicKey, data, signature) {
+		return fmt.Errorf("signature verification failed")
+	}
+
+	return nil
+}
+
+// ComputeSHA256 computes SHA256 hash of data and returns hex string.
+func ComputeSHA256(data []byte) string {
+	hash := sha256.Sum256(data)
+	return hex.EncodeToString(hash[:])
+}
+
+// ComputeFileSHA256 computes SHA256 hash of a file.
+func ComputeFileSHA256(path string) (string, error) {
+	data, err := ioutil.ReadFile(path)
+	if err != nil {
+		return "", fmt.Errorf("failed to read file: %w", err)
+	}
+	return ComputeSHA256(data), nil
+}
+
+// SecureRandomBytes generates cryptographically secure random bytes.
+func SecureRandomBytes(n int) ([]byte, error) {
+	b := make([]byte, n)
+	if _, err := rand.Read(b); err != nil {
+		return nil, fmt.Errorf("failed to generate random bytes: %w", err)
+	}
+	return b, nil
+}
+
+// EncryptAESGCM encrypts data using AES-256-GCM.
+func EncryptAESGCM(key, plaintext []byte) (ciphertext, nonce []byte, err error) {
+	block, err := aes.NewCipher(key)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to create cipher: %w", err)
+	}
+
+	gcm, err := cipher.NewGCM(block)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to create GCM: %w", err)
+	}
+
+	nonce = make([]byte, gcm.NonceSize())
+	if _, err := rand.Read(nonce); err != nil {
+		return nil, nil, fmt.Errorf("failed to generate nonce: %w", err)
+	}
+
+	ciphertext = gcm.Seal(nil, nonce, plaintext, nil)
+	return ciphertext, nonce, nil
+}
+
+// DecryptAESGCM decrypts data using AES-256-GCM.
+func DecryptAESGCM(key, nonce, ciphertext []byte) ([]byte, error) {
+	block, err := aes.NewCipher(key)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create cipher: %w", err)
+	}
+
+	gcm, err := cipher.NewGCM(block)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create GCM: %w", err)
+	}
+
+	plaintext, err := gcm.Open(nil, nonce, ciphertext, nil)
+	if err != nil {
+		return nil, fmt.Errorf("decryption failed: %w", err)
+	}
+
+	return plaintext, nil
+}
+
+// SecureDelete overwrites a file with random data before deletion.
+func SecureDelete(path string) error {
+	// Get file info
+	info, err := os.Stat(path)
+	if err != nil {
+		return err
+	}
+
+	// Open file for writing
+	file, err := os.OpenFile(path, os.O_WRONLY, 0)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+
+	// Overwrite with random data 3 times
+	size := info.Size()
+	for i := 0; i < 3; i++ {
+		random := make([]byte, size)
+		rand.Read(random)
+		file.WriteAt(random, 0)
+		file.Sync()
+	}
+
+	// Finally delete the file
+	return os.Remove(path)
 }

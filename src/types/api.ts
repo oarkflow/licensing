@@ -59,19 +59,33 @@ export interface LicenseIdentity {
 }
 
 export interface LicenseEntitlements {
-    features?: Record<string, FeatureEntitlement>;
-    scopes?: Record<string, ScopePermission>;
+    product_id?: string;
+    product_slug?: string;
+    plan_id?: string;
+    plan_slug?: string;
+    features?: Record<string, FeatureGrant>;
 }
 
-export interface FeatureEntitlement {
-    featureSlug: string;
-    enabled: boolean;
+export interface FeatureGrant {
+    feature_id?: string;
+    feature_slug: string;
     category?: string;
-    scopes?: Record<string, ScopePermission>;
+    enabled: boolean;
+    scopes?: Record<string, ScopeGrant>;
 }
+
+export interface ScopeGrant {
+    scope_id?: string;
+    scope_slug: string;
+    permission: ScopePermissionValue;
+    limit?: number;
+    metadata?: Record<string, string>;
+}
+
+export type ScopePermissionValue = 'allow' | 'deny' | 'limit';
 
 export interface ScopePermission {
-    permission: string;
+    permission: ScopePermissionValue;
     limit?: number;
 }
 
@@ -219,6 +233,21 @@ export interface CreateLicenseRequest {
     check_mode?: string;
     check_interval_seconds?: number;
     is_trial?: boolean;
+    feature_scopes?: FeatureScopeSelection[];
+}
+
+export interface FeatureScopeSelection {
+    feature_id?: string;
+    feature_slug: string;
+    enabled: boolean;
+    scopes?: ScopeSelection[];
+}
+
+export interface ScopeSelection {
+    scope_id?: string;
+    scope_slug: string;
+    permission: ScopePermissionValue;
+    limit?: number;
 }
 
 export interface CreateClientRequest {

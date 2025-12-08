@@ -20,7 +20,9 @@ import type {
     EmailTemplate,
     Feature,
     FeatureScope,
+    FeatureScopeSelection,
     License,
+    LicenseEntitlements,
     LoginRequest,
     Plan,
     PlanFeature,
@@ -284,6 +286,16 @@ class ApiService {
         });
     }
 
+    async updateLicenseEntitlements(
+        licenseId: string,
+        featureScopes: FeatureScopeSelection[]
+    ): Promise<ApiResponse<License>> {
+        return this.request<License>(`/api/licenses/${licenseId}/entitlements`, {
+            method: 'PUT',
+            body: JSON.stringify({ feature_scopes: featureScopes }),
+        });
+    }
+
     async getLicenseActivations(licenseId: string): Promise<ApiResponse<Activation[]>> {
         return this.request<Activation[]>(`/api/licenses/${licenseId}/activations`);
     }
@@ -393,6 +405,14 @@ class ApiService {
 
     async getPlanFeatures(productId: string, planId: string): Promise<ApiResponse<PlanFeature[]>> {
         return this.request<PlanFeature[]>(`/api/products/${productId}/plans/${planId}/features`);
+    }
+
+    async getPlanEntitlements(
+        productId: string,
+        planId: string
+    ): Promise<ApiResponse<LicenseEntitlements>> {
+        const query = `?product_id=${productId}&plan_id=${planId}`;
+        return this.request<LicenseEntitlements>(`/api/entitlements${query}`);
     }
 
     async addFeatureToPlan(

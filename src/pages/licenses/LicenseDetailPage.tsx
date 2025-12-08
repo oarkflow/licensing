@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import {
@@ -61,7 +61,9 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { useToast } from '@/hooks/use-toast';
-import type { License, LicenseDevice } from '@/types/api';
+import type { FeatureScopeSelection, License, LicenseDevice } from '@/types/api';
+import { FeatureScopeSelector } from '@/components/licenses/FeatureScopeSelector';
+import { entitlementsToSelections } from '@/lib/entitlements';
 
 function getLicenseStatusBadge(license: License) {
     if (license.is_revoked) {
@@ -80,11 +82,22 @@ export function LicenseDetailPage() {
     const { toast } = useToast();
     const [revokeReason, setRevokeReason] = useState('');
     const [revokeDialogOpen, setRevokeDialogOpen] = useState(false);
+    const [entitlementDialogOpen, setEntitlementDialogOpen] = useState(false);
+    const [editedFeatureScopes, setEditedFeatureScopes] = useState<FeatureScopeSelection[]>([]);
+    const [initialFeatureScopes, setInitialFeatureScopes] = useState<FeatureScopeSelection[]>([]);
 
     const { data: licenseResponse, isLoading: licenseLoading } = useQuery({
         queryKey: ['license', id],
         queryFn: () => api.getLicense(id!),
         enabled: !!id,
+    });
+    const license = licenseResponse?.data;
+    const canEditScopes = Boolean(license?.product_id && license?.plan_id);
+
+    const { data: planEntitlementsResponse, isFetching: planEntitlementsLoading } = useQuery({
+        queryKey: ['license-plan-entitlements', license?.product_id, license?.plan_id],
+        queryFn: () => api.getPlanEntitlements(license!.product_id!, license!.plan_id!),
+        enabled: entitlementDialogOpen && canEditScopes,
     });
 
     const revokeMutation = useMutation({
@@ -123,11 +136,44 @@ export function LicenseDetailPage() {
         onSuccess: () => {
             queryClient.invalidateQueries({ queryKey: ['license', id] });
             queryClient.invalidateQueries({ queryKey: ['license-activations', id] });
+
+            useEffect(() => {
+                if (!entitlementDialogOpen) {
+                    return;
+                }
+                if (license?.entitlements) {
+                    const initial = entitlementsToSelections(license.entitlements);
+                    setEditedFeatureScopes(initial);
+                    setInitialFeatureScopes(initial);
+                    return;
+                }
+                if (planEntitlementsResponse?.data) {
+                    const initial = entitlementsToSelections(planEntitlementsResponse.data);
+                    setEditedFeatureScopes(initial);
+                    setInitialFeatureScopes(initial);
+                }
+            }, [entitlementDialogOpen, license?.entitlements, planEntitlementsResponse?.data]);
             toast({ title: 'Device deactivated successfully' });
         },
         onError: (error) => {
             toast({
                 title: 'Failed to deactivate device',
+                description: error instanceof Error ? error.message : 'Unknown error',
+                variant: 'destructive',
+            });
+        },
+    });
+
+    const updateEntitlementsMutation = useMutation({
+        mutationFn: (scopes: FeatureScopeSelection[]) => api.updateLicenseEntitlements(id!, scopes),
+        onSuccess: () => {
+            queryClient.invalidateQueries({ queryKey: ['license', id] });
+            toast({ title: 'Feature scopes updated' });
+            setEntitlementDialogOpen(false);
+        },
+        onError: (error) => {
+            toast({
+                title: 'Failed to update feature scopes',
                 description: error instanceof Error ? error.message : 'Unknown error',
                 variant: 'destructive',
             });
@@ -148,8 +194,6 @@ export function LicenseDetailPage() {
         );
     }
 
-    const license = licenseResponse?.data;
-
     if (!license) {
         return (
             <div className="flex flex-col items-center justify-center py-12">
@@ -167,8 +211,57 @@ export function LicenseDetailPage() {
         ? Object.entries(license.devices)
         : [];
 
+    const handleEntitlementsReset = () => {
+        if (planEntitlementsResponse?.data) {
+            setEditedFeatureScopes(entitlementsToSelections(planEntitlementsResponse.data));
+        } else if (license.entitlements) {
+            setEditedFeatureScopes(entitlementsToSelections(license.entitlements));
+        }
+    };
+
+    const handleEntitlementsSave = () => {
+        updateEntitlementsMutation.mutate(editedFeatureScopes);
+    };
+
+    const selectorLoading = planEntitlementsLoading && editedFeatureScopes.length === 0;
+
     return (
         <div className="space-y-6">
+            <Dialog open={entitlementDialogOpen} onOpenChange={setEntitlementDialogOpen}>
+                <DialogContent className="max-w-3xl">
+                    <DialogHeader>
+                        <DialogTitle>Adjust Feature Scopes</DialogTitle>
+                        <DialogDescription>
+                            Toggle individual scopes or apply global allow/deny to tailor this license beyond the plan defaults.
+                        </DialogDescription>
+                    </DialogHeader>
+                    <FeatureScopeSelector
+                        selections={editedFeatureScopes}
+                        initialSelections={initialFeatureScopes}
+                        onChange={setEditedFeatureScopes}
+                        loading={selectorLoading}
+                        disabled={updateEntitlementsMutation.isPending}
+                        onReset={handleEntitlementsReset}
+                    />
+                    <DialogFooter>
+                        <Button
+                            type="button"
+                            variant="ghost"
+                            onClick={() => setEntitlementDialogOpen(false)}
+                            disabled={updateEntitlementsMutation.isPending}
+                        >
+                            Cancel
+                        </Button>
+                        <Button
+                            type="button"
+                            onClick={handleEntitlementsSave}
+                            disabled={updateEntitlementsMutation.isPending}
+                        >
+                            {updateEntitlementsMutation.isPending ? 'Saving…' : 'Save Scopes'}
+                        </Button>
+                    </DialogFooter>
+                </DialogContent>
+            </Dialog>
             <div className="flex items-center gap-4">
                 <Tooltip>
                     <TooltipTrigger asChild>
@@ -458,9 +551,25 @@ export function LicenseDetailPage() {
 
             {license.entitlements && license.entitlements.features && Object.keys(license.entitlements.features).length > 0 && (
                 <Card>
-                    <CardHeader>
-                        <CardTitle>Entitlements</CardTitle>
-                        <CardDescription>Features included in this license</CardDescription>
+                    <CardHeader className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+                        <div>
+                            <CardTitle>Entitlements</CardTitle>
+                            <CardDescription>Features included in this license</CardDescription>
+                        </div>
+                        {canEditScopes ? (
+                            <Button
+                                variant="outline"
+                                size="sm"
+                                className="rounded-full"
+                                onClick={() => setEntitlementDialogOpen(true)}
+                            >
+                                Adjust Feature Scopes
+                            </Button>
+                        ) : (
+                            <Badge variant="secondary" className="rounded-full px-3 py-1 text-xs">
+                                Link to plan to edit
+                            </Badge>
+                        )}
                     </CardHeader>
                     <CardContent>
                         <div className="grid gap-2 sm:grid-cols-2 md:grid-cols-3">
