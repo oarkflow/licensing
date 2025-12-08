@@ -9,9 +9,9 @@ WORKDIR /src
 ENV CGO_ENABLED=0
 ENV GOOS=linux
 ENV GOARCH=amd64
-COPY backend/go.mod backend/go.sum ./
+COPY go.mod go.sum ./
 RUN go mod download
-COPY backend/. .
+COPY . .
 RUN go build -o /out/crm ./cmd
 
 ########################
@@ -21,8 +21,8 @@ FROM --platform=$PLATFORM alpine:latest AS backend
 RUN apk add --no-cache ca-certificates wget
 WORKDIR /srv
 COPY --from=backend-build /out/crm /usr/local/bin/crm
-COPY backend/templates ./templates
-COPY backend/dist ./dist
+COPY templates ./templates
+COPY dist ./dist
 ENV PORT=6601
 EXPOSE 6601
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 CMD wget -qO- http://127.0.0.1:6601/api/health || exit 1

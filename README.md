@@ -1,73 +1,403 @@
-# Welcome to your Lovable project
+# Hardware-Key License Manager
 
-## Project info
+A hardened license server and client that leverage pluggable signing providers (software, file-based HSM, or TPM), per-device activation, and encrypted transport to keep software licenses tamper resistant.
 
-**URL**: https://lovable.dev/projects/626b1c86-9029-4a07-a31a-42e508a1c13b
+## Features
 
-## How can I edit this code?
+- **Hardware-backed signing:** every activation payload is signed by a configurable provider (software RSA for development, file-based keys, or a TPM 2.0 device). The server exports the public half to `~/.licensing/server_public_key.pem` with `0600` permissions.
+- **Per-device locking:** activations require a deterministic device fingerprint and are bounded by `max_devices` per license.
+- **Encrypted license transport:** licenses are encrypted with AES-GCM using a key derived from the device fingerprint and nonce before being stored client-side.
+- **Integrity-bound checksum:** the client seals a SHA-256 checksum of the on-disk license blob using the device fingerprint so tampering attempts are detected before parsing, and it re-validates with the server before recreating a lost checksum.
+- **Session-keyed channel:** once activated, each device receives a unique transport key embedded inside the license payload, and subsequent HTTP traffic is re-encrypted with that key so no pre-shared secrets are required beyond TLS.
+- **Audit + admin APIs:** rate-limited HTTP endpoints for managing clients, issuing licenses, banning/unbanning, and revoking/reinstating licenses.
+- **Pluggable storage:** choose in-memory, SQLite, or JSON-on-disk storage via environment variables; disk snapshots are written atomically with `0600` permissions.
+- **Secure client storage:** the CLI enforces `chmod 600` on `~/.licensing/.license.dat`, verifies server signatures, and refuses to run if the payload or fingerprint diverge.
+- **Plan-aware entitlements:** every license carries a `plan_slug` so your application can unlock features based on the purchased plan without additional lookups.
+- **CORS support:** built-in CORS middleware for frontend integration with configurable allowed origins.
 
-There are several ways of editing your application.
+## Requirements
 
-**Use Lovable**
+- Go 1.21+
+- macOS, Linux, or Windows (server can run headless; client fingerprint helpers cover all three platforms)
 
-Simply visit the [Lovable Project](https://lovable.dev/projects/626b1c86-9029-4a07-a31a-42e508a1c13b) and start prompting.
+## Server Setup
 
-Changes made via Lovable will be committed automatically to this repo.
+1. **Install dependencies:**
+   ```bash
+   go mod tidy
+   ```
+2. **Configure environment:**
+   ```bash
+   export LICENSE_SERVER_API_KEY="super-secret-admin-key"
+   # Optional comma-separated list alternative:
+   # export LICENSE_SERVER_API_KEYS="key-one,key-two"
 
-**Use your preferred IDE**
+   # Storage backend: defaults to SQLite; override with "memory" or "file" if needed
+   # export LICENSE_SERVER_STORAGE="memory"
 
-If you want to work locally using your own IDE, you can clone this repo and push changes. Pushed changes will also be reflected in Lovable.
+   # JSON file storage path (default: ./data/licensing-state.json)
+   export LICENSE_SERVER_STORAGE_FILE="/var/lib/licensing/state.json"
 
-The only requirement is having Node.js & npm installed - [install with nvm](https://github.com/nvm-sh/nvm#installing-and-updating)
+   # SQLite database path (default: ./data/licensing.db)
+   export LICENSE_SERVER_STORAGE_SQLITE_PATH="/var/lib/licensing/licensing.db"
 
-Follow these steps:
+   # TLS (required for all non-development deployments)
+   export LICENSE_SERVER_TLS_CERT="/path/to/server.crt"
+   export LICENSE_SERVER_TLS_KEY="/path/to/server.key"
+   # Enable mutual TLS by providing a client CA bundle
+   export LICENSE_SERVER_CLIENT_CA="/path/to/clients.pem"
+   # For local testing only, set LICENSE_SERVER_ALLOW_INSECURE_HTTP=1 or pass --allow-insecure-http
 
-```sh
-# Step 1: Clone the repository using the project's Git URL.
-git clone <YOUR_GIT_URL>
+   # Default license check cadence (applied when new licenses omit check_mode)
+   export LICENSE_SERVER_DEFAULT_CHECK_MODE="monthly"
+   # Only used when DEFAULT_CHECK_MODE=CUSTOM; Go duration string (e.g. 6h, 24h)
+   export LICENSE_SERVER_DEFAULT_CHECK_INTERVAL="24h"
 
-# Step 2: Navigate to the project directory.
-cd <YOUR_PROJECT_NAME>
+   # Signing provider (software, file, or tpm)
+   export LICENSE_SERVER_KEY_PROVIDER="software"
+   # When using "file" specify the PEM private key and optional passphrase
+   export LICENSE_SERVER_KEY_FILE="/var/lib/licensing/server.key"
+   export LICENSE_SERVER_KEY_PASSPHRASE="change-me"
+   # When using "tpm" target a specific device path (defaults to /dev/tpmrm0)
+   export LICENSE_SERVER_TPM_DEVICE="/dev/tpmrm0"
 
-# Step 3: Install the necessary dependencies.
-npm i
+   # CORS configuration (optional)
+   # Comma-separated list of allowed origins for frontend applications
+   export LICENSE_SERVER_ALLOWED_ORIGINS="http://localhost:5173,http://localhost:3000,https://your-production-domain.com"
+   ```
 
-# Step 4: Start the development server with auto-reloading and an instant preview.
-npm run dev
+   > Upgrading from an older release? Follow the SQLite migration guide in `docs/sqlite_migration.md` after deploying the new binaries.
+3. **Run the server:**
+   ```bash
+   go run .
+   ```
+   On startup the server logs the active storage backend, TLS mode, and the location of the exported public key (`~/.licensing/server_public_key.pem`).
+4. **Use the admin APIs:** include `X-API-Key: <key>` on every request.
+
+## Admin API Reference
+
+All endpoints live under `http(s)://<host>:<port>/api`. Supply the `X-API-Key` header with every call.
+
+### Clients
+
+| Method | Endpoint | Description |
+| --- | --- | --- |
+| `POST` | `/api/clients` | Create a new client |
+| `GET` | `/api/clients` | List all clients |
+| `GET` | `/api/clients/{id}` | Retrieve a single client |
+| `POST` | `/api/clients/{id}/ban` | Ban a client (blocks activations) |
+| `POST` | `/api/clients/{id}/unban` | Remove the ban |
+
+**Create Client Request**
+```json
+{
+  "email": "owner@example.com",
+  "metadata": { "account_id": "acct_123" }
+}
 ```
 
-**Edit a file directly in GitHub**
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| `email` | string | yes | Primary contact email |
+| `metadata` | object | no | Arbitrary key-value data |
 
-- Navigate to the desired file(s).
-- Click the "Edit" button (pencil icon) at the top right of the file view.
-- Make your changes and commit the changes.
+### Licenses
 
-**Use GitHub Codespaces**
+| Method | Endpoint | Description |
+| --- | --- | --- |
+| `POST` | `/api/licenses` | Issue a new license |
+| `GET` | `/api/licenses` | List all licenses |
+| `GET` | `/api/licenses/{id}` | Retrieve a single license |
+| `POST` | `/api/licenses/{id}/revoke` | Revoke a license |
+| `POST` | `/api/licenses/{id}/reinstate` | Reinstate a revoked license |
 
-- Navigate to the main page of your repository.
-- Click on the "Code" button (green button) near the top right.
-- Select the "Codespaces" tab.
-- Click on "New codespace" to launch a new Codespace environment.
-- Edit files directly within the Codespace and commit and push your changes once you're done.
+**Create License Request**
+```json
+{
+  "client_id": "client-123",
+  "duration_days": 365,
+  "max_devices": 5,
+  "plan_slug": "enterprise",
+  "check_mode": "monthly",
+  "check_interval_seconds": 0
+}
+```
 
-## What technologies are used for this project?
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| `client_id` | string | yes | ID returned when creating the client |
+| `duration_days` | int | yes | How long the license is valid |
+| `max_devices` | int | yes | Maximum concurrent device activations |
+| `plan_slug` | string | yes | Plan identifier (e.g. `starter`, `pro`, `enterprise`) |
+| `check_mode` | string | no | `none`, `each_execution`, `monthly`, `yearly`, or `custom` |
+| `check_interval_seconds` | int | no | Used when `check_mode` is `custom` |
 
-This project is built with:
+**Revoke Request**
+```json
+{ "reason": "chargeback" }
+```
 
-- Vite
-- TypeScript
-- React
-- shadcn-ui
-- Tailwind CSS
+### Activation & Verification (Client-side)
 
-## How can I deploy this project?
+| Method | Endpoint | Description |
+| --- | --- | --- |
+| `POST` | `/api/activate` | Activate a device for a license key |
+| `POST` | `/api/verify` | Verify an existing activation |
 
-Simply open [Lovable](https://lovable.dev/projects/626b1c86-9029-4a07-a31a-42e508a1c13b) and click on Share -> Publish.
+These endpoints require additional headers instead of `X-API-Key`:
 
-## Can I connect a custom domain to my Lovable project?
+| Header | Description |
+| --- | --- |
+| `X-Device-Fingerprint` | SHA-256 hex fingerprint of the device |
+| `X-License-Key` | Upper-case, hyphenless license key |
+| `User-Agent` | Identifies the calling SDK/app |
 
-Yes, you can!
+**Activation Request Body**
+```json
+{
+  "email": "owner@example.com",
+  "client_id": "client-123",
+  "license_key": "AAAA-BBBB-CCCC-DDDD-...",
+  "device_fingerprint": "abcdef1234..."
+}
+```
 
-To connect a domain, navigate to Project > Settings > Domains and click Connect Domain.
+See `docs/api/README.md` for more examples and `docs/api/licensing_openapi.yaml` for the full OpenAPI spec.
 
-Read more here: [Setting up a custom domain](https://docs.lovable.dev/features/custom-domain#custom-domain)
+## Client Setup
+
+1. **(Optional) Point to a remote server:**
+   ```bash
+   export LICENSE_CLIENT_SERVER="https://licensing.example.com"
+   ```
+   Defaults to `https://localhost:6601`.
+2. **Seed activation data (optional):** Place the credentials you want to reuse into a JSON file and pass it with `--license-file`. The file must include `email`, `client_id`, and `license_key`.
+   ```json
+   {
+     "email": "owner@example.com",
+     "client_id": "client-123",
+     "license_key": "ABCD-EFGH-IJKL-MNOP-QRST-UVWX-YZ12-3456"
+   }
+   ```
+   ```bash
+   go run ./client --license-file ./activation.json
+   ```
+   The CLI prompts only for missing fields.
+3. **Run the client:**
+   ```bash
+   go run ./client --license-store production.lic
+   ```
+   The CLI will display the server it will contact, prompt for the license credentials, and persist the encrypted payload to `~/.licensing/.license.dat` with `0600` permissions.
+4. **Verification:** subsequent runs skip activation, verify the server signature, confirm the encrypted payload matches the current device fingerprint, and refuse to continue if the license is revoked or expired.
+
+### Client Configuration Options
+
+The CLI layers configuration in the following order: command-line flags → environment variables → baked-in defaults. This lets you keep sane defaults for local development while still overriding any field in CI/CD pipelines or packaged binaries.
+
+| Flag | Env Var | Description | Default |
+| --- | --- | --- | --- |
+| `--activation-mode` | — | Chooses the activation strategy (`auto`, `env`, `prompt`, `verify`). | `auto` |
+| `--config-dir` | `LICENSE_CLIENT_CONFIG_DIR` | Directory that stores the encrypted license payload. | `$HOME/.licensing` |
+| `--license-store` | `LICENSE_CLIENT_LICENSE_FILE` | File name (placed under `config-dir`) for the encrypted license blob. | `.license.dat` |
+| `--license-file` | — | Path to a JSON file containing `email`, `client_id`, and `license_key` used to pre-fill activation prompts. | — |
+| `--server-url` | `LICENSE_CLIENT_SERVER` | Licensing server base URL. | `https://localhost:6601` |
+| `--ca-cert` | `LICENSE_CLIENT_CA_CERT` | Path to a PEM bundle that should be trusted in addition to system roots. | — |
+| `--allow-insecure-http` | `LICENSE_CLIENT_ALLOW_INSECURE_HTTP` | Permit HTTP URLs and skip TLS verification (development only). | `false` |
+| `--http-timeout` | `LICENSE_CLIENT_HTTP_TIMEOUT` | HTTP client timeout (Go duration, e.g. `20s`, `1m`). | `15s` |
+
+Environment activation also consumes `LICENSE_CLIENT_EMAIL`, `LICENSE_CLIENT_LICENSE_KEY`, and **always** `LICENSE_CLIENT_ID`.
+
+| `--exec` or args after `--` | `LICENSE_CLIENT_EXEC` | Command to run once the license is verified (quote the flag value or place the command after `--`). | — |
+
+Example:
+
+```bash
+LICENSE_CLIENT_CONFIG_DIR=/var/lib/myapp-licenses \
+LICENSE_CLIENT_LICENSE_FILE=myapp.lic \
+go run ./client --server-url https://licensing.example.com --http-timeout 20s
+```
+
+### Wrapping Your Application
+
+The CLI is intentionally minimal so it can wrap any binary or script once licensing succeeds. Supply the command either with the `--exec` flag or by appending it after `--`:
+
+```bash
+go run ./client --activation-mode auto -- ./bin/my-app --serve --port 9000
+# or
+go run ./client --exec "./bin/my-app --serve --port 9000"
+```
+
+When a command is provided the client performs activation/verification and then launches it with stdin/stdout/stderr attached. The child process receives these environment variables so it can inspect license metadata without re-reading disk:
+
+- `LICENSED_USER`, `LICENSED_EMAIL`, `LICENSE_ID`
+- `LICENSE_CLIENT_ID`, `LICENSE_DEVICE_FINGERPRINT`
+- `LICENSE_EXPIRES_AT` (RFC3339 timestamp)
+- `LICENSE_DATA_JSON` (entire license payload)
+
+If you omit the wrapped command the client simply verifies the license and exits successfully. `verify` mode always skips the wrapped command even if one is provided, which is useful for boot checks or CI probes.
+
+### Activation Strategies
+
+| Mode | Flow | When to use | Example |
+| --- | --- | --- | --- |
+| `auto` | Runs verification if a license already exists. Otherwise attempts environment activation, falling back to the interactive prompt. | Production defaults where you want non-interactive first, but still allow manual entry. | `go run ./client --activation-mode auto` |
+| `env` | Requires `LICENSE_CLIENT_EMAIL`, `LICENSE_CLIENT_LICENSE_KEY`, and `LICENSE_CLIENT_ID`. | Headless containers/CI that receive license secrets via env/secret stores. | `LICENSE_CLIENT_EMAIL=john@example.com LICENSE_CLIENT_ID=client-123 LICENSE_CLIENT_LICENSE_KEY=KEY go run ./client --activation-mode env` |
+| `prompt` | Always prompt for email, license key, and client ID. | Local development, demos, or manual activation scripts. | `go run ./client --activation-mode prompt --server-url https://licensing.example.com` |
+| `verify` | Only verifies an already-activated license; never prompts, uses env credentials, or runs the wrapped command. | Hardened production startups where activations happen during image build time. | `go run ./client --activation-mode verify --config-dir /var/lib/myapp-licenses` |
+
+### Exercising Each Mode
+
+Use the new flags to test every path without touching code:
+
+1. **Auto (default layering demo):**
+   ```bash
+   go run ./client \
+     --activation-mode auto \
+     --config-dir /tmp/myapp-licenses \
+     --license-file demo.lic \
+     --server-url http://localhost:8080
+   ```
+   Verifies existing licenses, tries environment activation, then prompts as a last resort.
+
+2. **Environment activation:**
+   ```bash
+   export LICENSE_CLIENT_EMAIL=john@example.com
+   export LICENSE_CLIENT_LICENSE_KEY=ABCDE-12345-FGHIJ-67890
+   export LICENSE_CLIENT_ID=client-john
+   go run ./client --activation-mode env --http-timeout 25s
+   ```
+   Confirms that non-interactive activation succeeds (or fails with a descriptive error if credentials are wrong).
+
+3. **Interactive prompt:**
+   ```bash
+   go run ./client --activation-mode prompt --server-url https://licensing.example.com
+   ```
+   Forces the CLI to ask for credentials even if env vars are present, useful for support/debugging.
+
+4. **Verification-only:**
+   ```bash
+   go run ./client --activation-mode verify --config-dir /tmp/myapp-licenses
+   ```
+   Ensures the runner aborts if the license file is missing or tampered with, mimicking production boot checks.
+
+Each command honors the layered config above, so you can mix flags and env vars to mimic the environments where your application will ship.
+
+### License Check Modes
+
+Licenses now embed a **check mode** and the next scheduled verification timestamp (`next_check_at`). The server enforces the schedule and includes it in every encrypted payload, while the client honors it automatically.
+
+| Mode | Description |
+| --- | --- |
+| `none` | The server validates the license during activation and when tampering is detected, but no recurring checks are scheduled. |
+| `each_execution` | The client contacts the licensing server every time your application starts. If the server is unreachable the cached license is allowed, but any explicit rejection stops startup. |
+| `monthly` | The next verification is scheduled for the first day of the following month (midnight). |
+| `yearly` | Scheduled annually, relative to the most recent successful check. |
+| `custom` | Uses a fixed interval (`check_interval_seconds`). The client also spawns a background goroutine so long-running processes keep re-validating without restarts. Network outages defer verification but do not shut down the app; explicit revocations still terminate it. |
+
+If you omit `check_mode` the server now defaults to `yearly` (override via `LICENSE_SERVER_DEFAULT_CHECK_MODE`).
+
+Specify the check parameters when issuing a license:
+
+```jsonc
+POST /api/licenses
+{
+   "client_id": "client-123",
+   "duration_days": 365,
+   "max_devices": 3,
+   "check_mode": "custom",
+   "check_interval_seconds": 21600 // 6 hours
+}
+```
+
+Every activation/verification updates `next_check_at` and the timestamp is returned to the client, so you can inspect upcoming revalidation dates via either the admin API or the decrypted license payload. Background verification logs are surfaced through the sample client app (`client/app.go`) to make integration straightforward.
+
+Set `LICENSE_SERVER_DEFAULT_CHECK_MODE` (plus `LICENSE_SERVER_DEFAULT_CHECK_INTERVAL` when using `custom`) to enforce a global cadence. On startup the server applies this default to any existing licenses that still relied on the legacy "each run" behavior, so you can roll out new policies without reissuing keys.
+
+### Delegated Activations & `subject_client_id`
+
+Licenses now distinguish between the **owner** (`client_id`) and the **recipient actually running your software** (`subject_client_id`). When a reseller or team lead shares a key, you no longer have to enter the provider's ID; the server compares the supplied email to the license owner's email and links the activation automatically. The returned license payload contains:
+
+- `client_id`: the party that purchased the license (also the provider when delegation happens).
+- `subject_client_id`: the downstream identity that just activated. For direct activations this matches `client_id`; for delegated activations it is unique per recipient and is what your application should log or audit.
+- `granted_by`: present only when a provider issued the activation; it mirrors the provider's `client_id` and is inferred server-side.
+
+To activate successfully you must always provide the email + license key + `LICENSE_CLIENT_ID` (your identifier). The server checks the supplied email against the license owner email; if they match, it treats the activation as direct. If they differ, the server records you as a delegated identity and automatically sets `granted_by` to the license owner's client ID.
+
+The interactive prompt mirrors this logic and now requires only the client ID. You can still pre-fill credentials via `--license-file` or environment variables.
+
+The first delegated activation persists the recipient and returns a license file containing the recipient's `subject_client_id`. Subsequent verifications reuse that ID automatically, so downstream machines no longer need to know the provider's identity once their local license file exists.
+
+#### Example: Original Purchaser (direct activation)
+
+```bash
+export LICENSE_CLIENT_EMAIL=owner@example.com
+export LICENSE_CLIENT_LICENSE_KEY=AAAA-BBBB-CCCC-DDDD-EEEE-FFFF-GGGG-HHHH
+export LICENSE_CLIENT_ID=client-owner
+go run ./client --activation-mode env
+```
+
+#### Example: Provider issuing to a teammate/customer
+
+```bash
+export LICENSE_CLIENT_EMAIL=teammate@example.com
+export LICENSE_CLIENT_LICENSE_KEY=AAAA-BBBB-CCCC-DDDD-EEEE-FFFF-GGGG-HHHH
+export LICENSE_CLIENT_ID=client-teammate
+go run ./client --activation-mode env
+```
+
+If you prefer file-based automation, include `email`, `client_id`, and `license_key` in JSON and pass `--license-file delegated.json`; the CLI validates that the client ID is present before contacting the server.
+
+## How Server & Client Communicate
+
+1. The client derives a stable device fingerprint (hostname, OS, CPU brand, and MAC hash) and posts it with the license key to `/api/activate`.
+2. The server validates the request (API rate limit, client ban status, license quotas) before encrypting `[random 32-byte transport key || license JSON]` with AES-GCM using a key derived from the device fingerprint + nonce.
+3. The ciphertext is signed by the active signing provider and returned together with the PEM-encoded public key and expiration metadata.
+4. The client verifies the signature, derives the same transport key, decrypts the payload, persists it, and caches the transport key for future HTTPS payload encryption.
+5. Subsequent client requests and server responses are re-encrypted with that cached transport key (and identify themselves via headers) so plaintext never crosses process boundaries even if TLS terminates upstream.
+6. Every launch replays those checks, enforces file permissions, and prints detailed device + activation telemetry.
+
+## Tamper-Resistance Guidelines
+
+- **Public key hygiene:** the server writes `server_public_key.pem` only inside `~/.licensing/` with permissions `0700/0600`. Delete the file if you rotate signing keys; it will be re-created on next start.
+- **Client license file:** if the CLI detects that `~/.licensing/.license.dat` is world-readable it aborts with instructions to `chmod 600`.
+- **Detached checksum vault:** every activation records an encrypted checksum next to the license file; if it goes missing the client recontacts the server to reissue the license before recreating the checksum, and it still aborts if the checksum diverges.
+- **Signatures first:** both activation time and runtime verification fail fast if the signature or ciphertext hash mismatches.
+- **Device binding:** moving the license file to a different machine fails because the fingerprint becomes invalid and the transport key cannot be recreated.
+- **Admin controls:** revoke or ban clients to immediately block further activations; reinstating can be done via the admin endpoints without server restarts.
+
+## Testing
+
+- Run the full build:
+  ```bash
+  go build ./...
+  ```
+- Exercise the client end-to-end:
+  ```bash
+  go run ./client
+  ```
+- Hit the health probe:
+   ```bash
+   curl -k https://localhost:6601/health
+   ```
+
+## Troubleshooting
+
+| Symptom | Fix |
+| --- | --- |
+| `license not found - please activate first` | Run the client and complete activation; ensure `~/.licensing/` exists. |
+| `license file ... has insecure permissions` | Run `chmod 600 ~/.licensing/.license.dat` (Unix hosts). |
+| `license server responded 401` | Set `LICENSE_SERVER_API_KEY` on the server or provide the correct admin key in your request. |
+| `license revoked` / `client banned` | Use the admin API to reinstate the license or client once the issue is resolved. |
+| TLS errors when running locally | Either disable TLS env vars during local testing or trust the self-signed certificate from the server. |
+
+## Directory Layout
+
+```
+go.mod              # module definition
+licensing.go        # entry point + wiring
+license_manager.go  # core businesses logic + signing provider integration
+server.go           # HTTP handlers, security middleware
+storage.go          # in-memory + persistent storage backends
+client/app.go       # CLI activation + runtime verification
+README.md           # this file
+```
