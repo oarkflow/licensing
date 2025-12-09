@@ -1,5 +1,8 @@
 import { API_BASE_URL } from './api';
 import type {
+    CRMClientCredential,
+    CRMClientCredentialRequest,
+    CRMClientCredentialResetRequest,
     CRMDeviceLedgerRecord,
     CRMEntitlementAssignmentPayload,
     CRMEntitlementResponse,
@@ -154,7 +157,7 @@ class CRMService {
         this.refreshPromise = (async () => {
             try {
                 const payload = await this.request<CRMLoginResponse>(
-                    '/api/crm/token/refresh',
+                    '/api/crm/token',
                     {
                         method: 'POST',
                         body: JSON.stringify({
@@ -242,6 +245,40 @@ class CRMService {
 
     async fetchOfflineBundle(licenseId: string): Promise<CRMOfflineBundle> {
         return this.request<CRMOfflineBundle>(`/api/licensing/offline/bundles/${encodeURIComponent(licenseId)}`);
+    }
+
+    async listClientCredentials(clientId: string): Promise<CRMClientCredential[]> {
+        return this.request<CRMClientCredential[]>(`/api/crm/clients/${encodeURIComponent(clientId)}/credentials`);
+    }
+
+    async createClientCredential(clientId: string, payload: CRMClientCredentialRequest): Promise<CRMClientCredential> {
+        return this.request<CRMClientCredential>(`/api/crm/clients/${encodeURIComponent(clientId)}/credentials`, {
+            method: 'POST',
+            body: JSON.stringify(payload),
+        });
+    }
+
+    async updateClientCredential(
+        clientId: string,
+        credentialId: string,
+        payload: CRMClientCredentialResetRequest,
+    ): Promise<CRMClientCredential> {
+        return this.request<CRMClientCredential>(
+            `/api/crm/clients/${encodeURIComponent(clientId)}/credentials/${encodeURIComponent(credentialId)}`,
+            {
+                method: 'PATCH',
+                body: JSON.stringify(payload),
+            }
+        );
+    }
+
+    async deleteClientCredential(clientId: string, credentialId: string): Promise<void> {
+        await this.request<void>(
+            `/api/crm/clients/${encodeURIComponent(clientId)}/credentials/${encodeURIComponent(credentialId)}`,
+            {
+                method: 'DELETE',
+            }
+        );
     }
 }
 

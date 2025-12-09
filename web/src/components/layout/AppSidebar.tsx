@@ -18,6 +18,7 @@ import {
     Fingerprint,
     Bot,
     FileLock,
+    KeyRound,
 } from 'lucide-react';
 import {
     Sidebar,
@@ -109,6 +110,11 @@ const crmNavItems = [
         title: 'Entitlements',
         url: '/crm/entitlements',
         icon: Key,
+    },
+    {
+        title: 'Client Credentials',
+        url: '/crm/client-credentials',
+        icon: KeyRound,
     },
     {
         title: 'Devices',

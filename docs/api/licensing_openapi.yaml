@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: Licensing Service API
-  version: 0.2.0
+  version: 0.3.0
   description: |
     Contract for the licensing platform, including CRM authentication, activation, and
     verification flows that cross-language SDKs must implement.
@@ -384,6 +384,89 @@ components:
         secret:
           type: string
           description: One-time plaintext credential; store securely.
+    ClientCredentialRequest:
+      type: object
+      required: [username]
+      properties:
+        username:
+          type: string
+          description: CRM login the client will use; must be unique per tenant.
+        password:
+          type: string
+          format: password
+          description: Optional pre-defined password; omit to auto-generate.
+        roles:
+          type: array
+          items:
+            type: string
+          description: Optional CRM role overrides (defaults to `client`).
+        scopes:
+          type: array
+          items:
+            type: string
+          description: Product or API scopes allowed for this credential.
+        expires_at:
+          type: string
+          format: date-time
+          description: Optional expiration for temporary access.
+        notify_via:
+          type: string
+          enum: [email, sms, none]
+          description: Channel to deliver the one-time password when auto-generated.
+    ClientCredentialResponse:
+      type: object
+      required: [id, client_id, username, status, scopes]
+      properties:
+        id:
+          type: string
+        client_id:
+          type: string
+        username:
+          type: string
+        status:
+          type: string
+          enum: [active, suspended, revoked]
+        roles:
+          type: array
+          items:
+            type: string
+        scopes:
+          type: array
+          items:
+            type: string
+        expires_at:
+          type: string
+          format: date-time
+        last_login_at:
+          type: string
+          format: date-time
+        one_time_password:
+          type: string
+          description: Present only immediately after creation/rotation; store securely.
+    ClientCredentialResetRequest:
+      type: object
+      properties:
+        rotate_password:
+          type: boolean
+          default: true
+          description: Generate a new one-time password.
+        scopes:
+          type: array
+          items:
+            type: string
+          description: Optional replacement scopes list.
+        roles:
+          type: array
+          items:
+            type: string
+          description: Optional replacement roles list.
+        expires_at:
+          type: string
+          format: date-time
+        notify_via:
+          type: string
+          enum: [email, sms, none]
+          description: Channel for distributing the rotated secret.
     OfflineBundleResponse:
       type: object
       required: [license_id, version, bundle]
@@ -704,6 +787,166 @@ paths:
                 $ref: '#/components/schemas/ErrorResponse'
         '409':
           description: Service account name already in use.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /api/crm/clients/{clientId}/credentials:
+    post:
+      summary: Issue login credentials for an end client to access CRM/product surfaces.
+      tags: [CRM]
+      security:
+        - CRMToken: []
+      parameters:
+        - name: clientId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ClientCredentialRequest'
+      responses:
+        '201':
+          description: Credential created; return one-time password when applicable.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ClientCredentialResponse'
+        '400':
+          description: Invalid username, scope, or delivery channel.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: Access token missing or invalid.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Client not found or does not belong to caller's tenant.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '409':
+          description: Username already exists for the tenant.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+    get:
+      summary: List all issued credentials for a client.
+      tags: [CRM]
+      security:
+        - CRMToken: []
+      parameters:
+        - name: clientId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Credential list.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/ClientCredentialResponse'
+        '401':
+          description: Access token missing or invalid.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Client not found or inaccessible.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /api/crm/clients/{clientId}/credentials/{credentialId}:
+    patch:
+      summary: Rotate the password or scopes for an existing credential.
+      tags: [CRM]
+      security:
+        - CRMToken: []
+      parameters:
+        - name: clientId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: credentialId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ClientCredentialResetRequest'
+      responses:
+        '200':
+          description: Credential updated (new one-time password returned when rotated).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ClientCredentialResponse'
+        '400':
+          description: Invalid payload.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: Access token missing or invalid.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Credential not found for client.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+    delete:
+      summary: Revoke a credential so the client can no longer log in.
+      tags: [CRM]
+      security:
+        - CRMToken: []
+      parameters:
+        - name: clientId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: credentialId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '204':
+          description: Credential revoked.
+        '401':
+          description: Access token missing or invalid.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Credential not found for client.
           content:
             application/json:
               schema:

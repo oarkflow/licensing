@@ -3,6 +3,7 @@ import type { FormEvent } from 'react';
 import { useMutation } from '@tanstack/react-query';
 import { ArrowLeft, Loader2, ShieldPlus, UserPlus } from 'lucide-react';
 import { Link } from 'react-router-dom';
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -12,6 +13,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Textarea } from '@/components/ui/textarea';
 import { useToast } from '@/components/ui/use-toast';
 import { CRMGuard } from '@/components/crm/CRMAuthGate';
+import { useAuth } from '@/contexts/AuthContext';
 import useCRM from '@/hooks/useCRM';
 import crmService from '@/services/crm';
 import type { CRMTenantView } from '@/types/crm';
@@ -32,10 +34,12 @@ const parseMetadata = (input: string): Record<string, string> | undefined => {
 
 export function CRMTenantProvisionPage() {
     const { session } = useCRM();
+    const { user: adminUser } = useAuth();
     const { toast } = useToast();
     const [metadataText, setMetadataText] = useState('tier=premium');
     const [role, setRole] = useState<typeof roles[number]>('owner');
     const [lastTenant, setLastTenant] = useState<CRMTenantView | null>(null);
+    const adminActor = adminUser?.email || adminUser?.username || 'your admin session';
 
     const mutation = useMutation({
         mutationFn: crmService.provisionTenant.bind(crmService),
@@ -54,17 +58,6 @@ export function CRMTenantProvisionPage() {
             });
         },
     });
-
-    if (!session) {
-        return (
-            <CRMGuard
-                title="Authenticate to provision tenants"
-                description="Only CRM operators with write scopes can bootstrap workspaces."
-            >
-                {null}
-            </CRMGuard>
-        );
-    }
 
     const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
         event.preventDefault();
@@ -90,7 +83,8 @@ export function CRMTenantProvisionPage() {
     return (
         <CRMGuard
             title="Authenticate to provision tenants"
-            description="Only CRM operators with write scopes can bootstrap workspaces."
+            description="CRM operators with write scopes or licensing admins can bootstrap workspaces."
+            allowAdminBypass
         >
             <div className="space-y-8">
                 <div className="flex items-center justify-between">
@@ -110,6 +104,15 @@ export function CRMTenantProvisionPage() {
                         </Link>
                     </Button>
                 </div>
+
+                {!session && adminUser && (
+                    <Alert className="rounded-3xl border-primary/30 bg-primary/5">
+                        <AlertTitle>Admin session fallback</AlertTitle>
+                        <AlertDescription>
+                            {`You're provisioning as ${adminActor}. Create a dedicated CRM service token once the first tenant is online to manage entitlements securely.`}
+                        </AlertDescription>
+                    </Alert>
+                )}
 
                 <Card className="rounded-3xl border bg-card/70">
                     <CardHeader>

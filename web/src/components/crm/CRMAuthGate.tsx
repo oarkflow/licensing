@@ -10,6 +10,7 @@ import { useToast } from '@/components/ui/use-toast';
 import { Skeleton } from '@/components/ui/skeleton';
 import { cn } from '@/lib/utils';
 import useCRM from '@/hooks/useCRM';
+import { useAuth } from '@/contexts/AuthContext';
 
 interface CRMLoginPanelProps {
     title?: string;
@@ -139,24 +140,29 @@ interface CRMGuardProps {
     children: ReactNode;
     title?: string;
     description?: string;
+    allowAdminBypass?: boolean;
 }
 
-export function CRMGuard({ children, title, description }: CRMGuardProps) {
+export function CRMGuard({ children, title, description, allowAdminBypass = false }: CRMGuardProps) {
     const { isAuthenticated, isLoading } = useCRM();
+    const { isAuthenticated: isAdminAuthenticated, isLoading: authLoading } = useAuth();
 
-    if (isLoading) {
-        return (
-            <div className="space-y-4">
-                <div className="flex gap-4">
-                    <Skeleton className="h-16 flex-1 rounded-3xl" />
-                    <Skeleton className="h-16 flex-1 rounded-3xl" />
+    const crmReady = isAuthenticated;
+    const adminBypassReady = allowAdminBypass && isAdminAuthenticated;
+    const stillLoading = (!crmReady && isLoading) || (allowAdminBypass && !adminBypassReady && authLoading);
+
+    if (!crmReady && !adminBypassReady) {
+        if (stillLoading) {
+            return (
+                <div className="space-y-4">
+                    <div className="flex gap-4">
+                        <Skeleton className="h-16 flex-1 rounded-3xl" />
+                        <Skeleton className="h-16 flex-1 rounded-3xl" />
+                    </div>
+                    <Skeleton className="h-[300px] w-full rounded-3xl" />
                 </div>
-                <Skeleton className="h-[300px] w-full rounded-3xl" />
-            </div>
-        );
-    }
-
-    if (!isAuthenticated) {
+            );
+        }
         return (
             <div className="flex w-full items-center justify-center py-16">
                 <CRMLoginPanel title={title} description={description} />

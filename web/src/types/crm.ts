@@ -152,3 +152,38 @@ export interface CRMOfflineBundle {
     bundle: string;
     signature: string;
 }
+
+export type CRMClientCredentialStatus = 'active' | 'suspended' | 'revoked';
+export type CRMNotifyChannel = 'email' | 'sms' | 'none';
+
+export interface CRMClientCredential {
+    id: string;
+    client_id: string;
+    username: string;
+    status: CRMClientCredentialStatus;
+    roles: string[];
+    scopes: string[];
+    expires_at?: string;
+    last_login_at?: string;
+    created_at: string;
+    updated_at: string;
+    notify_via?: CRMNotifyChannel;
+    one_time_password?: string;
+}
+
+export interface CRMClientCredentialRequest {
+    username: string;
+    password?: string;
+    roles?: string[];
+    scopes?: string[];
+    expires_at?: string;
+    notify_via?: CRMNotifyChannel;
+}
+
+export interface CRMClientCredentialResetRequest {
+    rotate_password?: boolean;
+    scopes?: string[];
+    roles?: string[];
+    expires_at?: string;
+    notify_via?: CRMNotifyChannel;
+}

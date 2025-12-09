@@ -60,6 +60,7 @@ const CRMEntitlementsPage = lazy(() => import("@/pages/crm").then(module => ({ d
 const CRMDeviceLedgerPage = lazy(() => import("@/pages/crm").then(module => ({ default: module.CRMDeviceLedgerPage })));
 const CRMServiceAccountsPage = lazy(() => import("@/pages/crm").then(module => ({ default: module.CRMServiceAccountsPage })));
 const CRMOfflineBundlesPage = lazy(() => import("@/pages/crm").then(module => ({ default: module.CRMOfflineBundlesPage })));
+const CRMClientCredentialsPage = lazy(() => import("@/pages/crm").then(module => ({ default: module.CRMClientCredentialsPage })));
 
 const queryClient = new QueryClient({
     defaultOptions: {
@@ -151,6 +152,7 @@ const App = () => (
                                         <Route path="/crm/devices" element={<CRMDeviceLedgerPage />} />
                                         <Route path="/crm/service-accounts" element={<CRMServiceAccountsPage />} />
                                         <Route path="/crm/offline-bundles" element={<CRMOfflineBundlesPage />} />
+                                        <Route path="/crm/client-credentials" element={<CRMClientCredentialsPage />} />
 
                                         {/* Profile */}
                                         <Route path="/profile" element={<ProfilePage />} />

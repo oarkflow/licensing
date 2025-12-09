@@ -1,6 +1,6 @@
 import { Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
-import { ArrowRight, Building2, RefreshCw, Shield, Sparkles, User2 } from 'lucide-react';
+import { ArrowRight, Building2, KeyRound, RefreshCw, Shield, Sparkles, User2 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -12,6 +12,13 @@ import crmService from '@/services/crm';
 
 export function CRMOverviewPage() {
     const { session, refreshSession } = useCRM();
+    const tenantId = session?.tenant.id;
+
+    const { data: tenantProducts, isLoading } = useQuery({
+        queryKey: ['crm-tenant-products', tenantId],
+        queryFn: () => crmService.listTenantProducts(tenantId!),
+        enabled: Boolean(tenantId),
+    });
 
     if (!session) {
         return (
@@ -25,12 +32,6 @@ export function CRMOverviewPage() {
     }
 
     const { tenant, user } = session;
-
-    const { data: tenantProducts, isLoading } = useQuery({
-        queryKey: ['crm-tenant-products', tenant.id],
-        queryFn: () => crmService.listTenantProducts(tenant.id),
-        enabled: Boolean(tenant.id),
-    });
 
     const products = tenantProducts || session.products || [];
 
@@ -239,6 +240,12 @@ const quickActions = [
         description: 'Bootstrap regional workspaces with admin seeds in minutes.',
         href: '/crm/tenants/new',
         icon: Sparkles,
+    },
+    {
+        title: 'Client credentials',
+        description: 'Issue, rotate, and revoke CRM logins.',
+        href: '/crm/client-credentials',
+        icon: KeyRound,
     },
     {
         title: 'Assign entitlements',

@@ -297,8 +297,14 @@ func (s *Server) handleCRMTenants(w http.ResponseWriter, r *http.Request) {
 	if !s.enforceClientRateLimit(w, r) {
 		return
 	}
-	if _, _, ok := s.authorizeCRMRequest(w, r, "crm:write"); !ok {
-		return
+	if token := strings.TrimSpace(r.Header.Get("Authorization")); token != "" {
+		if _, _, ok := s.authorizeCRMRequest(w, r, "crm:write"); !ok {
+			return
+		}
+	} else {
+		if !s.authorizeAdmin(w, r) {
+			return
+		}
 	}
 	var payload crmTenantCreateRequest
 	if !s.decodeJSONBody(w, r, &payload, maxCRMPayloadBytes) {

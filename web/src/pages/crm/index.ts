@@ -4,3 +4,4 @@ export { CRMEntitlementsPage } from './CRMEntitlementsPage';
 export { CRMDeviceLedgerPage } from './CRMDeviceLedgerPage';
 export { CRMServiceAccountsPage } from './CRMServiceAccountsPage';
 export { CRMOfflineBundlesPage } from './CRMOfflineBundlesPage';
+export { CRMClientCredentialsPage } from './CRMClientCredentialsPage';
