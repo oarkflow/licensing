@@ -562,6 +562,41 @@ func (lm *LicenseManager) CreateClientWithProfile(ctx context.Context, email, na
 	return client, nil
 }
 
+// CreateClientWithPassword creates a client with a password (local auth). Password is hashed using bcrypt.
+func (lm *LicenseManager) CreateClientWithPassword(ctx context.Context, email, password, name, company string) (*Client, error) {
+	if strings.TrimSpace(password) == "" {
+		return nil, fmt.Errorf("password is required")
+	}
+	client, err := lm.CreateClientWithProfile(ctx, email, name, company)
+	if err != nil {
+		return nil, err
+	}
+	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+	if err != nil {
+		return nil, fmt.Errorf("failed to hash password: %w", err)
+	}
+	client.PasswordHash = hash
+	if err := lm.storage.UpdateClient(ctx, client); err != nil {
+		return nil, fmt.Errorf("failed to save client password: %w", err)
+	}
+	return client, nil
+}
+
+// VerifyClientPassword verifies an email/password combination and returns the client if valid.
+func (lm *LicenseManager) VerifyClientPassword(ctx context.Context, email, password string) (*Client, error) {
+	client, err := lm.storage.GetClientByEmail(ctx, email)
+	if err != nil {
+		return nil, err
+	}
+	if len(client.PasswordHash) == 0 {
+		return nil, fmt.Errorf("password auth not configured for this client")
+	}
+	if err := bcrypt.CompareHashAndPassword(client.PasswordHash, []byte(password)); err != nil {
+		return nil, fmt.Errorf("invalid credentials")
+	}
+	return client, nil
+}
+
 func (lm *LicenseManager) UpdateClientProfile(ctx context.Context, client *Client, name, company string) (*Client, error) {
 	if client == nil {
 		return nil, fmt.Errorf("client is required")
@@ -1675,4 +1710,185 @@ func (lm *LicenseManager) DeactivateDevice(ctx context.Context, licenseID, finge
 	license.CurrentActivations = license.DeviceCount
 
 	return lm.storage.UpdateLicense(ctx, license)
+}
+
+// Offline Validation Token Management
+
+// GenerateOfflineValidationToken creates a new offline validation token for a license
+func (lm *LicenseManager) GenerateOfflineValidationToken(ctx context.Context, licenseKey, deviceFingerprint string, maxUses int, validityDays int) (*OfflineValidationToken, error) {
+	// Get the license
+	license, err := lm.storage.GetLicenseByKey(ctx, licenseKey)
+	if err != nil {
+		return nil, fmt.Errorf("license not found: %w", err)
+	}
+
+	// Validate the license
+	if license.IsRevoked {
+		return nil, fmt.Errorf("license has been revoked")
+	}
+
+	if time.Now().After(license.ExpiresAt) {
+		return nil, fmt.Errorf("license has expired")
+	}
+
+	// Check if the device is authorized for this license
+	if len(license.Devices) == 0 {
+		return nil, fmt.Errorf("license has no activated devices")
+	}
+
+	_, exists := license.Devices[deviceFingerprint]
+	if !exists {
+		return nil, fmt.Errorf("device not found in license")
+	}
+
+	// Generate a unique token
+	tokenBytes, err := lm.randomBytes(32)
+	if err != nil {
+		return nil, fmt.Errorf("failed to generate token: %w", err)
+	}
+	token := hex.EncodeToString(tokenBytes)
+
+	// Calculate validity period
+	now := time.Now()
+	validUntil := now.AddDate(0, 0, validityDays)
+
+	// Create the offline validation token
+	offlineToken := &OfflineValidationToken{
+		Token:             token,
+		LicenseKey:        licenseKey,
+		ClientID:          license.ClientID,
+		DeviceFingerprint: deviceFingerprint,
+		ValidUntil:        validUntil,
+		UsageCount:        0,
+		MaxUses:           maxUses,
+		IsRevoked:         false,
+		CreatedAt:         now,
+	}
+
+	// Save the token
+	if err := lm.storage.SaveOfflineValidationToken(ctx, offlineToken); err != nil {
+		return nil, fmt.Errorf("failed to save offline validation token: %w", err)
+	}
+
+	return offlineToken, nil
+}
+
+// GetOfflineValidationToken retrieves an offline validation token
+func (lm *LicenseManager) GetOfflineValidationToken(ctx context.Context, token string) (*OfflineValidationToken, error) {
+	return lm.storage.GetOfflineValidationToken(ctx, token)
+}
+
+// ValidateOfflineToken validates an offline validation token and returns the license if valid
+func (lm *LicenseManager) ValidateOfflineToken(ctx context.Context, token string, deviceFingerprint string) (*License, *OfflineValidationToken, error) {
+	// Get the offline token
+	offlineToken, err := lm.storage.GetOfflineValidationToken(ctx, token)
+	if err != nil {
+		return nil, nil, fmt.Errorf("invalid offline validation token: %w", err)
+	}
+
+	// Check if token is revoked
+	if offlineToken.IsRevoked {
+		return nil, nil, fmt.Errorf("offline validation token has been revoked")
+	}
+
+	// Check if token has expired
+	if time.Now().After(offlineToken.ValidUntil) {
+		return nil, nil, fmt.Errorf("offline validation token has expired")
+	}
+
+	// Check if token has exceeded maximum uses
+	if offlineToken.UsageCount >= offlineToken.MaxUses {
+		return nil, nil, fmt.Errorf("offline validation token has exceeded maximum uses")
+	}
+
+	// Check if device fingerprint matches
+	if strings.TrimSpace(deviceFingerprint) != "" && deviceFingerprint != offlineToken.DeviceFingerprint {
+		return nil, nil, fmt.Errorf("device fingerprint does not match token")
+	}
+
+	// Get the license
+	license, err := lm.storage.GetLicenseByKey(ctx, offlineToken.LicenseKey)
+	if err != nil {
+		return nil, nil, fmt.Errorf("license not found: %w", err)
+	}
+
+	// Validate the license
+	if license.IsRevoked {
+		return nil, nil, fmt.Errorf("license has been revoked")
+	}
+
+	if time.Now().After(license.ExpiresAt) {
+		return nil, nil, fmt.Errorf("license has expired")
+	}
+
+	// Increment usage count
+	offlineToken.UsageCount++
+	if err := lm.storage.UpdateOfflineValidationToken(ctx, offlineToken); err != nil {
+		return nil, nil, fmt.Errorf("failed to update token usage: %w", err)
+	}
+
+	// Log the validation
+	validationLog := &OfflineValidationLog{
+		ID:                uuid.New().String(),
+		Token:             token,
+		LicenseKey:        license.LicenseKey,
+		ClientID:          license.ClientID,
+		DeviceFingerprint: deviceFingerprint,
+		ValidationTime:    time.Now(),
+		Success:           true,
+	}
+
+	if err := lm.storage.SaveOfflineValidationLog(ctx, validationLog); err != nil {
+		// Don't fail the validation if logging fails
+		log.Printf("Warning: failed to log offline validation: %v", err)
+	}
+
+	return license, offlineToken, nil
+}
+
+// RevokeOfflineValidationToken revokes an offline validation token
+func (lm *LicenseManager) RevokeOfflineValidationToken(ctx context.Context, token string, revokedBy string, reason string) error {
+	// Get the token
+	offlineToken, err := lm.storage.GetOfflineValidationToken(ctx, token)
+	if err != nil {
+		return fmt.Errorf("offline validation token not found: %w", err)
+	}
+
+	// Mark as revoked
+	offlineToken.IsRevoked = true
+	offlineToken.RevokedAt = time.Now()
+	offlineToken.RevokedBy = revokedBy
+	offlineToken.RevokedReason = reason
+
+	// Update the token
+	if err := lm.storage.UpdateOfflineValidationToken(ctx, offlineToken); err != nil {
+		return fmt.Errorf("failed to revoke offline validation token: %w", err)
+	}
+
+	return nil
+}
+
+// ListOfflineValidationTokens lists all offline validation tokens for a license
+func (lm *LicenseManager) ListOfflineValidationTokens(ctx context.Context, licenseKey string) ([]*OfflineValidationToken, error) {
+	return lm.storage.FindOfflineValidationTokensByLicense(ctx, licenseKey)
+}
+
+// ListOfflineValidationTokensByClient lists all offline validation tokens for a client
+func (lm *LicenseManager) ListOfflineValidationTokensByClient(ctx context.Context, clientID string) ([]*OfflineValidationToken, error) {
+	return lm.storage.FindOfflineValidationTokensByClient(ctx, clientID)
+}
+
+// GetOfflineValidationLogs gets validation logs for a token
+func (lm *LicenseManager) GetOfflineValidationLogs(ctx context.Context, token string) ([]*OfflineValidationLog, error) {
+	return lm.storage.ListOfflineValidationLogs(ctx, token)
+}
+
+// GetOfflineValidationLogsByLicense gets validation logs for a license
+func (lm *LicenseManager) GetOfflineValidationLogsByLicense(ctx context.Context, licenseKey string) ([]*OfflineValidationLog, error) {
+	return lm.storage.FindOfflineValidationLogsByLicense(ctx, licenseKey)
+}
+
+// GetOfflineValidationLogsByClient gets validation logs for a client
+func (lm *LicenseManager) GetOfflineValidationLogsByClient(ctx context.Context, clientID string) ([]*OfflineValidationLog, error) {
+	return lm.storage.FindOfflineValidationLogsByClient(ctx, clientID)
 }

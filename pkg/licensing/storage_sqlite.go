@@ -319,6 +319,12 @@ func ensureSQLiteSchema(db *squealx.DB) error {
 	if err != nil {
 		return fmt.Errorf("failed to create device_trials index: %w", err)
 	}
+
+	// Create offline validation tables
+	if err := ensureOfflineValidationSchema(db); err != nil {
+		return fmt.Errorf("failed to create offline validation schema: %w", err)
+	}
+
 	return nil
 }
 

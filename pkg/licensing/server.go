@@ -2,6 +2,7 @@ package licensing
 
 import (
 	"context"
+	"crypto/rand"
 	"crypto/sha256"
 	"crypto/subtle"
 	"crypto/tls"
@@ -18,6 +19,7 @@ import (
 	"net/smtp"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -37,6 +39,9 @@ type Server struct {
 	webHandler          http.Handler     // Optional web UI handler
 	sessionValidator    SessionValidator // Optional session validator for cookie-based auth
 	emailTemplateLoader *EmailTemplateLoader
+	// In-memory client sessions (for client authentication). Persist via storage in future.
+	clientSessions   map[string]*ClientSession
+	clientSessionsMu sync.RWMutex
 }
 
 // SessionValidator validates session cookies for authentication
@@ -127,6 +132,7 @@ func NewServer(lm *LicenseManager, port string, apiKeys []string, limiter *RateL
 		clientCAPath:        clientCAPath,
 		allowInsecureHTTP:   allowInsecure,
 		emailTemplateLoader: emailTemplateLoader,
+		clientSessions:      map[string]*ClientSession{},
 	}, nil
 }
 
@@ -885,6 +891,377 @@ func (s *Server) handleActivate(w http.ResponseWriter, r *http.Request) {
 	s.respondClientJSON(w, http.StatusOK, resp, transportKey)
 }
 
+// --- Client session helpers ---
+func (s *Server) createClientSession(ctx context.Context, clientID, ip, ua string) (*ClientSession, error) {
+	s.clientSessionsMu.Lock()
+	defer s.clientSessionsMu.Unlock()
+	sid := uuid.New().String()
+	// Generate refresh token
+	rtb := make([]byte, 32)
+	if _, err := rand.Read(rtb); err != nil {
+		return nil, err
+	}
+	refresh := base64.RawURLEncoding.EncodeToString(rtb)
+	now := time.Now()
+	sess := &ClientSession{
+		ID:           sid,
+		ClientID:     clientID,
+		RefreshToken: refresh,
+		CreatedAt:    now,
+		ExpiresAt:    now.Add(7 * 24 * time.Hour),
+		IPAddress:    ip,
+		UserAgent:    ua,
+	}
+	if s.clientSessions == nil {
+		s.clientSessions = map[string]*ClientSession{}
+	}
+	s.clientSessions[sid] = sess
+	return sess, nil
+}
+
+func (s *Server) getClientSessionByID(sessionID string) (*ClientSession, bool) {
+	s.clientSessionsMu.RLock()
+	defer s.clientSessionsMu.RUnlock()
+	if s.clientSessions == nil {
+		return nil, false
+	}
+	sess, ok := s.clientSessions[sessionID]
+	if !ok || sess == nil {
+		return nil, false
+	}
+	if sess.Revoked || time.Now().After(sess.ExpiresAt) {
+		return nil, false
+	}
+	return sess, true
+}
+
+func (s *Server) findClientSessionByRefreshToken(refresh string) (*ClientSession, bool) {
+	s.clientSessionsMu.RLock()
+	defer s.clientSessionsMu.RUnlock()
+	for _, sess := range s.clientSessions {
+		if sess != nil && sess.RefreshToken == refresh && !sess.Revoked && time.Now().Before(sess.ExpiresAt) {
+			return sess, true
+		}
+	}
+	return nil, false
+}
+
+func (s *Server) revokeClientSession(sessionID string) {
+	s.clientSessionsMu.Lock()
+	defer s.clientSessionsMu.Unlock()
+	if s.clientSessions == nil {
+		return
+	}
+	if s.clientSessions[sessionID] != nil {
+		s.clientSessions[sessionID].Revoked = true
+	}
+}
+
+// getClientFromRequest authenticates a client via Authorization:Bareer <session id>
+func (s *Server) getClientFromRequest(r *http.Request) (*Client, *ClientSession, error) {
+	auth := strings.TrimSpace(r.Header.Get("Authorization"))
+	if auth == "" {
+		// try cookie
+		cookie, err := r.Cookie("client_session")
+		if err != nil || cookie.Value == "" {
+			return nil, nil, fmt.Errorf("missing auth")
+		}
+		auth = cookie.Value
+	} else {
+		// Expect: Bearer <token>
+		parts := strings.SplitN(auth, " ", 2)
+		if len(parts) == 2 && strings.EqualFold(parts[0], "Bearer") {
+			auth = parts[1]
+		}
+	}
+	if auth == "" {
+		return nil, nil, fmt.Errorf("missing auth token")
+	}
+	sess, ok := s.getClientSessionByID(auth)
+	if !ok {
+		return nil, nil, fmt.Errorf("invalid or expired session")
+	}
+	client, err := s.lm.GetClient(r.Context(), sess.ClientID)
+	if err != nil {
+		return nil, nil, err
+	}
+	return client, sess, nil
+}
+
+// --- Client auth handlers ---
+func (s *Server) handleClientRegister(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		s.respondError(w, http.StatusMethodNotAllowed, "Method not allowed")
+		return
+	}
+	if !s.enforceRateLimit(w, r) {
+		return
+	}
+	var req struct {
+		Email    string `json:"email"`
+		Password string `json:"password"`
+		Name     string `json:"name,omitempty"`
+		Company  string `json:"company_name,omitempty"`
+	}
+	if !s.decodeJSONBody(w, r, &req, maxAdminPayloadBytes) {
+		return
+	}
+	if req.Email == "" || req.Password == "" {
+		s.respondError(w, http.StatusBadRequest, "email and password are required")
+		return
+	}
+	// Create client with password
+	client, err := s.lm.CreateClientWithPassword(r.Context(), strings.TrimSpace(req.Email), req.Password, req.Name, req.Company)
+	if err != nil {
+		s.respondError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	// Create session for the newly registered client
+	cp := clientIP(r)
+	sess, err := s.createClientSession(r.Context(), client.ID, cp, r.UserAgent())
+	if err != nil {
+		s.respondError(w, http.StatusInternalServerError, "failed to create session")
+		return
+	}
+	// Set cookie
+	http.SetCookie(w, &http.Cookie{Name: "client_session", Value: sess.ID, Path: "/", HttpOnly: true, Secure: s.hasTLSConfig(), Expires: sess.ExpiresAt})
+	// Return client with session info
+	s.respondJSON(w, http.StatusCreated, map[string]interface{}{"client": client, "session": sess})
+}
+
+func (s *Server) handleClientLogin(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		s.respondError(w, http.StatusMethodNotAllowed, "Method not allowed")
+		return
+	}
+	if !s.enforceRateLimit(w, r) {
+		return
+	}
+	var req struct {
+		Email    string `json:"email"`
+		Password string `json:"password"`
+	}
+	if !s.decodeJSONBody(w, r, &req, maxActivationPayloadBytes) {
+		return
+	}
+	client, err := s.lm.VerifyClientPassword(r.Context(), strings.TrimSpace(req.Email), req.Password)
+	if err != nil {
+		s.respondError(w, http.StatusUnauthorized, "invalid credentials")
+		return
+	}
+	cp := clientIP(r)
+	sess, err := s.createClientSession(r.Context(), client.ID, cp, r.UserAgent())
+	if err != nil {
+		s.respondError(w, http.StatusInternalServerError, "failed to create session")
+		return
+	}
+	http.SetCookie(w, &http.Cookie{Name: "client_session", Value: sess.ID, Path: "/", HttpOnly: true, Secure: s.hasTLSConfig(), Expires: sess.ExpiresAt})
+	// Response includes a refresh token that can be used by the client (if desired)
+	s.respondJSON(w, http.StatusOK, map[string]interface{}{"client": client, "session": sess})
+}
+
+func (s *Server) handleClientLogout(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		s.respondError(w, http.StatusMethodNotAllowed, "Method not allowed")
+		return
+	}
+	client, sess, err := s.getClientFromRequest(r)
+	if err != nil {
+		s.respondError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	s.revokeClientSession(sess.ID)
+	// Clear cookie
+	http.SetCookie(w, &http.Cookie{Name: "client_session", Value: "", Path: "/", HttpOnly: true, Secure: s.hasTLSConfig(), Expires: time.Now().Add(-1 * time.Hour)})
+	s.respondJSON(w, http.StatusOK, map[string]interface{}{"message": "logged out", "client": client.ID})
+}
+
+func (s *Server) handleClientProfile(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		s.respondError(w, http.StatusMethodNotAllowed, "Method not allowed")
+		return
+	}
+	client, _, err := s.getClientFromRequest(r)
+	if err != nil {
+		s.respondError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	s.respondJSON(w, http.StatusOK, client)
+}
+
+func (s *Server) handleClientRefresh(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		s.respondError(w, http.StatusMethodNotAllowed, "Method not allowed")
+		return
+	}
+	if !s.enforceRateLimit(w, r) {
+		return
+	}
+	var req struct {
+		RefreshToken string `json:"refresh_token"`
+	}
+	if !s.decodeJSONBody(w, r, &req, maxActivationPayloadBytes) {
+		return
+	}
+	if strings.TrimSpace(req.RefreshToken) == "" {
+		s.respondError(w, http.StatusBadRequest, "refresh_token is required")
+		return
+	}
+	oldSess, ok := s.findClientSessionByRefreshToken(req.RefreshToken)
+	if !ok || oldSess == nil {
+		s.respondError(w, http.StatusUnauthorized, "invalid refresh token")
+		return
+	}
+	// Create a new session (rotate)
+	newSess, err := s.createClientSession(r.Context(), oldSess.ClientID, clientIP(r), r.UserAgent())
+	if err != nil {
+		s.respondError(w, http.StatusInternalServerError, "failed to refresh session")
+		return
+	}
+	// Revoke old session
+	s.revokeClientSession(oldSess.ID)
+	// Return new session details
+	http.SetCookie(w, &http.Cookie{Name: "client_session", Value: newSess.ID, Path: "/", HttpOnly: true, Secure: s.hasTLSConfig(), Expires: newSess.ExpiresAt})
+	client, _ := s.lm.GetClient(r.Context(), newSess.ClientID)
+	s.respondJSON(w, http.StatusOK, map[string]interface{}{"client": client, "session": newSess})
+}
+
+// Offline token generation - admin-only for now
+func (s *Server) handleGenerateOfflineToken(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		s.respondError(w, http.StatusMethodNotAllowed, "Method not allowed")
+		return
+	}
+	if !s.enforceRateLimit(w, r) {
+		return
+	}
+	if !s.authorizeAdmin(w, r) {
+		return
+	}
+	var req struct {
+		LicenseKey        string `json:"license_key"`
+		DeviceFingerprint string `json:"device_fingerprint"`
+		MaxUses           int    `json:"max_uses"`
+		ValidityDays      int    `json:"validity_days"`
+	}
+	if !s.decodeJSONBody(w, r, &req, maxAdminPayloadBytes) {
+		return
+	}
+	if req.ValidityDays <= 0 {
+		req.ValidityDays = 30
+	}
+	if req.MaxUses <= 0 {
+		req.MaxUses = 30
+	}
+	token, err := s.lm.GenerateOfflineValidationToken(r.Context(), req.LicenseKey, req.DeviceFingerprint, req.MaxUses, req.ValidityDays)
+	if err != nil {
+		s.respondError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	s.respondJSON(w, http.StatusCreated, token)
+}
+
+// Offline token validation - open endpoint that validates a provided token
+func (s *Server) handleValidateOfflineToken(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		s.respondError(w, http.StatusMethodNotAllowed, "Method not allowed")
+		return
+	}
+	if !s.enforceRateLimit(w, r) {
+		return
+	}
+	var req struct {
+		OfflineToken      string `json:"offline_token"`
+		DeviceFingerprint string `json:"device_fingerprint"`
+	}
+	if !s.decodeJSONBody(w, r, &req, maxActivationPayloadBytes) {
+		return
+	}
+	license, token, err := s.lm.ValidateOfflineToken(r.Context(), strings.TrimSpace(req.OfflineToken), strings.TrimSpace(req.DeviceFingerprint))
+	if err != nil {
+		s.respondError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	resp := map[string]interface{}{
+		"license": license,
+		"token":   token,
+		"success": true,
+	}
+	s.respondJSON(w, http.StatusOK, resp)
+}
+
+// List offline tokens - admin-only. Optional query params: license_key or client_id
+func (s *Server) handleListOfflineTokens(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		s.respondError(w, http.StatusMethodNotAllowed, "Method not allowed")
+		return
+	}
+	if !s.enforceRateLimit(w, r) {
+		return
+	}
+	if !s.authorizeAdmin(w, r) {
+		return
+	}
+	q := r.URL.Query()
+	licenseKey := strings.TrimSpace(q.Get("license_key"))
+	clientID := strings.TrimSpace(q.Get("client_id"))
+	var tokens []*OfflineValidationToken
+	var err error
+	if licenseKey != "" {
+		tokens, err = s.lm.ListOfflineValidationTokens(r.Context(), licenseKey)
+	} else if clientID != "" {
+		tokens, err = s.lm.ListOfflineValidationTokensByClient(r.Context(), clientID)
+	} else {
+		tokens, err = s.lm.Storage().ListOfflineValidationTokens(r.Context())
+	}
+	if err != nil {
+		s.respondError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if tokens == nil {
+		tokens = []*OfflineValidationToken{}
+	}
+	s.respondJSON(w, http.StatusOK, tokens)
+}
+
+// List offline validation logs - admin-only. Optional params: token, license_key, client_id
+func (s *Server) handleListOfflineLogs(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		s.respondError(w, http.StatusMethodNotAllowed, "Method not allowed")
+		return
+	}
+	if !s.enforceRateLimit(w, r) {
+		return
+	}
+	if !s.authorizeAdmin(w, r) {
+		return
+	}
+	q := r.URL.Query()
+	token := strings.TrimSpace(q.Get("token"))
+	licenseKey := strings.TrimSpace(q.Get("license_key"))
+	clientID := strings.TrimSpace(q.Get("client_id"))
+	var logs []*OfflineValidationLog
+	var err error
+	if token != "" {
+		logs, err = s.lm.GetOfflineValidationLogs(r.Context(), token)
+	} else if licenseKey != "" {
+		logs, err = s.lm.GetOfflineValidationLogsByLicense(r.Context(), licenseKey)
+	} else if clientID != "" {
+		logs, err = s.lm.GetOfflineValidationLogsByClient(r.Context(), clientID)
+	} else {
+		s.respondError(w, http.StatusBadRequest, "token, license_key, or client_id is required")
+		return
+	}
+	if err != nil {
+		s.respondError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if logs == nil {
+		logs = []*OfflineValidationLog{}
+	}
+	s.respondJSON(w, http.StatusOK, logs)
+}
+
 func (s *Server) handleVerify(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		s.respondClientError(w, http.StatusMethodNotAllowed, "Method not allowed", nil)
@@ -1353,7 +1730,7 @@ func (s *Server) handleProvisionLicense(w http.ResponseWriter, r *http.Request) 
 		planLabel = plan.Slug
 	}
 	productLabel := "your account"
-	if product != nil && product.Name != "" {
+	if product.Name != "" {
 		productLabel = product.Name
 	}
 
@@ -1919,6 +2296,18 @@ func (s *Server) Start() error {
 	mux.HandleFunc("/api/products/", s.handleProductActions)
 	mux.HandleFunc("/api/entitlements", s.handleEntitlements)
 	mux.HandleFunc("/health", s.handleHealth)
+
+	// Offline validation endpoints
+	mux.HandleFunc("/api/licenses/offline-token", s.handleGenerateOfflineToken)
+	mux.HandleFunc("/api/licenses/offline-validate", s.handleValidateOfflineToken)
+	mux.HandleFunc("/api/licenses/offline-tokens", s.handleListOfflineTokens)
+	mux.HandleFunc("/api/licenses/offline-logs", s.handleListOfflineLogs)
+	// Client auth endpoints
+	mux.HandleFunc("/api/client/auth/register", s.handleClientRegister)
+	mux.HandleFunc("/api/client/auth/login", s.handleClientLogin)
+	mux.HandleFunc("/api/client/auth/logout", s.handleClientLogout)
+	mux.HandleFunc("/api/client/auth/refresh", s.handleClientRefresh)
+	mux.HandleFunc("/api/client/profile", s.handleClientProfile)
 
 	// If web UI handler is set, use it for all other routes
 	if s.webHandler != nil {

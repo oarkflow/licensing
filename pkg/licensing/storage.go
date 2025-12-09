@@ -89,6 +89,21 @@ type Storage interface {
 	HasDeviceUsedTrial(ctx context.Context, deviceFingerprint string) (bool, error)
 	ListDeviceTrials(ctx context.Context) ([]*DeviceTrial, error)
 
+	// Offline validation token management
+	SaveOfflineValidationToken(ctx context.Context, token *OfflineValidationToken) error
+	GetOfflineValidationToken(ctx context.Context, token string) (*OfflineValidationToken, error)
+	UpdateOfflineValidationToken(ctx context.Context, token *OfflineValidationToken) error
+	DeleteOfflineValidationToken(ctx context.Context, token string) error
+	ListOfflineValidationTokens(ctx context.Context) ([]*OfflineValidationToken, error)
+	FindOfflineValidationTokensByLicense(ctx context.Context, licenseKey string) ([]*OfflineValidationToken, error)
+	FindOfflineValidationTokensByClient(ctx context.Context, clientID string) ([]*OfflineValidationToken, error)
+
+	// Offline validation log management
+	SaveOfflineValidationLog(ctx context.Context, log *OfflineValidationLog) error
+	ListOfflineValidationLogs(ctx context.Context, token string) ([]*OfflineValidationLog, error)
+	FindOfflineValidationLogsByLicense(ctx context.Context, licenseKey string) ([]*OfflineValidationLog, error)
+	FindOfflineValidationLogsByClient(ctx context.Context, clientID string) ([]*OfflineValidationLog, error)
+
 	// Subscription management
 	SaveSubscription(ctx context.Context, sub *Subscription) error
 	UpdateSubscription(ctx context.Context, sub *Subscription) error
@@ -152,6 +167,9 @@ var (
 	errEmailRouteMissing       = errors.New("email route not found")
 	errEmailMessageMissing     = errors.New("email message not found")
 	errEmailStorageUnsupported = errors.New("email storage is not supported by this backend")
+	errOfflineTokenExists      = errors.New("offline validation token already exists")
+	errOfflineTokenMissing     = errors.New("offline validation token not found")
+	errOfflineLogMissing       = errors.New("offline validation log not found")
 )
 
 // DeviceTrial tracks devices that have used a trial license.
@@ -165,6 +183,38 @@ type DeviceTrial struct {
 	TrialStartedAt    time.Time `json:"trial_started_at"`
 	TrialExpiresAt    time.Time `json:"trial_expires_at"`
 	CreatedAt         time.Time `json:"created_at"`
+}
+
+// OfflineValidationToken represents a token for offline license validation
+type OfflineValidationToken struct {
+	Token             string    `json:"token"`
+	LicenseKey        string    `json:"license_key"`
+	ClientID          string    `json:"client_id"`
+	DeviceFingerprint string    `json:"device_fingerprint"`
+	ValidUntil        time.Time `json:"valid_until"`
+	UsageCount        int       `json:"usage_count"`
+	MaxUses           int       `json:"max_uses"`
+	IsRevoked         bool      `json:"is_revoked"`
+	CreatedAt         time.Time `json:"created_at"`
+	RevokedAt         time.Time `json:"revoked_at,omitempty"`
+	RevokedBy         string    `json:"revoked_by,omitempty"`
+	RevokedReason     string    `json:"revoked_reason,omitempty"`
+}
+
+// OfflineValidationLog tracks usage of offline validation tokens
+type OfflineValidationLog struct {
+	ID                string    `json:"id"`
+	Token             string    `json:"token"`
+	LicenseKey        string    `json:"license_key"`
+	ClientID          string    `json:"client_id"`
+	DeviceFingerprint string    `json:"device_fingerprint"`
+	ValidationTime    time.Time `json:"validation_time"`
+	Success           bool      `json:"success"`
+	ErrorMessage      string    `json:"error_message,omitempty"`
+	IPAddress         string    `json:"ip_address,omitempty"`
+	UserAgent         string    `json:"user_agent,omitempty"`
+	AppVersion        string    `json:"app_version,omitempty"`
+	Metadata          string    `json:"metadata,omitempty"`
 }
 
 type AdminUser struct {
@@ -226,6 +276,9 @@ type InMemoryStorage struct {
 	planFeatures   map[string]*PlanFeature // key: "planID:featureID"
 	// Trial registry
 	deviceTrials map[string]*DeviceTrial // key: device fingerprint
+	// Offline validation
+	offlineValidationTokens map[string]*OfflineValidationToken // key: token
+	offlineValidationLogs   map[string][]*OfflineValidationLog // key: token
 	// Email management
 	emailProviders       map[string]*email.EmailProvider
 	emailProvidersBySlug map[string]string
@@ -238,32 +291,34 @@ type InMemoryStorage struct {
 
 func NewInMemoryStorage() *InMemoryStorage {
 	return &InMemoryStorage{
-		clients:              make(map[string]*Client),
-		clientsByEmail:       make(map[string]string),
-		licenses:             make(map[string]*License),
-		licensesByKey:        make(map[string]string),
-		activations:          make(map[string][]*ActivationRecord),
-		adminUsers:           make(map[string]*AdminUser),
-		adminByName:          make(map[string]string),
-		apiKeys:              make(map[string]*APIKeyRecord),
-		apiKeysByHash:        make(map[string]string),
-		apiKeysByUser:        make(map[string]map[string]struct{}),
-		products:             make(map[string]*Product),
-		productsBySlug:       make(map[string]string),
-		plans:                make(map[string]*Plan),
-		plansBySlug:          make(map[string]string),
-		features:             make(map[string]*Feature),
-		featuresBySlug:       make(map[string]string),
-		featureScopes:        make(map[string]*FeatureScope),
-		planFeatures:         make(map[string]*PlanFeature),
-		deviceTrials:         make(map[string]*DeviceTrial),
-		emailProviders:       make(map[string]*email.EmailProvider),
-		emailProvidersBySlug: make(map[string]string),
-		emailTemplates:       make(map[string]*email.EmailTemplate),
-		emailTemplatesBySlug: make(map[string]string),
-		emailRoutes:          make(map[string]*email.EmailTemplateRoute),
-		emailMessages:        make(map[string]*email.EmailMessage),
-		emailEvents:          make(map[string][]*email.EmailEvent),
+		clients:                 make(map[string]*Client),
+		clientsByEmail:          make(map[string]string),
+		licenses:                make(map[string]*License),
+		licensesByKey:           make(map[string]string),
+		activations:             make(map[string][]*ActivationRecord),
+		adminUsers:              make(map[string]*AdminUser),
+		adminByName:             make(map[string]string),
+		apiKeys:                 make(map[string]*APIKeyRecord),
+		apiKeysByHash:           make(map[string]string),
+		apiKeysByUser:           make(map[string]map[string]struct{}),
+		products:                make(map[string]*Product),
+		productsBySlug:          make(map[string]string),
+		plans:                   make(map[string]*Plan),
+		plansBySlug:             make(map[string]string),
+		features:                make(map[string]*Feature),
+		featuresBySlug:          make(map[string]string),
+		featureScopes:           make(map[string]*FeatureScope),
+		planFeatures:            make(map[string]*PlanFeature),
+		deviceTrials:            make(map[string]*DeviceTrial),
+		offlineValidationTokens: make(map[string]*OfflineValidationToken),
+		offlineValidationLogs:   make(map[string][]*OfflineValidationLog),
+		emailProviders:          make(map[string]*email.EmailProvider),
+		emailProvidersBySlug:    make(map[string]string),
+		emailTemplates:          make(map[string]*email.EmailTemplate),
+		emailTemplatesBySlug:    make(map[string]string),
+		emailRoutes:             make(map[string]*email.EmailTemplateRoute),
+		emailMessages:           make(map[string]*email.EmailMessage),
+		emailEvents:             make(map[string][]*email.EmailEvent),
 	}
 }
 
@@ -967,6 +1022,22 @@ func cloneDeviceTrial(trial *DeviceTrial) *DeviceTrial {
 	return &clone
 }
 
+func cloneOfflineValidationToken(token *OfflineValidationToken) *OfflineValidationToken {
+	if token == nil {
+		return nil
+	}
+	clone := *token
+	return &clone
+}
+
+func cloneOfflineValidationLog(log *OfflineValidationLog) *OfflineValidationLog {
+	if log == nil {
+		return nil
+	}
+	clone := *log
+	return &clone
+}
+
 func (s *InMemoryStorage) SaveDeviceTrial(_ context.Context, trial *DeviceTrial) error {
 	if trial == nil {
 		return fmt.Errorf("device trial is nil")
@@ -1005,6 +1076,140 @@ func (s *InMemoryStorage) ListDeviceTrials(_ context.Context) ([]*DeviceTrial, e
 		trials = append(trials, cloneDeviceTrial(trial))
 	}
 	return trials, nil
+}
+
+// OfflineValidationToken methods for InMemoryStorage
+
+func (s *InMemoryStorage) SaveOfflineValidationToken(_ context.Context, token *OfflineValidationToken) error {
+	if token == nil {
+		return fmt.Errorf("offline validation token is nil")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, exists := s.offlineValidationTokens[token.Token]; exists {
+		return errOfflineTokenExists
+	}
+	s.offlineValidationTokens[token.Token] = cloneOfflineValidationToken(token)
+	return nil
+}
+
+func (s *InMemoryStorage) GetOfflineValidationToken(_ context.Context, token string) (*OfflineValidationToken, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	offlineToken, exists := s.offlineValidationTokens[token]
+	if !exists {
+		return nil, errOfflineTokenMissing
+	}
+	return cloneOfflineValidationToken(offlineToken), nil
+}
+
+func (s *InMemoryStorage) UpdateOfflineValidationToken(_ context.Context, token *OfflineValidationToken) error {
+	if token == nil {
+		return fmt.Errorf("offline validation token is nil")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, exists := s.offlineValidationTokens[token.Token]; !exists {
+		return errOfflineTokenMissing
+	}
+	s.offlineValidationTokens[token.Token] = cloneOfflineValidationToken(token)
+	return nil
+}
+
+func (s *InMemoryStorage) DeleteOfflineValidationToken(_ context.Context, token string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, exists := s.offlineValidationTokens[token]; !exists {
+		return errOfflineTokenMissing
+	}
+	delete(s.offlineValidationTokens, token)
+	return nil
+}
+
+func (s *InMemoryStorage) ListOfflineValidationTokens(_ context.Context) ([]*OfflineValidationToken, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	tokens := make([]*OfflineValidationToken, 0, len(s.offlineValidationTokens))
+	for _, token := range s.offlineValidationTokens {
+		tokens = append(tokens, cloneOfflineValidationToken(token))
+	}
+	return tokens, nil
+}
+
+func (s *InMemoryStorage) FindOfflineValidationTokensByLicense(_ context.Context, licenseKey string) ([]*OfflineValidationToken, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	var tokens []*OfflineValidationToken
+	for _, token := range s.offlineValidationTokens {
+		if token.LicenseKey == licenseKey {
+			tokens = append(tokens, cloneOfflineValidationToken(token))
+		}
+	}
+	return tokens, nil
+}
+
+func (s *InMemoryStorage) FindOfflineValidationTokensByClient(_ context.Context, clientID string) ([]*OfflineValidationToken, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	var tokens []*OfflineValidationToken
+	for _, token := range s.offlineValidationTokens {
+		if token.ClientID == clientID {
+			tokens = append(tokens, cloneOfflineValidationToken(token))
+		}
+	}
+	return tokens, nil
+}
+
+// OfflineValidationLog methods for InMemoryStorage
+
+func (s *InMemoryStorage) SaveOfflineValidationLog(_ context.Context, log *OfflineValidationLog) error {
+	if log == nil {
+		return fmt.Errorf("offline validation log is nil")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	cloned := cloneOfflineValidationLog(log)
+	s.offlineValidationLogs[log.Token] = append(s.offlineValidationLogs[log.Token], cloned)
+	return nil
+}
+
+func (s *InMemoryStorage) ListOfflineValidationLogs(_ context.Context, token string) ([]*OfflineValidationLog, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	logs := s.offlineValidationLogs[token]
+	result := make([]*OfflineValidationLog, 0, len(logs))
+	for _, log := range logs {
+		result = append(result, cloneOfflineValidationLog(log))
+	}
+	return result, nil
+}
+
+func (s *InMemoryStorage) FindOfflineValidationLogsByLicense(_ context.Context, licenseKey string) ([]*OfflineValidationLog, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	var logs []*OfflineValidationLog
+	for _, tokenLogs := range s.offlineValidationLogs {
+		for _, log := range tokenLogs {
+			if log.LicenseKey == licenseKey {
+				logs = append(logs, cloneOfflineValidationLog(log))
+			}
+		}
+	}
+	return logs, nil
+}
+
+func (s *InMemoryStorage) FindOfflineValidationLogsByClient(_ context.Context, clientID string) ([]*OfflineValidationLog, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	var logs []*OfflineValidationLog
+	for _, tokenLogs := range s.offlineValidationLogs {
+		for _, log := range tokenLogs {
+			if log.ClientID == clientID {
+				logs = append(logs, cloneOfflineValidationLog(log))
+			}
+		}
+	}
+	return logs, nil
 }
 
 // Subscription methods for InMemoryStorage - not fully implemented for in-memory
@@ -1332,6 +1537,66 @@ func (ps *PersistentStorage) HasDeviceUsedTrial(ctx context.Context, deviceFinge
 
 func (ps *PersistentStorage) ListDeviceTrials(ctx context.Context) ([]*DeviceTrial, error) {
 	return ps.backend.ListDeviceTrials(ctx)
+}
+
+// OfflineValidationToken methods for PersistentStorage
+
+func (ps *PersistentStorage) SaveOfflineValidationToken(ctx context.Context, token *OfflineValidationToken) error {
+	if err := ps.backend.SaveOfflineValidationToken(ctx, token); err != nil {
+		return err
+	}
+	return ps.persist()
+}
+
+func (ps *PersistentStorage) GetOfflineValidationToken(ctx context.Context, token string) (*OfflineValidationToken, error) {
+	return ps.backend.GetOfflineValidationToken(ctx, token)
+}
+
+func (ps *PersistentStorage) UpdateOfflineValidationToken(ctx context.Context, token *OfflineValidationToken) error {
+	if err := ps.backend.UpdateOfflineValidationToken(ctx, token); err != nil {
+		return err
+	}
+	return ps.persist()
+}
+
+func (ps *PersistentStorage) DeleteOfflineValidationToken(ctx context.Context, token string) error {
+	if err := ps.backend.DeleteOfflineValidationToken(ctx, token); err != nil {
+		return err
+	}
+	return ps.persist()
+}
+
+func (ps *PersistentStorage) ListOfflineValidationTokens(ctx context.Context) ([]*OfflineValidationToken, error) {
+	return ps.backend.ListOfflineValidationTokens(ctx)
+}
+
+func (ps *PersistentStorage) FindOfflineValidationTokensByLicense(ctx context.Context, licenseKey string) ([]*OfflineValidationToken, error) {
+	return ps.backend.FindOfflineValidationTokensByLicense(ctx, licenseKey)
+}
+
+func (ps *PersistentStorage) FindOfflineValidationTokensByClient(ctx context.Context, clientID string) ([]*OfflineValidationToken, error) {
+	return ps.backend.FindOfflineValidationTokensByClient(ctx, clientID)
+}
+
+// OfflineValidationLog methods for PersistentStorage
+
+func (ps *PersistentStorage) SaveOfflineValidationLog(ctx context.Context, log *OfflineValidationLog) error {
+	if err := ps.backend.SaveOfflineValidationLog(ctx, log); err != nil {
+		return err
+	}
+	return ps.persist()
+}
+
+func (ps *PersistentStorage) ListOfflineValidationLogs(ctx context.Context, token string) ([]*OfflineValidationLog, error) {
+	return ps.backend.ListOfflineValidationLogs(ctx, token)
+}
+
+func (ps *PersistentStorage) FindOfflineValidationLogsByLicense(ctx context.Context, licenseKey string) ([]*OfflineValidationLog, error) {
+	return ps.backend.FindOfflineValidationLogsByLicense(ctx, licenseKey)
+}
+
+func (ps *PersistentStorage) FindOfflineValidationLogsByClient(ctx context.Context, clientID string) ([]*OfflineValidationLog, error) {
+	return ps.backend.FindOfflineValidationLogsByClient(ctx, clientID)
 }
 
 // Subscription methods - forward to backend
