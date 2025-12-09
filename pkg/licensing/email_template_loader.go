@@ -40,32 +40,65 @@ func NewEmailTemplateLoader() *EmailTemplateLoader {
 
 // LoadTemplates loads email templates from the templates directory
 func (etl *EmailTemplateLoader) LoadTemplates() error {
-	// Navigate to the templates/email directory from project root
-	templatesDir := filepath.Join("templates", "email")
-	// Read all HTML files from the templates directory
-	files, err := os.ReadDir(templatesDir)
-	if err != nil {
-		return fmt.Errorf("failed to read templates directory: %w", err)
+	customDir := strings.TrimSpace(os.Getenv("LICENSE_SERVER_TEMPLATE_DIR"))
+	if customDir != "" {
+		return etl.loadTemplateDir(customDir)
 	}
 
-	// Load each template file
-	for _, file := range files {
-		if !file.IsDir() && strings.HasSuffix(file.Name(), ".html") {
-			templateName := strings.TrimSuffix(file.Name(), ".html")
-			templatePath := filepath.Join(templatesDir, file.Name())
-
-			content, err := os.ReadFile(templatePath)
-			if err != nil {
-				return fmt.Errorf("failed to read template %s: %w", templateName, err)
-			}
-
-			tmpl, err := template.New(templateName).Funcs(etl.templateFuncs()).Parse(string(content))
-			if err != nil {
-				return fmt.Errorf("failed to parse template %s: %w", templateName, err)
-			}
-
-			etl.templates[templateName] = tmpl
+	var tried []string
+	for _, dir := range templateDirCandidates() {
+		info, err := os.Stat(dir)
+		if err != nil || !info.IsDir() {
+			tried = append(tried, dir)
+			continue
 		}
+		return etl.loadTemplateDir(dir)
+	}
+
+	return fmt.Errorf("failed to locate email templates (checked: %s)", strings.Join(tried, ", "))
+}
+
+func templateDirCandidates() []string {
+	prefixes := []string{".", "..", "../..", "../../.."}
+	dirs := make([]string, 0, len(prefixes))
+	for _, prefix := range prefixes {
+		dirs = append(dirs, filepath.Join(prefix, "templates", "email"))
+	}
+	return dirs
+}
+
+func (etl *EmailTemplateLoader) loadTemplateDir(dir string) error {
+	files, err := os.ReadDir(dir)
+	if err != nil {
+		return fmt.Errorf("failed to read templates directory %s: %w", dir, err)
+	}
+
+	for key := range etl.templates {
+		delete(etl.templates, key)
+	}
+
+	for _, file := range files {
+		if file.IsDir() || !strings.HasSuffix(file.Name(), ".html") {
+			continue
+		}
+		templateName := strings.TrimSuffix(file.Name(), ".html")
+		templatePath := filepath.Join(dir, file.Name())
+
+		content, err := os.ReadFile(templatePath)
+		if err != nil {
+			return fmt.Errorf("failed to read template %s: %w", templateName, err)
+		}
+
+		tmpl, err := template.New(templateName).Funcs(etl.templateFuncs()).Parse(string(content))
+		if err != nil {
+			return fmt.Errorf("failed to parse template %s: %w", templateName, err)
+		}
+
+		etl.templates[templateName] = tmpl
+	}
+
+	if len(etl.templates) == 0 {
+		return fmt.Errorf("no email templates found in %s", dir)
 	}
 
 	return nil

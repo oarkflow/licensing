@@ -51,7 +51,7 @@ const resolveAPIBaseURL = (): string => {
     return '';
 };
 
-const API_BASE_URL = resolveAPIBaseURL();
+export const API_BASE_URL = resolveAPIBaseURL();
 
 // Request queue for intelligent rate limiting
 interface QueuedRequest {

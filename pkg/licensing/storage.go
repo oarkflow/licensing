@@ -12,6 +12,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/oarkflow/licensing/pkg/crm"
 	email "github.com/oarkflow/licensing/pkg/email"
 )
 
@@ -121,6 +122,9 @@ type Storage interface {
 	LeaseNextEmail(ctx context.Context, dueBefore time.Time) (*email.EmailMessage, error)
 	AppendEmailEvent(ctx context.Context, event *email.EmailEvent) error
 	ListEmailEvents(ctx context.Context, messageID string) ([]*email.EmailEvent, error)
+
+	// CRMRepository exposes the CRM persistence backend used by the CRM service.
+	CRMRepository() crm.Repository
 }
 
 var (
@@ -234,6 +238,7 @@ type InMemoryStorage struct {
 	emailRoutes          map[string]*email.EmailTemplateRoute
 	emailMessages        map[string]*email.EmailMessage
 	emailEvents          map[string][]*email.EmailEvent
+	crmRepo              crm.Repository
 }
 
 func NewInMemoryStorage() *InMemoryStorage {
@@ -264,7 +269,12 @@ func NewInMemoryStorage() *InMemoryStorage {
 		emailRoutes:          make(map[string]*email.EmailTemplateRoute),
 		emailMessages:        make(map[string]*email.EmailMessage),
 		emailEvents:          make(map[string][]*email.EmailEvent),
+		crmRepo:              crm.NewMemoryRepository(),
 	}
+}
+
+func (s *InMemoryStorage) CRMRepository() crm.Repository {
+	return s.crmRepo
 }
 
 type storageSnapshot struct {
@@ -1170,6 +1180,7 @@ func (s *InMemoryStorage) loadSnapshot(snapshot *storageSnapshot) {
 type PersistentStorage struct {
 	backend *InMemoryStorage
 	path    string
+	crmRepo crm.Repository
 }
 
 func NewPersistentStorage(path string) (*PersistentStorage, error) {
@@ -1179,6 +1190,7 @@ func NewPersistentStorage(path string) (*PersistentStorage, error) {
 	ps := &PersistentStorage{
 		backend: NewInMemoryStorage(),
 		path:    path,
+		crmRepo: crm.NewMemoryRepository(),
 	}
 	if err := ps.loadFromDisk(); err != nil {
 		if !errors.Is(err, os.ErrNotExist) {
@@ -1479,6 +1491,10 @@ func (ps *PersistentStorage) AppendEmailEvent(ctx context.Context, event *email.
 
 func (ps *PersistentStorage) ListEmailEvents(ctx context.Context, messageID string) ([]*email.EmailEvent, error) {
 	return ps.backend.ListEmailEvents(ctx, messageID)
+}
+
+func (ps *PersistentStorage) CRMRepository() crm.Repository {
+	return ps.crmRepo
 }
 
 func (ps *PersistentStorage) persist() error {

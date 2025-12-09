@@ -5,6 +5,7 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import { AuthProvider } from "@/contexts/AuthContext";
+import { CRMProvider } from "@/contexts/CRMContext";
 import { ThemeProvider } from "@/contexts/ThemeContext";
 import { AppLayout } from "@/components/layout";
 
@@ -53,6 +54,13 @@ const MessagingComposePage = lazy(() => import("@/pages/messaging").then(module 
 
 const NotFound = lazy(() => import("./pages/NotFound"));
 
+const CRMOverviewPage = lazy(() => import("@/pages/crm").then(module => ({ default: module.CRMOverviewPage })));
+const CRMTenantProvisionPage = lazy(() => import("@/pages/crm").then(module => ({ default: module.CRMTenantProvisionPage })));
+const CRMEntitlementsPage = lazy(() => import("@/pages/crm").then(module => ({ default: module.CRMEntitlementsPage })));
+const CRMDeviceLedgerPage = lazy(() => import("@/pages/crm").then(module => ({ default: module.CRMDeviceLedgerPage })));
+const CRMServiceAccountsPage = lazy(() => import("@/pages/crm").then(module => ({ default: module.CRMServiceAccountsPage })));
+const CRMOfflineBundlesPage = lazy(() => import("@/pages/crm").then(module => ({ default: module.CRMOfflineBundlesPage })));
+
 const queryClient = new QueryClient({
     defaultOptions: {
         queries: {
@@ -73,78 +81,88 @@ const App = () => (
     <QueryClientProvider client={queryClient}>
         <ThemeProvider defaultTheme="system" storageKey="secretr-theme">
             <AuthProvider>
-                <TooltipProvider>
-                    <Toaster />
-                    <Sonner />
-                    <BrowserRouter>
-                        <Suspense fallback={<PageLoadingFallback />}>
-                            <Routes>
-                                {/* Public routes */}
-                                <Route path="/login" element={<LoginPage />} />
-                                <Route path="/setup" element={<SetupPage />} />
+                <CRMProvider>
+                    <TooltipProvider>
+                        <Toaster />
+                        <Sonner />
+                        <BrowserRouter>
+                            <Suspense fallback={<PageLoadingFallback />}>
+                                <Routes>
+                                    {/* Public routes */}
+                                    <Route path="/login" element={<LoginPage />} />
+                                    <Route path="/setup" element={<SetupPage />} />
 
-                                {/* Protected routes */}
-                                <Route element={<AppLayout />}>
-                                    <Route path="/" element={<Navigate to="/dashboard" replace />} />
-                                    <Route path="/dashboard" element={<DashboardPage />} />
+                                    {/* Protected routes */}
+                                    <Route element={<AppLayout />}>
+                                        <Route path="/" element={<Navigate to="/dashboard" replace />} />
+                                        <Route path="/dashboard" element={<DashboardPage />} />
 
-                                    {/* Licenses */}
-                                    <Route path="/licenses" element={<LicensesPage />} />
-                                    <Route path="/licenses/new" element={<LicenseNewPage />} />
-                                    <Route path="/licenses/:id" element={<LicenseDetailPage />} />
+                                        {/* Licenses */}
+                                        <Route path="/licenses" element={<LicensesPage />} />
+                                        <Route path="/licenses/new" element={<LicenseNewPage />} />
+                                        <Route path="/licenses/:id" element={<LicenseDetailPage />} />
 
-                                    {/* Clients */}
-                                    <Route path="/clients" element={<ClientsPage />} />
-                                    <Route path="/clients/new" element={<ClientNewPage />} />
-                                    <Route path="/clients/:id" element={<ClientDetailPage />} />
+                                        {/* Clients */}
+                                        <Route path="/clients" element={<ClientsPage />} />
+                                        <Route path="/clients/new" element={<ClientNewPage />} />
+                                        <Route path="/clients/:id" element={<ClientDetailPage />} />
 
-                                    {/* Products */}
-                                    <Route path="/products" element={<ProductsPage />} />
-                                    <Route path="/products/new" element={<ProductNewPage />} />
-                                    <Route path="/products/:id" element={<ProductDetailPage />} />
-                                    <Route path="/products/:id/edit" element={<ProductEditPage />} />
-                                    <Route path="/products/:productId/features/manage" element={<ProductFeaturesManagerPage />} />
+                                        {/* Products */}
+                                        <Route path="/products" element={<ProductsPage />} />
+                                        <Route path="/products/new" element={<ProductNewPage />} />
+                                        <Route path="/products/:id" element={<ProductDetailPage />} />
+                                        <Route path="/products/:id/edit" element={<ProductEditPage />} />
+                                        <Route path="/products/:productId/features/manage" element={<ProductFeaturesManagerPage />} />
 
-                                    {/* Plans */}
-                                    <Route path="/products/:productId/plans/new" element={<PlanNewPage />} />
-                                    <Route path="/products/:productId/plans/:planId" element={<PlanDetailPage />} />
-                                    <Route path="/products/:productId/plans/:planId/edit" element={<PlanEditPage />} />
-                                    <Route path="/products/:productId/plans/:planId/features/add" element={<PlanFeatureAddPage />} />
+                                        {/* Plans */}
+                                        <Route path="/products/:productId/plans/new" element={<PlanNewPage />} />
+                                        <Route path="/products/:productId/plans/:planId" element={<PlanDetailPage />} />
+                                        <Route path="/products/:productId/plans/:planId/edit" element={<PlanEditPage />} />
+                                        <Route path="/products/:productId/plans/:planId/features/add" element={<PlanFeatureAddPage />} />
 
-                                    {/* Features */}
-                                    <Route path="/products/:productId/features/new" element={<FeatureNewPage />} />
-                                    <Route path="/products/:productId/features/:featureId" element={<FeatureDetailPage />} />
-                                    <Route path="/products/:productId/features/:featureId/edit" element={<FeatureEditPage />} />
+                                        {/* Features */}
+                                        <Route path="/products/:productId/features/new" element={<FeatureNewPage />} />
+                                        <Route path="/products/:productId/features/:featureId" element={<FeatureDetailPage />} />
+                                        <Route path="/products/:productId/features/:featureId/edit" element={<FeatureEditPage />} />
 
-                                    {/* Messaging */}
-                                    <Route path="/messaging/providers" element={<MessagingProvidersPage />} />
-                                    <Route path="/messaging/providers/new" element={<MessagingProviderFormPage />} />
-                                    <Route path="/messaging/providers/:providerId" element={<MessagingProviderFormPage />} />
-                                    <Route path="/messaging/templates" element={<MessagingTemplatesPage />} />
-                                    <Route path="/messaging/templates/new" element={<MessagingTemplateFormPage />} />
-                                    <Route path="/messaging/templates/:templateId" element={<MessagingTemplateFormPage />} />
-                                    <Route path="/messaging/compose" element={<MessagingComposePage />} />
+                                        {/* Messaging */}
+                                        <Route path="/messaging/providers" element={<MessagingProvidersPage />} />
+                                        <Route path="/messaging/providers/new" element={<MessagingProviderFormPage />} />
+                                        <Route path="/messaging/providers/:providerId" element={<MessagingProviderFormPage />} />
+                                        <Route path="/messaging/templates" element={<MessagingTemplatesPage />} />
+                                        <Route path="/messaging/templates/new" element={<MessagingTemplateFormPage />} />
+                                        <Route path="/messaging/templates/:templateId" element={<MessagingTemplateFormPage />} />
+                                        <Route path="/messaging/compose" element={<MessagingComposePage />} />
 
-                                    {/* Scopes */}
-                                    <Route path="/products/:productId/features/:featureId/scopes/new" element={<ScopeNewPage />} />
-                                    <Route path="/products/:productId/features/:featureId/scopes/:scopeId/edit" element={<ScopeEditPage />} />
+                                        {/* Scopes */}
+                                        <Route path="/products/:productId/features/:featureId/scopes/new" element={<ScopeNewPage />} />
+                                        <Route path="/products/:productId/features/:featureId/scopes/:scopeId/edit" element={<ScopeEditPage />} />
 
-                                    {/* Admin */}
-                                    <Route path="/admin/users" element={<AdminUsersPage />} />
-                                    <Route path="/admin/users/new" element={<AdminUserNewPage />} />
-                                    <Route path="/admin/users/:id/edit" element={<AdminUserEditPage />} />
-                                    <Route path="/admin/api-keys" element={<AdminAPIKeysPage />} />
+                                        {/* Admin */}
+                                        <Route path="/admin/users" element={<AdminUsersPage />} />
+                                        <Route path="/admin/users/new" element={<AdminUserNewPage />} />
+                                        <Route path="/admin/users/:id/edit" element={<AdminUserEditPage />} />
+                                        <Route path="/admin/api-keys" element={<AdminAPIKeysPage />} />
 
-                                    {/* Profile */}
-                                    <Route path="/profile" element={<ProfilePage />} />
-                                </Route>
+                                        {/* CRM */}
+                                        <Route path="/crm" element={<CRMOverviewPage />} />
+                                        <Route path="/crm/tenants/new" element={<CRMTenantProvisionPage />} />
+                                        <Route path="/crm/entitlements" element={<CRMEntitlementsPage />} />
+                                        <Route path="/crm/devices" element={<CRMDeviceLedgerPage />} />
+                                        <Route path="/crm/service-accounts" element={<CRMServiceAccountsPage />} />
+                                        <Route path="/crm/offline-bundles" element={<CRMOfflineBundlesPage />} />
 
-                                {/* Catch-all */}
-                                <Route path="*" element={<NotFound />} />
-                            </Routes>
-                        </Suspense>
-                    </BrowserRouter>
-                </TooltipProvider>
+                                        {/* Profile */}
+                                        <Route path="/profile" element={<ProfilePage />} />
+                                    </Route>
+
+                                    {/* Catch-all */}
+                                    <Route path="*" element={<NotFound />} />
+                                </Routes>
+                            </Suspense>
+                        </BrowserRouter>
+                    </TooltipProvider>
+                </CRMProvider>
             </AuthProvider>
         </ThemeProvider>
     </QueryClientProvider>

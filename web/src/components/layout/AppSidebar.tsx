@@ -14,6 +14,10 @@ import {
     Mail,
     FileText,
     Send,
+    Building2,
+    Fingerprint,
+    Bot,
+    FileLock,
 } from 'lucide-react';
 import {
     Sidebar,
@@ -87,6 +91,39 @@ const messagingNavItems = [
         title: 'Compose',
         url: '/messaging/compose',
         icon: Send,
+    },
+];
+
+const crmNavItems = [
+    {
+        title: 'Overview',
+        url: '/crm',
+        icon: Shield,
+    },
+    {
+        title: 'Provision',
+        url: '/crm/tenants/new',
+        icon: Building2,
+    },
+    {
+        title: 'Entitlements',
+        url: '/crm/entitlements',
+        icon: Key,
+    },
+    {
+        title: 'Devices',
+        url: '/crm/devices',
+        icon: Fingerprint,
+    },
+    {
+        title: 'Service Accounts',
+        url: '/crm/service-accounts',
+        icon: Bot,
+    },
+    {
+        title: 'Offline Bundles',
+        url: '/crm/offline-bundles',
+        icon: FileLock,
     },
 ];
 
@@ -170,6 +207,44 @@ export function AppSidebar() {
                             ))}
                         </SidebarMenu>
                     </SidebarGroupContent>
+                </SidebarGroup>
+
+                <SidebarGroup>
+                    <Collapsible defaultOpen className="group/collapsible">
+                        <SidebarGroupLabel asChild>
+                            <CollapsibleTrigger className="flex w-full items-center justify-between rounded-lg px-2 py-1.5 text-[0.65rem] hover:bg-sidebar-accent/50 transition-colors">
+                                <div className="flex items-center gap-2">
+                                    <Building2 className="h-3.5 w-3.5" />
+                                    <span>Tenant Ops</span>
+                                </div>
+                                <ChevronDown className="h-3 w-3 transition-transform group-data-[state=open]/collapsible:rotate-180" />
+                            </CollapsibleTrigger>
+                        </SidebarGroupLabel>
+                        <CollapsibleContent>
+                            <SidebarGroupContent>
+                                <SidebarMenu className="space-y-0.5">
+                                    <SidebarMenuItem>
+                                        <SidebarMenuSub>
+                                            {crmNavItems.map((item) => (
+                                                <SidebarMenuSubItem key={item.title}>
+                                                    <SidebarMenuSubButton
+                                                        asChild
+                                                        isActive={isActive(item.url)}
+                                                        className="rounded-lg h-7 px-2 text-xs"
+                                                    >
+                                                        <Link to={item.url} className="flex items-center gap-2">
+                                                            <item.icon className="h-3 w-3" />
+                                                            <span>{item.title}</span>
+                                                        </Link>
+                                                    </SidebarMenuSubButton>
+                                                </SidebarMenuSubItem>
+                                            ))}
+                                        </SidebarMenuSub>
+                                    </SidebarMenuItem>
+                                </SidebarMenu>
+                            </SidebarGroupContent>
+                        </CollapsibleContent>
+                    </Collapsible>
                 </SidebarGroup>
 
                 <SidebarGroup>

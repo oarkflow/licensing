@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: Licensing Service API
-  version: 0.1.0
+  version: 0.2.0
   description: |
     Contract for the licensing platform, including CRM authentication, activation, and
     verification flows that cross-language SDKs must implement.
@@ -240,6 +240,173 @@ components:
         expires_at:
           type: string
           format: date-time
+    TenantCreateRequest:
+      type: object
+      required: [name, slug, admin_user]
+      properties:
+        name:
+          type: string
+        slug:
+          type: string
+        industry:
+          type: string
+        region:
+          type: string
+        billing_email:
+          type: string
+          format: email
+        support_email:
+          type: string
+          format: email
+        metadata:
+          type: object
+          additionalProperties:
+            type: string
+        admin_user:
+          type: object
+          required: [email, username, password]
+          properties:
+            email:
+              type: string
+              format: email
+            username:
+              type: string
+            password:
+              type: string
+              format: password
+            role:
+              type: string
+              description: Optional override of the default `owner` role.
+    TenantProductsResponse:
+      type: object
+      required: [tenant_id, products]
+      properties:
+        tenant_id:
+          type: string
+        products:
+          type: array
+          items:
+            $ref: '#/components/schemas/CRMProductAccess'
+    EntitlementAssignmentRequest:
+      type: object
+      required: [tenant_id, product_id]
+      properties:
+        tenant_id:
+          type: string
+        contact_id:
+          type: string
+        client_id:
+          type: string
+        product_id:
+          type: string
+        plan_id:
+          type: string
+        plan_slug:
+          type: string
+        effective_at:
+          type: string
+          format: date-time
+        expires_at:
+          type: string
+          format: date-time
+        notes:
+          type: string
+        feature_overrides:
+          type: object
+          additionalProperties:
+            type: object
+    EntitlementAssignmentResponse:
+      type: object
+      required: [binding_id, status]
+      properties:
+        binding_id:
+          type: string
+        status:
+          type: string
+          enum: [pending, active]
+        message:
+          type: string
+    DeviceLedgerResponse:
+      type: object
+      required: [tenant_id, device_fingerprint, last_seen_at]
+      properties:
+        tenant_id:
+          type: string
+        client_id:
+          type: string
+        license_id:
+          type: string
+        device_fingerprint:
+          type: string
+        last_seen_at:
+          type: string
+          format: date-time
+        last_sync_at:
+          type: string
+          format: date-time
+        pending_revocation:
+          type: boolean
+        revocation_epoch:
+          type: integer
+          format: int64
+        metadata:
+          type: object
+          additionalProperties:
+            type: string
+    ServiceAccountRequest:
+      type: object
+      required: [tenant_id, name, scopes]
+      properties:
+        tenant_id:
+          type: string
+        name:
+          type: string
+        description:
+          type: string
+        scopes:
+          type: array
+          items:
+            type: string
+    ServiceAccountResponse:
+      type: object
+      required: [id, tenant_id, client_id, secret]
+      properties:
+        id:
+          type: string
+        tenant_id:
+          type: string
+        name:
+          type: string
+        scopes:
+          type: array
+          items:
+            type: string
+        secret:
+          type: string
+          description: One-time plaintext credential; store securely.
+    OfflineBundleResponse:
+      type: object
+      required: [license_id, version, bundle]
+      properties:
+        license_id:
+          type: string
+        version:
+          type: string
+        issued_at:
+          type: string
+          format: date-time
+        expires_at:
+          type: string
+          format: date-time
+        revocation_epoch:
+          type: integer
+          format: int64
+        bundle:
+          type: string
+          description: Base64-encoded CBOR/JWT payload that can be cached offline.
+        signature:
+          type: string
+          description: Base64-encoded detached signature validating the bundle.
 paths:
   /api/crm/login:
     post:
@@ -365,6 +532,216 @@ paths:
                 $ref: '#/components/schemas/ErrorResponse'
         '403':
           description: Tenant suspended or insufficient scope.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /api/crm/tenants:
+    post:
+      summary: Provision a tenant together with its first admin user.
+      tags: [CRM]
+      security:
+        - CRMToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TenantCreateRequest'
+      responses:
+        '201':
+          description: Tenant created.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CRMTenant'
+        '400':
+          description: Missing required fields or invalid admin seed.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: Access token missing or invalid.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '409':
+          description: Tenant slug or admin email already exists.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /api/crm/tenants/{tenantId}/products:
+    get:
+      summary: List product plans assigned to a tenant including feature scopes.
+      tags: [CRM]
+      security:
+        - CRMToken: []
+      parameters:
+        - name: tenantId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Product entitlements for the tenant.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TenantProductsResponse'
+        '401':
+          description: Access token missing or invalid.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Tenant not found or inaccessible.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /api/crm/entitlements:
+    post:
+      summary: Assign or update a plan for a tenant/contact pair.
+      tags: [CRM]
+      security:
+        - CRMToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/EntitlementAssignmentRequest'
+      responses:
+        '202':
+          description: Entitlement accepted for processing.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EntitlementAssignmentResponse'
+        '400':
+          description: Invalid tenant, plan, or effective dates.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: Access token missing or invalid.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /api/crm/devices/{fingerprint}:
+    get:
+      summary: Inspect the ledger entry for a device fingerprint.
+      tags: [CRM]
+      security:
+        - CRMToken: []
+      parameters:
+        - name: fingerprint
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: tenant_id
+          in: query
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Ledger record returned.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeviceLedgerResponse'
+        '401':
+          description: Access token missing or invalid.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Device fingerprint unknown for the tenant.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /api/crm/service-accounts:
+    post:
+      summary: Create a scoped service account credential for automation.
+      tags: [CRM]
+      security:
+        - CRMToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ServiceAccountRequest'
+      responses:
+        '201':
+          description: Service account created.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ServiceAccountResponse'
+        '400':
+          description: Invalid scope request or missing fields.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: Access token missing or invalid.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '409':
+          description: Service account name already in use.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /api/licensing/offline/bundles/{licenseId}:
+    get:
+      summary: Retrieve the latest offline verification bundle for a license.
+      tags: [Licensing]
+      security:
+        - CRMToken: []
+      parameters:
+        - name: licenseId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: revocation_epoch
+          in: query
+          required: false
+          schema:
+            type: integer
+            format: int64
+          description: Last revocation epoch the client has processed; used for delta responses.
+      responses:
+        '200':
+          description: Bundle ready for download.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OfflineBundleResponse'
+        '401':
+          description: Access token missing or invalid.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: License not found.
           content:
             application/json:
               schema:

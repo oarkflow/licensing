@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/oarkflow/licensing/pkg/crm"
 	email "github.com/oarkflow/licensing/pkg/email"
 	"github.com/oarkflow/licensing/pkg/utils"
 )
@@ -37,6 +38,7 @@ type Server struct {
 	webHandler          http.Handler     // Optional web UI handler
 	sessionValidator    SessionValidator // Optional session validator for cookie-based auth
 	emailTemplateLoader *EmailTemplateLoader
+	crmService          *crm.Service
 }
 
 // SessionValidator validates session cookies for authentication
@@ -117,6 +119,15 @@ func NewServer(lm *LicenseManager, port string, apiKeys []string, limiter *RateL
 		return nil, fmt.Errorf("failed to load email templates: %w", err)
 	}
 
+	crmRepo := lm.Storage().CRMRepository()
+	if crmRepo == nil {
+		return nil, fmt.Errorf("crm repository unavailable from storage backend")
+	}
+	crmService, err := crm.NewService(crmRepo)
+	if err != nil {
+		return nil, fmt.Errorf("failed to initialize crm service: %w", err)
+	}
+
 	return &Server{
 		lm:                  lm,
 		port:                port,
@@ -127,6 +138,7 @@ func NewServer(lm *LicenseManager, port string, apiKeys []string, limiter *RateL
 		clientCAPath:        clientCAPath,
 		allowInsecureHTTP:   allowInsecure,
 		emailTemplateLoader: emailTemplateLoader,
+		crmService:          crmService,
 	}, nil
 }
 
@@ -1901,6 +1913,17 @@ func (s *Server) Start() error {
 	mux := http.NewServeMux()
 
 	// API routes
+	mux.HandleFunc("/api/crm/login", s.handleCRMLogin)
+	mux.HandleFunc("/api/crm/token", s.handleCRMTokenRefresh)
+	mux.HandleFunc("/api/crm/logout", s.handleCRMLogout)
+	mux.HandleFunc("/api/crm/session", s.handleCRMSession)
+	mux.HandleFunc("/api/crm/tenants", s.handleCRMTenants)
+	mux.HandleFunc("/api/crm/tenants/", s.handleCRMTenantProducts)
+	mux.HandleFunc("/api/crm/entitlements", s.handleCRMEntitlements)
+	mux.HandleFunc("/api/crm/devices/", s.handleCRMDeviceLedger)
+	mux.HandleFunc("/api/crm/service-accounts", s.handleCRMServiceAccounts)
+	mux.HandleFunc("/api/licensing/offline/bundles", s.handleOfflineBundle)
+	mux.HandleFunc("/api/licensing/offline/bundles/", s.handleOfflineBundle)
 	mux.HandleFunc("/api/activate", s.handleActivate)
 	mux.HandleFunc("/api/licenses", s.handleLicenses)
 	mux.HandleFunc("/api/verify", s.handleVerify)
