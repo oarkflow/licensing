@@ -3,12 +3,18 @@ info:
   title: Licensing Service API
   version: 0.1.0
   description: |
-    Minimal contract for the licensing client/server handshake. This file focuses on the
-    activation and verification flows that cross-language SDKs must implement.
+    Contract for the licensing platform, including CRM authentication, activation, and
+    verification flows that cross-language SDKs must implement.
 servers:
   - url: https://localhost:6601
     description: Default development server
 components:
+  securitySchemes:
+    CRMToken:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: Short-lived access token issued by the CRM login endpoint.
   parameters:
     DeviceFingerprintHeader:
       name: X-Device-Fingerprint
@@ -98,7 +104,271 @@ components:
         error:
           type: string
       required: [error]
+    CRMLoginRequest:
+      type: object
+      required: [identifier, password]
+      properties:
+        identifier:
+          type: string
+          description: Email, username, or external ID.
+        password:
+          type: string
+          format: password
+        mfa_code:
+          type: string
+          description: Optional TOTP or magic-link code when the account enforces MFA.
+        device_id:
+          type: string
+          description: Client-generated identifier used for risk analysis and session binding.
+    CRMLoginResponse:
+      type: object
+      required: [access_token, refresh_token, token_type, expires_in, refresh_expires_in, scope, user, tenant]
+      properties:
+        access_token:
+          type: string
+          description: JWT used for subsequent CRM or product API calls.
+        refresh_token:
+          type: string
+          description: Long-lived opaque token scoped to the tenant and device.
+        token_type:
+          type: string
+          enum: [Bearer]
+        expires_in:
+          type: integer
+          description: Access token lifetime in seconds.
+        refresh_expires_in:
+          type: integer
+          description: Refresh token lifetime in seconds.
+        scope:
+          type: string
+          description: Space-delimited list of granted permissions (e.g. `crm:read licensing:issue`).
+        user:
+          $ref: '#/components/schemas/CRMUser'
+        tenant:
+          $ref: '#/components/schemas/CRMTenant'
+        products:
+          type: array
+          items:
+            $ref: '#/components/schemas/CRMProductAccess'
+    CRMRefreshRequest:
+      type: object
+      required: [refresh_token]
+      properties:
+        refresh_token:
+          type: string
+        scope:
+          type: string
+          description: Optional reduced scope for the new access token; defaults to prior scope.
+    CRMRefreshResponse:
+      allOf:
+        - $ref: '#/components/schemas/CRMLoginResponse'
+      description: Mirrors CRMLoginResponse so clients can replace both tokens atomically.
+    CRMLogoutRequest:
+      type: object
+      required: [refresh_token]
+      properties:
+        refresh_token:
+          type: string
+          description: Token to revoke; when omitted, the caller's active refresh token is revoked.
+        device_id:
+          type: string
+          description: Optional device identifier to target a single session.
+    CRMSessionResponse:
+      type: object
+      required: [user, tenant, scope, issued_at, expires_at]
+      properties:
+        user:
+          $ref: '#/components/schemas/CRMUser'
+        tenant:
+          $ref: '#/components/schemas/CRMTenant'
+        products:
+          type: array
+          items:
+            $ref: '#/components/schemas/CRMProductAccess'
+        scope:
+          type: string
+        issued_at:
+          type: string
+          format: date-time
+        expires_at:
+          type: string
+          format: date-time
+    CRMUser:
+      type: object
+      required: [id, email]
+      properties:
+        id:
+          type: string
+        email:
+          type: string
+          format: email
+        name:
+          type: string
+        roles:
+          type: array
+          items:
+            type: string
+            description: Role slug, e.g. `owner`, `admin`, `viewer`.
+    CRMTenant:
+      type: object
+      required: [id, name]
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        external_id:
+          type: string
+          description: Identifier from the upstream CRM or billing platform.
+        status:
+          type: string
+          enum: [active, suspended, trial, archived]
+    CRMProductAccess:
+      type: object
+      required: [product_id, plan_slug]
+      properties:
+        product_id:
+          type: string
+        product_name:
+          type: string
+        plan_slug:
+          type: string
+        features:
+          type: array
+          items:
+            type: string
+        expires_at:
+          type: string
+          format: date-time
 paths:
+  /api/crm/login:
+    post:
+      summary: Sign in to the CRM/product console and obtain tokens.
+      tags: [CRM]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CRMLoginRequest'
+      responses:
+        '200':
+          description: Authentication succeeded.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CRMLoginResponse'
+        '400':
+          description: Missing or malformed credentials.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: Invalid credentials, MFA failure, or suspended tenant.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '423':
+          description: Account locked after repeated failures.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '429':
+          description: Rate limited.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /api/crm/token:
+    post:
+      summary: Exchange a refresh token for a new access token pair.
+      tags: [CRM]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CRMRefreshRequest'
+      responses:
+        '200':
+          description: Tokens refreshed.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CRMRefreshResponse'
+        '400':
+          description: Missing refresh token or invalid scope request.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: Refresh token expired or revoked.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '429':
+          description: Rate limited.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /api/crm/logout:
+    post:
+      summary: Revoke the caller's refresh token or a targeted device session.
+      tags: [CRM]
+      security:
+        - CRMToken: []
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CRMLogoutRequest'
+      responses:
+        '204':
+          description: Logout complete; tokens revoked.
+        '400':
+          description: Invalid payload.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: Access token missing or expired.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /api/crm/session:
+    get:
+      summary: Retrieve the authenticated user's current session profile.
+      tags: [CRM]
+      security:
+        - CRMToken: []
+      responses:
+        '200':
+          description: Session is valid.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CRMSessionResponse'
+        '401':
+          description: Access token missing or invalid.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: Tenant suspended or insufficient scope.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
   /api/activate:
     post:
       summary: Activate a device for a license key.
