@@ -60,6 +60,7 @@ type adminUserResponse struct {
 type apiKeyMetadata struct {
 	ID        string    `json:"id"`
 	UserID    string    `json:"user_id"`
+	ClientID  string    `json:"client_id,omitempty"`
 	Prefix    string    `json:"prefix"`
 	CreatedAt time.Time `json:"created_at"`
 	LastUsed  time.Time `json:"last_used_at,omitempty"`
@@ -96,6 +97,7 @@ func newAPIKeyMetadata(record *APIKeyRecord) apiKeyMetadata {
 	return apiKeyMetadata{
 		ID:        record.ID,
 		UserID:    record.UserID,
+		ClientID:  record.ClientID,
 		Prefix:    record.Prefix,
 		CreatedAt: record.CreatedAt,
 		LastUsed:  record.LastUsed,
@@ -231,6 +233,20 @@ func (s *Server) authorizeAdmin(w http.ResponseWriter, r *http.Request) bool {
 		}
 	}
 
+	// If Authorization header is present, allow bearer admin API keys as well
+	auth := strings.TrimSpace(r.Header.Get("Authorization"))
+	if auth != "" {
+		parts := strings.SplitN(auth, " ", 2)
+		if len(parts) == 2 && strings.EqualFold(parts[0], "Bearer") {
+			token := strings.TrimSpace(parts[1])
+			if token != "" {
+				if _, err := s.lm.ValidateAPIKey(r.Context(), token); err == nil {
+					return true
+				}
+			}
+		}
+	}
+
 	// Then try session-based authentication (if validator is available)
 	if s.sessionValidator != nil {
 		cookie, err := r.Cookie("session_id")
@@ -328,10 +344,6 @@ func (s *Server) respondClientError(w http.ResponseWriter, status int, message s
 		return
 	}
 	s.respondJSON(w, status, payload)
-}
-
-func (s *Server) enqueueEmail(ctx context.Context, to, subject, htmlBody, textBody string, metadata map[string]string) (*emailDispatchResult, error) {
-	return s.enqueueEmailWithAttachments(ctx, to, subject, htmlBody, textBody, metadata, nil)
 }
 
 func (s *Server) enqueueEmailWithAttachments(ctx context.Context, to, subject, htmlBody, textBody string, metadata map[string]string, attachments []*email.EmailAttachment) (*emailDispatchResult, error) {
@@ -894,7 +906,7 @@ func (s *Server) handleActivate(w http.ResponseWriter, r *http.Request) {
 }
 
 // --- Client session helpers ---
-func (s *Server) createClientSession(ctx context.Context, clientID, ip, ua string) (*ClientSession, error) {
+func (s *Server) createClientSession(_ context.Context, clientID, ip, ua string) (*ClientSession, error) {
 	s.clientSessionsMu.Lock()
 	defer s.clientSessionsMu.Unlock()
 	sid := uuid.New().String()
@@ -961,6 +973,14 @@ func (s *Server) revokeClientSession(sessionID string) {
 
 // getClientFromRequest authenticates a client via Authorization:Bareer <session id>
 func (s *Server) getClientFromRequest(r *http.Request) (*Client, *ClientSession, error) {
+	// Prefer explicit client API key header
+	providedKey := strings.TrimSpace(r.Header.Get("X-API-Key"))
+	if providedKey != "" {
+		if client, _, err := s.lm.ValidateClientAPIKey(r.Context(), providedKey); err == nil {
+			return client, nil, nil
+		}
+	}
+
 	auth := strings.TrimSpace(r.Header.Get("Authorization"))
 	if auth == "" {
 		// try cookie
@@ -979,15 +999,20 @@ func (s *Server) getClientFromRequest(r *http.Request) (*Client, *ClientSession,
 	if auth == "" {
 		return nil, nil, fmt.Errorf("missing auth token")
 	}
+	// Try to interpret the auth token as a client session ID first; if that fails, try it as a client API key.
 	sess, ok := s.getClientSessionByID(auth)
-	if !ok {
-		return nil, nil, fmt.Errorf("invalid or expired session")
+	if ok {
+		client, err := s.lm.GetClient(r.Context(), sess.ClientID)
+		if err != nil {
+			return nil, nil, err
+		}
+		return client, sess, nil
 	}
-	client, err := s.lm.GetClient(r.Context(), sess.ClientID)
-	if err != nil {
-		return nil, nil, err
+	// Try API key as fallback
+	if client, _, err := s.lm.ValidateClientAPIKey(r.Context(), auth); err == nil {
+		return client, nil, nil
 	}
-	return client, sess, nil
+	return nil, nil, fmt.Errorf("invalid or expired session")
 }
 
 // --- Client auth handlers ---
@@ -1001,6 +1026,7 @@ func (s *Server) handleClientRegister(w http.ResponseWriter, r *http.Request) {
 	}
 	var req struct {
 		Email    string `json:"email"`
+		Username string `json:"username,omitempty"`
 		Password string `json:"password"`
 		Name     string `json:"name,omitempty"`
 		Company  string `json:"company_name,omitempty"`
@@ -1013,7 +1039,7 @@ func (s *Server) handleClientRegister(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// Create client with password
-	client, err := s.lm.CreateClientWithPassword(r.Context(), strings.TrimSpace(req.Email), req.Password, req.Name, req.Company)
+	client, err := s.lm.CreateClientWithPassword(r.Context(), strings.TrimSpace(req.Email), req.Password, strings.TrimSpace(req.Username), req.Name, req.Company)
 	if err != nil {
 		s.respondError(w, http.StatusBadRequest, err.Error())
 		return
@@ -1040,13 +1066,19 @@ func (s *Server) handleClientLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req struct {
-		Email    string `json:"email"`
+		Email    string `json:"email,omitempty"`
+		Username string `json:"username,omitempty"`
 		Password string `json:"password"`
 	}
 	if !s.decodeJSONBody(w, r, &req, maxActivationPayloadBytes) {
 		return
 	}
-	client, err := s.lm.VerifyClientPassword(r.Context(), strings.TrimSpace(req.Email), req.Password)
+	client, err := func() (*Client, error) {
+		if strings.TrimSpace(req.Username) != "" {
+			return s.lm.VerifyClientPasswordByUsername(r.Context(), strings.TrimSpace(req.Username), req.Password)
+		}
+		return s.lm.VerifyClientPassword(r.Context(), strings.TrimSpace(req.Email), req.Password)
+	}()
 	if err != nil {
 		s.respondError(w, http.StatusUnauthorized, "invalid credentials")
 		return
@@ -1076,6 +1108,79 @@ func (s *Server) handleClientLogout(w http.ResponseWriter, r *http.Request) {
 	// Clear cookie
 	http.SetCookie(w, &http.Cookie{Name: "client_session", Value: "", Path: "/", HttpOnly: true, Secure: s.hasTLSConfig(), Expires: time.Now().Add(-1 * time.Hour)})
 	s.respondJSON(w, http.StatusOK, map[string]interface{}{"message": "logged out", "client": client.ID})
+}
+
+func (s *Server) handleClientKeys(w http.ResponseWriter, r *http.Request) {
+	// Authenticate client
+	client, _, err := s.getClientFromRequest(r)
+	if err != nil {
+		s.respondError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	// Accept both /api/client/keys and /api/client/keys/{keyID}
+	tail := strings.TrimPrefix(r.URL.Path, "/api/client/keys")
+	tail = strings.Trim(tail, "/")
+
+	switch r.Method {
+	case http.MethodGet:
+		// list keys for this client
+		keys, err := s.lm.ListAPIKeysByClient(r.Context(), client.ID)
+		if err != nil {
+			s.respondClientError(w, http.StatusInternalServerError, err.Error(), nil)
+			return
+		}
+		resp := make([]apiKeyMetadata, 0, len(keys))
+		for _, k := range keys {
+			resp = append(resp, newAPIKeyMetadata(k))
+		}
+		if resp == nil {
+			resp = []apiKeyMetadata{}
+		}
+		s.respondClientJSON(w, http.StatusOK, resp, nil)
+		return
+	case http.MethodPost:
+		// create a new key for this client
+		token, record, err := s.lm.GenerateClientAPIKey(r.Context(), client.ID)
+		if err != nil {
+			s.respondClientError(w, http.StatusBadRequest, err.Error(), nil)
+			return
+		}
+		s.respondClientJSON(w, http.StatusCreated, map[string]interface{}{"token": token, "metadata": newAPIKeyMetadata(record)}, nil)
+		return
+	case http.MethodDelete:
+		if tail == "" {
+			s.respondClientError(w, http.StatusBadRequest, "api key id required", nil)
+			return
+		}
+		keyID := tail
+		// Ensure the key belongs to this client
+		// First fetch key by checking ListAPIKeysByClient
+		keys, err := s.lm.ListAPIKeysByClient(r.Context(), client.ID)
+		if err != nil {
+			s.respondClientError(w, http.StatusInternalServerError, err.Error(), nil)
+			return
+		}
+		found := false
+		for _, k := range keys {
+			if k.ID == keyID {
+				found = true
+				break
+			}
+		}
+		if !found {
+			s.respondClientError(w, http.StatusNotFound, "api key not found", nil)
+			return
+		}
+		if err := s.lm.DeleteAPIKey(r.Context(), keyID); err != nil {
+			s.respondClientError(w, http.StatusInternalServerError, err.Error(), nil)
+			return
+		}
+		s.respondClientJSON(w, http.StatusOK, map[string]string{"message": "api key deleted"}, nil)
+		return
+	default:
+		s.respondClientError(w, http.StatusMethodNotAllowed, "Method not allowed", nil)
+		return
+	}
 }
 
 func (s *Server) handleClientProfile(w http.ResponseWriter, r *http.Request) {
@@ -2014,7 +2119,7 @@ func (s *Server) handleProvisionLicense(w http.ResponseWriter, r *http.Request) 
 	clientCreated := false
 	if err != nil {
 		if errors.Is(err, errClientMissing) {
-			client, err = s.lm.CreateClientWithProfile(ctx, emailAddr, req.Name, req.CompanyName)
+			client, err = s.lm.CreateClientWithProfile(ctx, emailAddr, "", req.Name, req.CompanyName)
 			if err != nil {
 				s.respondError(w, http.StatusBadRequest, err.Error())
 				return
@@ -2375,12 +2480,19 @@ func (s *Server) handleClients(w http.ResponseWriter, r *http.Request) {
 			clients = []*Client{}
 		}
 		s.respondJSON(w, http.StatusOK, clients)
+
 	case http.MethodPost:
 		var req createClientRequest
 		if !s.decodeJSONBody(w, r, &req, maxAdminPayloadBytes) {
 			return
 		}
-		client, err := s.lm.CreateClientWithProfile(r.Context(), req.Email, req.Name, req.CompanyName)
+		var client *Client
+		var err error
+		if strings.TrimSpace(req.Password) != "" {
+			client, err = s.lm.CreateClientWithPassword(r.Context(), req.Email, req.Password, req.Username, req.Name, req.CompanyName)
+		} else {
+			client, err = s.lm.CreateClientWithProfile(r.Context(), req.Email, req.Username, req.Name, req.CompanyName)
+		}
 		if err != nil {
 			s.respondError(w, http.StatusBadRequest, err.Error())
 			return
@@ -2428,8 +2540,13 @@ func (s *Server) handleClientActions(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Handle /api/clients/{id}/{action}
+	// Handle /api/clients/{id}/{action} or /api/clients/{id}/{action}/{sub}
 	action := parts[1]
+	// Support sub-actions like keys/{keyID}
+	var subID string
+	if len(parts) >= 3 {
+		subID = parts[2]
+	}
 
 	switch action {
 	case "licenses":
@@ -2470,6 +2587,47 @@ func (s *Server) handleClientActions(w http.ResponseWriter, r *http.Request) {
 		log.Printf("Client %s banned", clientID)
 		s.respondJSON(w, http.StatusOK, client)
 	case "unban":
+	case "keys":
+		// Admin operations for client API keys
+		if r.Method == http.MethodGet {
+			keys, err := s.lm.ListAPIKeysByClient(r.Context(), clientID)
+			if err != nil {
+				s.respondError(w, http.StatusInternalServerError, err.Error())
+				return
+			}
+			if keys == nil {
+				keys = []*APIKeyRecord{}
+			}
+			s.respondJSON(w, http.StatusOK, keys)
+			return
+		}
+		if r.Method == http.MethodPost {
+			// Create a client API key (admin)
+			token, record, err := s.lm.GenerateClientAPIKey(r.Context(), clientID)
+			if err != nil {
+				s.respondError(w, http.StatusBadRequest, err.Error())
+				return
+			}
+			s.respondJSON(w, http.StatusCreated, map[string]interface{}{"token": token, "metadata": newAPIKeyMetadata(record)})
+			return
+		}
+		// Delete handled by /api/clients/{id}/keys/{keyID}
+		if r.Method == http.MethodDelete {
+			if strings.TrimSpace(subID) == "" {
+				s.respondError(w, http.StatusBadRequest, "API key ID is required")
+				return
+			}
+			if err := s.lm.DeleteAPIKey(r.Context(), subID); err != nil {
+				if errors.Is(err, errAPIKeyMissing) {
+					s.respondError(w, http.StatusNotFound, "API key not found")
+				} else {
+					s.respondError(w, http.StatusInternalServerError, err.Error())
+				}
+				return
+			}
+			s.respondJSON(w, http.StatusOK, map[string]string{"message": "API key deleted"})
+			return
+		}
 		if r.Method != http.MethodPost {
 			s.respondError(w, http.StatusMethodNotAllowed, "Method not allowed")
 			return
@@ -2485,6 +2643,10 @@ func (s *Server) handleClientActions(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 	}
 }
+
+// Admin-level key deletion for client-scoped keys
+// Path: /api/clients/{id}/keys/{id}
+// Called by the same handleClientActions since path parsing is above - handle keys/{key} explicitly
 
 func (s *Server) handleLicenseActions(w http.ResponseWriter, r *http.Request) {
 	if !strings.HasPrefix(r.URL.Path, "/api/licenses/") {
@@ -2633,6 +2795,9 @@ func (s *Server) Start() error {
 	mux.HandleFunc("/api/client/auth/logout", s.handleClientLogout)
 	mux.HandleFunc("/api/client/auth/refresh", s.handleClientRefresh)
 	mux.HandleFunc("/api/client/profile", s.handleClientProfile)
+	// Client keys for managing API keys bound to their client account
+	mux.HandleFunc("/api/client/keys", s.handleClientKeys)
+	mux.HandleFunc("/api/client/keys/", s.handleClientKeys)
 
 	// If web UI handler is set, use it for all other routes
 	if s.webHandler != nil {

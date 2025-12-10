@@ -11,6 +11,7 @@ import (
 
 type Client struct {
 	ID          string       `json:"id"`
+	Username    string       `json:"username,omitempty"`
 	Email       string       `json:"email"`
 	Name        string       `json:"name,omitempty"`
 	CompanyName string       `json:"company_name,omitempty"`
@@ -277,6 +278,8 @@ type createClientRequest struct {
 	Name        string            `json:"name,omitempty"`
 	CompanyName string            `json:"company_name,omitempty"`
 	Metadata    map[string]string `json:"metadata,omitempty"`
+	Username    string            `json:"username,omitempty"`
+	Password    string            `json:"password,omitempty"`
 }
 
 type banClientRequest struct {

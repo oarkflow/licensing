@@ -515,6 +515,62 @@ func (lm *LicenseManager) ListAPIKeysByUser(ctx context.Context, userID string) 
 	return lm.storage.ListAPIKeysByUser(ctx, userID)
 }
 
+// GenerateClientAPIKey generates a new API key associated with a client (non-admin).
+func (lm *LicenseManager) GenerateClientAPIKey(ctx context.Context, clientID string) (string, *APIKeyRecord, error) {
+	if _, err := lm.GetClient(ctx, clientID); err != nil {
+		return "", nil, err
+	}
+	secret, err := lm.randomSecret(24)
+	if err != nil {
+		return "", nil, err
+	}
+	hash := hashAPIKey(secret)
+	record := &APIKeyRecord{
+		ID:        uuid.New().String(),
+		UserID:    "", // no admin user
+		ClientID:  clientID,
+		Hash:      hash,
+		Prefix:    strings.ToUpper(secret[:8]),
+		CreatedAt: time.Now(),
+	}
+	if err := lm.storage.SaveAPIKey(ctx, record); err != nil {
+		return "", nil, err
+	}
+	return secret, record, nil
+}
+
+// ListAPIKeysByClient returns all API keys belonging to a client
+func (lm *LicenseManager) ListAPIKeysByClient(ctx context.Context, clientID string) ([]*APIKeyRecord, error) {
+	if _, err := lm.GetClient(ctx, clientID); err != nil {
+		return nil, err
+	}
+	return lm.storage.ListAPIKeysByClient(ctx, clientID)
+}
+
+// ValidateClientAPIKey validates an API key and returns the associated client if it's a client key
+func (lm *LicenseManager) ValidateClientAPIKey(ctx context.Context, token string) (*Client, *APIKeyRecord, error) {
+	if token == "" {
+		return nil, nil, fmt.Errorf("api key required")
+	}
+	hash := hashAPIKey(token)
+	record, err := lm.storage.GetAPIKeyByHash(ctx, hash)
+	if err != nil {
+		return nil, nil, err
+	}
+	if record.ClientID == "" {
+		return nil, nil, fmt.Errorf("not a client API key")
+	}
+	client, err := lm.GetClient(ctx, record.ClientID)
+	if err != nil {
+		return nil, nil, err
+	}
+	record.LastUsed = time.Now()
+	if err := lm.storage.UpdateAPIKey(ctx, record); err != nil {
+		log.Printf("failed to update api key usage: %v", err)
+	}
+	return client, record, nil
+}
+
 // RevokeAPIKey deletes an API key by ID
 func (lm *LicenseManager) RevokeAPIKey(ctx context.Context, keyID string) error {
 	return lm.storage.DeleteAPIKey(ctx, keyID)
@@ -547,10 +603,10 @@ func (lm *LicenseManager) ValidateAPIKey(ctx context.Context, token string) (*Ad
 }
 
 func (lm *LicenseManager) CreateClient(ctx context.Context, email string) (*Client, error) {
-	return lm.CreateClientWithProfile(ctx, email, "", "")
+	return lm.CreateClientWithProfile(ctx, email, "", "", "")
 }
 
-func (lm *LicenseManager) CreateClientWithProfile(ctx context.Context, email, name, company string) (*Client, error) {
+func (lm *LicenseManager) CreateClientWithProfile(ctx context.Context, email, username, name, company string) (*Client, error) {
 	email = strings.TrimSpace(email)
 	if !emailRegex.MatchString(email) {
 		return nil, fmt.Errorf("invalid email address")
@@ -559,6 +615,7 @@ func (lm *LicenseManager) CreateClientWithProfile(ctx context.Context, email, na
 	now := time.Now()
 	client := &Client{
 		ID:          uuid.New().String(),
+		Username:    strings.TrimSpace(username),
 		Email:       email,
 		Name:        strings.TrimSpace(name),
 		CompanyName: strings.TrimSpace(company),
@@ -578,11 +635,11 @@ func (lm *LicenseManager) CreateClientWithProfile(ctx context.Context, email, na
 }
 
 // CreateClientWithPassword creates a client with a password (local auth). Password is hashed using bcrypt.
-func (lm *LicenseManager) CreateClientWithPassword(ctx context.Context, email, password, name, company string) (*Client, error) {
+func (lm *LicenseManager) CreateClientWithPassword(ctx context.Context, email, password, username, name, company string) (*Client, error) {
 	if strings.TrimSpace(password) == "" {
 		return nil, fmt.Errorf("password is required")
 	}
-	client, err := lm.CreateClientWithProfile(ctx, email, name, company)
+	client, err := lm.CreateClientWithProfile(ctx, email, username, name, company)
 	if err != nil {
 		return nil, err
 	}
@@ -600,6 +657,21 @@ func (lm *LicenseManager) CreateClientWithPassword(ctx context.Context, email, p
 // VerifyClientPassword verifies an email/password combination and returns the client if valid.
 func (lm *LicenseManager) VerifyClientPassword(ctx context.Context, email, password string) (*Client, error) {
 	client, err := lm.storage.GetClientByEmail(ctx, email)
+	if err != nil {
+		return nil, err
+	}
+	if len(client.PasswordHash) == 0 {
+		return nil, fmt.Errorf("password auth not configured for this client")
+	}
+	if err := bcrypt.CompareHashAndPassword(client.PasswordHash, []byte(password)); err != nil {
+		return nil, fmt.Errorf("invalid credentials")
+	}
+	return client, nil
+}
+
+// VerifyClientPasswordByUsername verifies an username/password combination and returns the client if valid.
+func (lm *LicenseManager) VerifyClientPasswordByUsername(ctx context.Context, username, password string) (*Client, error) {
+	client, err := lm.storage.GetClientByUsername(ctx, username)
 	if err != nil {
 		return nil, err
 	}
@@ -647,6 +719,10 @@ func (lm *LicenseManager) GetClientByEmail(ctx context.Context, email string) (*
 		return nil, err
 	}
 	return client, nil
+}
+
+func (lm *LicenseManager) GetClientByUsername(ctx context.Context, username string) (*Client, error) {
+	return lm.storage.GetClientByUsername(ctx, username)
 }
 
 // GetClient retrieves a client by ID

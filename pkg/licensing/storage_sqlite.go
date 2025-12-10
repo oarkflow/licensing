@@ -65,8 +65,11 @@ func ensureSQLiteSchema(db *squealx.DB) error {
 	stmts := []string{
 		`CREATE TABLE IF NOT EXISTS clients (
 			id TEXT PRIMARY KEY,
-			email TEXT NOT NULL,
-			email_lower TEXT NOT NULL UNIQUE,
+					email TEXT NOT NULL,
+					email_lower TEXT NOT NULL UNIQUE,
+					username TEXT,
+					username_lower TEXT UNIQUE,
+			    password_hash BLOB,
 			name TEXT,
 			company_name TEXT,
 			status TEXT NOT NULL,
@@ -138,14 +141,16 @@ func ensureSQLiteSchema(db *squealx.DB) error {
             updated_at TIMESTAMP NOT NULL
         );`,
 		`CREATE TABLE IF NOT EXISTS api_keys (
-            id TEXT PRIMARY KEY,
-            user_id TEXT NOT NULL,
-            hash TEXT NOT NULL UNIQUE,
-            prefix TEXT NOT NULL,
-            created_at TIMESTAMP NOT NULL,
-            last_used_at TIMESTAMP,
-            FOREIGN KEY(user_id) REFERENCES admin_users(id) ON DELETE CASCADE
-        );`,
+			id TEXT PRIMARY KEY,
+			user_id TEXT,
+			client_id TEXT,
+			hash TEXT NOT NULL UNIQUE,
+			prefix TEXT NOT NULL,
+			created_at TIMESTAMP NOT NULL,
+			last_used_at TIMESTAMP,
+			FOREIGN KEY(user_id) REFERENCES admin_users(id) ON DELETE CASCADE,
+			FOREIGN KEY(client_id) REFERENCES clients(id) ON DELETE CASCADE
+		);`,
 		`CREATE INDEX IF NOT EXISTS idx_licenses_client_id ON licenses(client_id);`,
 		`CREATE INDEX IF NOT EXISTS idx_activation_records_license_id ON activation_records(license_id);`,
 		`CREATE INDEX IF NOT EXISTS idx_activation_records_client_id ON activation_records(client_id);`,
@@ -171,6 +176,8 @@ func ensureSQLiteSchema(db *squealx.DB) error {
 			updated_at TIMESTAMP NOT NULL
 		);`,
 		`CREATE UNIQUE INDEX IF NOT EXISTS idx_email_providers_slug ON email_providers(slug_lower);`,
+		`CREATE UNIQUE INDEX IF NOT EXISTS idx_clients_username_lower ON clients(username_lower);`,
+		`CREATE INDEX IF NOT EXISTS idx_api_keys_client_id ON api_keys(client_id);`,
 		`CREATE TABLE IF NOT EXISTS email_templates (
 			id TEXT PRIMARY KEY,
 			name TEXT NOT NULL,
@@ -480,9 +487,13 @@ func scanClientRow(scanner rowScanner) (*Client, error) {
 	var banReason sql.NullString
 	var name sql.NullString
 	var company sql.NullString
+	var username sql.NullString
+	var passwordHash []byte
 	if err := scanner.Scan(
 		&c.ID,
 		&c.Email,
+		&username,
+		&passwordHash,
 		&name,
 		&company,
 		&c.Status,
@@ -492,6 +503,12 @@ func scanClientRow(scanner rowScanner) (*Client, error) {
 		&banReason,
 	); err != nil {
 		return nil, err
+	}
+	if username.Valid {
+		c.Username = username.String
+	}
+	if len(passwordHash) > 0 {
+		c.PasswordHash = append([]byte(nil), passwordHash...)
 	}
 	if name.Valid {
 		c.Name = name.String
@@ -599,12 +616,15 @@ func (s *SQLiteStorage) SaveClient(ctx context.Context, client *Client) error {
 	if client == nil {
 		return fmt.Errorf("client is nil")
 	}
-	query := `INSERT INTO clients (id, email, email_lower, name, company_name, status, created_at, updated_at, banned_at, ban_reason)
-	          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+	query := `INSERT INTO clients (id, email, email_lower, username, username_lower, password_hash, name, company_name, status, created_at, updated_at, banned_at, ban_reason)
+			  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 	_, err := s.db.ExecContext(ctx, query,
 		client.ID,
 		client.Email,
 		normalizeEmail(client.Email),
+		client.Username,
+		strings.ToLower(strings.TrimSpace(client.Username)),
+		client.PasswordHash,
 		client.Name,
 		client.CompanyName,
 		client.Status,
@@ -627,11 +647,14 @@ func (s *SQLiteStorage) UpdateClient(ctx context.Context, client *Client) error 
 		return fmt.Errorf("client is nil")
 	}
 	query := `UPDATE clients
-	          SET email = ?, email_lower = ?, name = ?, company_name = ?, status = ?, created_at = ?, updated_at = ?, banned_at = ?, ban_reason = ?
-	          WHERE id = ?`
+			  SET email = ?, email_lower = ?, username = ?, username_lower = ?, password_hash = ?, name = ?, company_name = ?, status = ?, created_at = ?, updated_at = ?, banned_at = ?, ban_reason = ?
+			  WHERE id = ?`
 	res, err := s.db.ExecContext(ctx, query,
 		client.Email,
 		normalizeEmail(client.Email),
+		client.Username,
+		strings.ToLower(strings.TrimSpace(client.Username)),
+		client.PasswordHash,
 		client.Name,
 		client.CompanyName,
 		client.Status,
@@ -655,8 +678,8 @@ func (s *SQLiteStorage) UpdateClient(ctx context.Context, client *Client) error 
 }
 
 func (s *SQLiteStorage) GetClient(ctx context.Context, clientID string) (*Client, error) {
-	query := `SELECT id, email, name, company_name, status, created_at, updated_at, banned_at, ban_reason
-	          FROM clients WHERE id = ?`
+	query := `SELECT id, email, username, password_hash, name, company_name, status, created_at, updated_at, banned_at, ban_reason
+			  FROM clients WHERE id = ?`
 	row := s.db.QueryRowContext(ctx, query, clientID)
 	client, err := scanClientRow(row)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -669,8 +692,8 @@ func (s *SQLiteStorage) GetClient(ctx context.Context, clientID string) (*Client
 }
 
 func (s *SQLiteStorage) GetClientByEmail(ctx context.Context, email string) (*Client, error) {
-	query := `SELECT id, email, name, company_name, status, created_at, updated_at, banned_at, ban_reason
-	          FROM clients WHERE email_lower = ?`
+	query := `SELECT id, email, username, password_hash, name, company_name, status, created_at, updated_at, banned_at, ban_reason
+			  FROM clients WHERE email_lower = ?`
 	row := s.db.QueryRowContext(ctx, query, normalizeEmail(email))
 	client, err := scanClientRow(row)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -682,8 +705,22 @@ func (s *SQLiteStorage) GetClientByEmail(ctx context.Context, email string) (*Cl
 	return cloneClient(client), nil
 }
 
+func (s *SQLiteStorage) GetClientByUsername(ctx context.Context, username string) (*Client, error) {
+	query := `SELECT id, email, username, password_hash, name, company_name, status, created_at, updated_at, banned_at, ban_reason
+			  FROM clients WHERE username_lower = ?`
+	row := s.db.QueryRowContext(ctx, query, strings.ToLower(strings.TrimSpace(username)))
+	client, err := scanClientRow(row)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, errClientMissing
+	}
+	if err != nil {
+		return nil, err
+	}
+	return cloneClient(client), nil
+}
+
 func (s *SQLiteStorage) ListClients(ctx context.Context) ([]*Client, error) {
-	query := `SELECT id, email, name, company_name, status, created_at, updated_at, banned_at, ban_reason
+	query := `SELECT id, email, username, password_hash, name, company_name, status, created_at, updated_at, banned_at, ban_reason
 	          FROM clients ORDER BY created_at ASC`
 	rows, err := s.db.QueryContext(ctx, query)
 	if err != nil {
@@ -1194,11 +1231,12 @@ func (s *SQLiteStorage) SaveAPIKey(ctx context.Context, key *APIKeyRecord) error
 	if key == nil {
 		return fmt.Errorf("api key is nil")
 	}
-	query := `INSERT INTO api_keys (id, user_id, hash, prefix, created_at, last_used_at)
-              VALUES (?, ?, ?, ?, ?, ?)`
+	query := `INSERT INTO api_keys (id, user_id, client_id, hash, prefix, created_at, last_used_at)
+			  VALUES (?, ?, ?, ?, ?, ?, ?)`
 	_, err := s.db.ExecContext(ctx, query,
 		key.ID,
 		key.UserID,
+		key.ClientID,
 		key.Hash,
 		key.Prefix,
 		key.CreatedAt,
@@ -1217,9 +1255,10 @@ func (s *SQLiteStorage) UpdateAPIKey(ctx context.Context, key *APIKeyRecord) err
 	if key == nil {
 		return fmt.Errorf("api key is nil")
 	}
-	query := `UPDATE api_keys SET user_id = ?, hash = ?, prefix = ?, created_at = ?, last_used_at = ? WHERE id = ?`
+	query := `UPDATE api_keys SET user_id = ?, client_id = ?, hash = ?, prefix = ?, created_at = ?, last_used_at = ? WHERE id = ?`
 	res, err := s.db.ExecContext(ctx, query,
 		key.UserID,
+		key.ClientID,
 		key.Hash,
 		key.Prefix,
 		key.CreatedAt,
@@ -1250,12 +1289,12 @@ func (s *SQLiteStorage) DeleteAPIKey(ctx context.Context, keyID string) error {
 }
 
 func (s *SQLiteStorage) GetAPIKeyByHash(ctx context.Context, hash string) (*APIKeyRecord, error) {
-	query := `SELECT id, user_id, hash, prefix, created_at, last_used_at FROM api_keys WHERE hash = ?`
+	query := `SELECT id, user_id, client_id, hash, prefix, created_at, last_used_at FROM api_keys WHERE hash = ?`
 	row := s.db.QueryRowContext(ctx, query, hash)
 	var key APIKeyRecord
 	var createdAt sqliteTimeValue
 	var lastUsed sqliteNullTime
-	if err := row.Scan(&key.ID, &key.UserID, &key.Hash, &key.Prefix, &createdAt, &lastUsed); err != nil {
+	if err := row.Scan(&key.ID, &key.UserID, &key.ClientID, &key.Hash, &key.Prefix, &createdAt, &lastUsed); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, errAPIKeyMissing
 		}
@@ -1269,7 +1308,7 @@ func (s *SQLiteStorage) GetAPIKeyByHash(ctx context.Context, hash string) (*APIK
 }
 
 func (s *SQLiteStorage) ListAPIKeysByUser(ctx context.Context, userID string) ([]*APIKeyRecord, error) {
-	query := `SELECT id, user_id, hash, prefix, created_at, last_used_at FROM api_keys WHERE user_id = ? ORDER BY created_at ASC`
+	query := `SELECT id, user_id, client_id, hash, prefix, created_at, last_used_at FROM api_keys WHERE user_id = ? ORDER BY created_at ASC`
 	rows, err := s.db.QueryContext(ctx, query, userID)
 	if err != nil {
 		return nil, err
@@ -1280,7 +1319,7 @@ func (s *SQLiteStorage) ListAPIKeysByUser(ctx context.Context, userID string) ([
 		var key APIKeyRecord
 		var createdAt sqliteTimeValue
 		var lastUsed sqliteNullTime
-		if err := rows.Scan(&key.ID, &key.UserID, &key.Hash, &key.Prefix, &createdAt, &lastUsed); err != nil {
+		if err := rows.Scan(&key.ID, &key.UserID, &key.ClientID, &key.Hash, &key.Prefix, &createdAt, &lastUsed); err != nil {
 			return nil, err
 		}
 		key.CreatedAt = createdAt.Time
@@ -1309,6 +1348,30 @@ func isSQLiteUniqueErr(err error) bool {
 		return false
 	}
 	return strings.Contains(strings.ToLower(err.Error()), "unique constraint failed")
+}
+
+func (s *SQLiteStorage) ListAPIKeysByClient(ctx context.Context, clientID string) ([]*APIKeyRecord, error) {
+	query := `SELECT id, user_id, client_id, hash, prefix, created_at, last_used_at FROM api_keys WHERE client_id = ? ORDER BY created_at ASC`
+	rows, err := s.db.QueryContext(ctx, query, clientID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var keys []*APIKeyRecord
+	for rows.Next() {
+		var key APIKeyRecord
+		var createdAt sqliteTimeValue
+		var lastUsed sqliteNullTime
+		if err := rows.Scan(&key.ID, &key.UserID, &key.ClientID, &key.Hash, &key.Prefix, &createdAt, &lastUsed); err != nil {
+			return nil, err
+		}
+		key.CreatedAt = createdAt.Time
+		if lastUsed.Valid {
+			key.LastUsed = lastUsed.Time
+		}
+		keys = append(keys, cloneAPIKeyRecord(&key))
+	}
+	return keys, rows.Err()
 }
 
 // ==================== Device Trial Methods ====================

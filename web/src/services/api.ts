@@ -375,6 +375,14 @@ class ApiService {
         return this.request<License[]>(`/api/clients/${clientId}/licenses`);
     }
 
+    async listClientAPIKeys(clientId: string): Promise<ApiResponse<APIKey[]>> {
+        return this.request<APIKey[]>(`/api/clients/${clientId}/keys`);
+    }
+
+    async createClientAPIKey(clientId: string): Promise<ApiResponse<{ token: string; metadata: APIKey }>> {
+        return this.request(`/api/clients/${clientId}/keys`, { method: 'POST' }) as Promise<ApiResponse<{ token: string; metadata: APIKey }>>;
+    }
+
     // Products
     async listProducts(): Promise<ApiResponse<Product[]>> {
         return this.request<Product[]>('/api/products');
@@ -631,6 +639,12 @@ class ApiService {
 
     async deleteAPIKey(id: string): Promise<ApiResponse<void>> {
         return this.request<void>(`/api/admin/api-keys/${id}`, {
+            method: 'DELETE',
+        });
+    }
+
+    async deleteClientAPIKey(id: string): Promise<ApiResponse<void>> {
+        return this.request<void>(`/api/client/keys/${encodeURIComponent(id)}`, {
             method: 'DELETE',
         });
     }

@@ -22,6 +22,8 @@ export function ClientNewPage() {
 
     const [formData, setFormData] = useState<CreateClientRequest>({
         email: '',
+        username: '',
+        password: '',
     });
 
     const createMutation = useMutation({
@@ -81,6 +83,25 @@ export function ClientNewPage() {
                                 }
                                 placeholder="client@example.com"
                                 required
+                            />
+                        </div>
+                        <div className="space-y-2">
+                            <Label htmlFor="username">Username</Label>
+                            <Input
+                                id="username"
+                                value={formData.username}
+                                onChange={(e) => setFormData((prev) => ({ ...prev, username: e.target.value }))}
+                                placeholder="client-username"
+                            />
+                        </div>
+                        <div className="space-y-2">
+                            <Label htmlFor="password">Password</Label>
+                            <Input
+                                id="password"
+                                type="password"
+                                value={formData.password}
+                                onChange={(e) => setFormData((prev) => ({ ...prev, password: e.target.value }))}
+                                placeholder="Set a password (optional)"
                             />
                         </div>
 

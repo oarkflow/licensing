@@ -20,6 +20,7 @@ type Storage interface {
 	UpdateClient(ctx context.Context, client *Client) error
 	GetClient(ctx context.Context, clientID string) (*Client, error)
 	GetClientByEmail(ctx context.Context, email string) (*Client, error)
+	GetClientByUsername(ctx context.Context, username string) (*Client, error)
 	ListClients(ctx context.Context) ([]*Client, error)
 	SaveLicense(ctx context.Context, license *License) error
 	UpdateLicense(ctx context.Context, license *License) error
@@ -39,6 +40,7 @@ type Storage interface {
 	DeleteAPIKey(ctx context.Context, keyID string) error
 	GetAPIKeyByHash(ctx context.Context, hash string) (*APIKeyRecord, error)
 	ListAPIKeysByUser(ctx context.Context, userID string) ([]*APIKeyRecord, error)
+	ListAPIKeysByClient(ctx context.Context, clientID string) ([]*APIKeyRecord, error)
 
 	// Product management
 	SaveProduct(ctx context.Context, product *Product) error
@@ -246,6 +248,7 @@ type AdminUser struct {
 type APIKeyRecord struct {
 	ID        string    `json:"id"`
 	UserID    string    `json:"user_id"`
+	ClientID  string    `json:"client_id,omitempty"`
 	Hash      string    `json:"hash"`
 	Prefix    string    `json:"prefix"`
 	CreatedAt time.Time `json:"created_at"`
@@ -272,17 +275,19 @@ func cloneAPIKeyRecord(key *APIKeyRecord) *APIKeyRecord {
 }
 
 type InMemoryStorage struct {
-	mu             sync.RWMutex
-	clients        map[string]*Client
-	clientsByEmail map[string]string
-	licenses       map[string]*License
-	licensesByKey  map[string]string
-	activations    map[string][]*ActivationRecord
-	adminUsers     map[string]*AdminUser
-	adminByName    map[string]string
-	apiKeys        map[string]*APIKeyRecord
-	apiKeysByHash  map[string]string
-	apiKeysByUser  map[string]map[string]struct{}
+	mu                sync.RWMutex
+	clients           map[string]*Client
+	clientsByEmail    map[string]string
+	clientsByUsername map[string]string
+	licenses          map[string]*License
+	licensesByKey     map[string]string
+	activations       map[string][]*ActivationRecord
+	adminUsers        map[string]*AdminUser
+	adminByName       map[string]string
+	apiKeys           map[string]*APIKeyRecord
+	apiKeysByHash     map[string]string
+	apiKeysByUser     map[string]map[string]struct{}
+	apiKeysByClient   map[string]map[string]struct{}
 	// Product management
 	products       map[string]*Product
 	productsBySlug map[string]string
@@ -314,6 +319,7 @@ func NewInMemoryStorage() *InMemoryStorage {
 	return &InMemoryStorage{
 		clients:                 make(map[string]*Client),
 		clientsByEmail:          make(map[string]string),
+		clientsByUsername:       make(map[string]string),
 		licenses:                make(map[string]*License),
 		licensesByKey:           make(map[string]string),
 		activations:             make(map[string][]*ActivationRecord),
@@ -322,6 +328,7 @@ func NewInMemoryStorage() *InMemoryStorage {
 		apiKeys:                 make(map[string]*APIKeyRecord),
 		apiKeysByHash:           make(map[string]string),
 		apiKeysByUser:           make(map[string]map[string]struct{}),
+		apiKeysByClient:         make(map[string]map[string]struct{}),
 		products:                make(map[string]*Product),
 		productsBySlug:          make(map[string]string),
 		plans:                   make(map[string]*Plan),
@@ -370,11 +377,18 @@ func (s *InMemoryStorage) SaveClient(_ context.Context, client *Client) error {
 		return errClientExists
 	}
 	emailKey := normalizeEmail(client.Email)
+	usernameKey := strings.ToLower(strings.TrimSpace(client.Username))
 	if emailKey != "" {
 		if _, exists := s.clientsByEmail[emailKey]; exists {
 			return errClientExists
 		}
 		s.clientsByEmail[emailKey] = client.ID
+	}
+	if usernameKey != "" {
+		if _, exists := s.clientsByUsername[usernameKey]; exists {
+			return fmt.Errorf("client username already exists")
+		}
+		s.clientsByUsername[usernameKey] = client.ID
 	}
 	s.clients[client.ID] = cloneClient(client)
 	return nil
@@ -391,6 +405,8 @@ func (s *InMemoryStorage) UpdateClient(_ context.Context, client *Client) error 
 		return errClientMissing
 	}
 	oldEmail := normalizeEmail(current.Email)
+	oldUsername := strings.ToLower(strings.TrimSpace(current.Username))
+	newUsername := strings.ToLower(strings.TrimSpace(client.Username))
 	newEmail := normalizeEmail(client.Email)
 	if oldEmail != newEmail {
 		if mappedID, taken := s.clientsByEmail[newEmail]; taken && mappedID != client.ID {
@@ -398,8 +414,17 @@ func (s *InMemoryStorage) UpdateClient(_ context.Context, client *Client) error 
 		}
 		delete(s.clientsByEmail, oldEmail)
 	}
+	if oldUsername != newUsername {
+		if mappedID, taken := s.clientsByUsername[newUsername]; taken && mappedID != client.ID {
+			return fmt.Errorf("client username already exists")
+		}
+		delete(s.clientsByUsername, oldUsername)
+	}
 	s.clients[client.ID] = cloneClient(client)
 	s.clientsByEmail[newEmail] = client.ID
+	if newUsername != "" {
+		s.clientsByUsername[newUsername] = client.ID
+	}
 	return nil
 }
 
@@ -417,6 +442,16 @@ func (s *InMemoryStorage) GetClientByEmail(_ context.Context, email string) (*Cl
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	clientID, ok := s.clientsByEmail[normalizeEmail(email)]
+	if !ok {
+		return nil, errClientMissing
+	}
+	return cloneClient(s.clients[clientID]), nil
+}
+
+func (s *InMemoryStorage) GetClientByUsername(_ context.Context, username string) (*Client, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	clientID, ok := s.clientsByUsername[strings.ToLower(strings.TrimSpace(username))]
 	if !ok {
 		return nil, errClientMissing
 	}
@@ -648,6 +683,12 @@ func (s *InMemoryStorage) SaveAPIKey(_ context.Context, key *APIKeyRecord) error
 		s.apiKeysByUser[key.UserID] = make(map[string]struct{})
 	}
 	s.apiKeysByUser[key.UserID][key.ID] = struct{}{}
+	if key.ClientID != "" {
+		if _, ok := s.apiKeysByClient[key.ClientID]; !ok {
+			s.apiKeysByClient[key.ClientID] = make(map[string]struct{})
+		}
+		s.apiKeysByClient[key.ClientID][key.ID] = struct{}{}
+	}
 	return nil
 }
 
@@ -664,7 +705,22 @@ func (s *InMemoryStorage) UpdateAPIKey(_ context.Context, key *APIKeyRecord) err
 	if stored.Hash != key.Hash {
 		return fmt.Errorf("api key hash mismatch")
 	}
+	// Update apiKeys map
+	prev := stored.ClientID
 	s.apiKeys[key.ID] = cloneAPIKeyRecord(key)
+	if prev != key.ClientID {
+		if prev != "" {
+			if keys, ok := s.apiKeysByClient[prev]; ok {
+				delete(keys, key.ID)
+			}
+		}
+		if key.ClientID != "" {
+			if _, ok := s.apiKeysByClient[key.ClientID]; !ok {
+				s.apiKeysByClient[key.ClientID] = make(map[string]struct{})
+			}
+			s.apiKeysByClient[key.ClientID][key.ID] = struct{}{}
+		}
+	}
 	return nil
 }
 
@@ -679,6 +735,11 @@ func (s *InMemoryStorage) DeleteAPIKey(_ context.Context, keyID string) error {
 	delete(s.apiKeysByHash, key.Hash)
 	if keys, ok := s.apiKeysByUser[key.UserID]; ok {
 		delete(keys, keyID)
+	}
+	if key.ClientID != "" {
+		if keys, ok := s.apiKeysByClient[key.ClientID]; ok {
+			delete(keys, keyID)
+		}
 	}
 	return nil
 }
@@ -697,6 +758,22 @@ func (s *InMemoryStorage) ListAPIKeysByUser(_ context.Context, userID string) ([
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	keyIDs := s.apiKeysByUser[userID]
+	if len(keyIDs) == 0 {
+		return []*APIKeyRecord{}, nil
+	}
+	keys := make([]*APIKeyRecord, 0, len(keyIDs))
+	for keyID := range keyIDs {
+		if record, ok := s.apiKeys[keyID]; ok {
+			keys = append(keys, cloneAPIKeyRecord(record))
+		}
+	}
+	return keys, nil
+}
+
+func (s *InMemoryStorage) ListAPIKeysByClient(_ context.Context, clientID string) ([]*APIKeyRecord, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	keyIDs := s.apiKeysByClient[clientID]
 	if len(keyIDs) == 0 {
 		return []*APIKeyRecord{}, nil
 	}
@@ -1414,10 +1491,14 @@ func (s *InMemoryStorage) loadSnapshot(snapshot *storageSnapshot) {
 	defer s.mu.Unlock()
 	s.clients = make(map[string]*Client, len(snapshot.Clients))
 	s.clientsByEmail = make(map[string]string, len(snapshot.Clients))
+	s.clientsByUsername = make(map[string]string, len(snapshot.Clients))
 	for id, client := range snapshot.Clients {
 		cloned := cloneClient(client)
 		s.clients[id] = cloned
 		s.clientsByEmail[normalizeEmail(cloned.Email)] = id
+		if cloned.Username != "" {
+			s.clientsByUsername[strings.ToLower(strings.TrimSpace(cloned.Username))] = id
+		}
 	}
 	s.licenses = make(map[string]*License, len(snapshot.Licenses))
 	s.licensesByKey = make(map[string]string, len(snapshot.Licenses))
@@ -1536,6 +1617,10 @@ func (ps *PersistentStorage) GetClientByEmail(ctx context.Context, email string)
 	return ps.backend.GetClientByEmail(ctx, email)
 }
 
+func (ps *PersistentStorage) GetClientByUsername(ctx context.Context, username string) (*Client, error) {
+	return ps.backend.GetClientByUsername(ctx, username)
+}
+
 func (ps *PersistentStorage) ListClients(ctx context.Context) ([]*Client, error) {
 	return ps.backend.ListClients(ctx)
 }
@@ -1637,6 +1722,10 @@ func (ps *PersistentStorage) GetAPIKeyByHash(ctx context.Context, hash string) (
 
 func (ps *PersistentStorage) ListAPIKeysByUser(ctx context.Context, userID string) ([]*APIKeyRecord, error) {
 	return ps.backend.ListAPIKeysByUser(ctx, userID)
+}
+
+func (ps *PersistentStorage) ListAPIKeysByClient(ctx context.Context, clientID string) ([]*APIKeyRecord, error) {
+	return ps.backend.ListAPIKeysByClient(ctx, clientID)
 }
 
 // DeviceTrial methods for PersistentStorage

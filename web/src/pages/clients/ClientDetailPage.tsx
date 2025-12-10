@@ -10,6 +10,9 @@ import {
     Mail,
     Building,
     Calendar,
+    Trash2,
+    Copy,
+    AlertTriangle,
 } from 'lucide-react';
 import api from '@/services/api';
 import { Button } from '@/components/ui/button';
@@ -52,8 +55,11 @@ import {
 } from '@/components/ui/dialog';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
+import { Input } from '@/components/ui/input';
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
+import { Tooltip, TooltipTrigger, TooltipContent } from '@/components/ui/tooltip';
 import { useToast } from '@/hooks/use-toast';
-import type { Client, License } from '@/types/api';
+import type { Client, License, APIKey } from '@/types/api';
 
 function getClientStatusBadge(client: Client) {
     switch (client.status) {
@@ -96,6 +102,13 @@ export function ClientDetailPage() {
         enabled: !!id,
     });
 
+    const { data: keysResponse, isLoading: keysLoading } = useQuery({
+        queryKey: ['client-keys', id],
+        queryFn: () => api.listClientAPIKeys(id!),
+        enabled: !!id,
+    });
+    const keys: APIKey[] = keysResponse?.data || [];
+
     const banMutation = useMutation({
         mutationFn: (reason: string) => api.banClient(id!, reason),
         onSuccess: () => {
@@ -125,6 +138,36 @@ export function ClientDetailPage() {
                 variant: 'destructive',
             });
         },
+    });
+
+    const [newKeyDialogOpen, setNewKeyDialogOpen] = useState(false);
+    const [newKeyValue, setNewKeyValue] = useState('');
+    const createKeyMutation = useMutation({
+        mutationFn: () => api.createClientAPIKey(id!),
+        onSuccess: (res) => {
+            if (res.success && res.data) {
+                setNewKeyValue(res.data.token);
+                setNewKeyDialogOpen(true);
+                queryClient.invalidateQueries({ queryKey: ['client-keys', id] });
+                toast({ title: 'Client API key created' });
+            } else {
+                toast({ title: 'Failed to create API key', description: res.error || 'Unknown error', variant: 'destructive' });
+            }
+        },
+        onError: (err) => {
+            toast({ title: 'Failed to create API key', description: err instanceof Error ? err.message : 'Unknown error', variant: 'destructive' });
+        }
+    });
+
+    const deleteKeyMutation = useMutation({
+        mutationFn: (keyID: string) => api.deleteClientAPIKey(keyID),
+        onSuccess: () => {
+            queryClient.invalidateQueries({ queryKey: ['client-keys', id] });
+            toast({ title: 'API key deleted' });
+        },
+        onError: (err) => {
+            toast({ title: 'Failed to delete API key', description: err instanceof Error ? err.message : 'Unknown error', variant: 'destructive' });
+        }
     });
 
     if (clientLoading) {
@@ -252,6 +295,14 @@ export function ClientDetailPage() {
                         </div>
 
                         <div className="flex items-center gap-3">
+                            <Key className="h-4 w-4 text-muted-foreground" />
+                            <div>
+                                <Label className="text-muted-foreground">Username</Label>
+                                <p className="font-medium">{client.username || '—'}</p>
+                            </div>
+                        </div>
+
+                        <div className="flex items-center gap-3">
                             <Calendar className="h-4 w-4 text-muted-foreground" />
                             <div>
                                 <Label className="text-muted-foreground">Joined</Label>
@@ -310,70 +361,74 @@ export function ClientDetailPage() {
             <Card>
                 <CardHeader className="flex flex-row items-center justify-between">
                     <div>
-                        <CardTitle>Licenses</CardTitle>
-                        <CardDescription>Licenses assigned to this client</CardDescription>
+                        <CardTitle>Credentials</CardTitle>
+                        <CardDescription>API keys for this client</CardDescription>
                     </div>
-                    <Button asChild>
-                        <Link to={`/licenses/new?clientId=${client.id}`}>
-                            <Key className="mr-2 h-4 w-4" />
-                            New License
-                        </Link>
+                    <Button onClick={() => createKeyMutation.mutate()} disabled={createKeyMutation.isPending}>
+                        <Key className="mr-2 h-4 w-4" />
+                        {createKeyMutation.isPending ? 'Creating...' : 'New API Key'}
                     </Button>
                 </CardHeader>
                 <CardContent>
-                    {licensesLoading ? (
+                    {keysLoading ? (
                         <div className="space-y-2">
                             {[...Array(3)].map((_, i) => (
                                 <Skeleton key={i} className="h-12 w-full" />
                             ))}
                         </div>
-                    ) : licenses.length === 0 ? (
+                    ) : keys.length === 0 ? (
                         <div className="flex flex-col items-center justify-center py-8 text-center">
                             <Key className="h-12 w-12 text-muted-foreground" />
                             <p className="mt-2 text-sm text-muted-foreground">
-                                No licenses found for this client
+                                No API keys found for this client
                             </p>
-                            <Button asChild className="mt-4">
-                                <Link to={`/licenses/new?clientId=${client.id}`}>
-                                    Create License
-                                </Link>
+                            <Button asChild className="mt-4" onClick={() => createKeyMutation.mutate()}>
+                                Create API Key
                             </Button>
                         </div>
                     ) : (
                         <Table>
                             <TableHeader>
                                 <TableRow>
-                                    <TableHead>License Key</TableHead>
-                                    <TableHead>Plan</TableHead>
-                                    <TableHead>Status</TableHead>
-                                    <TableHead>Devices</TableHead>
-                                    <TableHead>Expires</TableHead>
+                                    <TableHead>Prefix</TableHead>
+                                    <TableHead>Created</TableHead>
+                                    <TableHead>Last Used</TableHead>
+                                    <TableHead className="w-[100px]">Actions</TableHead>
                                 </TableRow>
                             </TableHeader>
                             <TableBody>
-                                {licenses.map((license) => (
-                                    <TableRow key={license.id}>
+                                {keys.map((key) => (
+                                    <TableRow key={key.id}>
+                                        <TableCell className="font-mono text-sm">{key.prefix}...</TableCell>
+                                        <TableCell>{key.created_at ? new Date(key.created_at).toLocaleDateString() : '—'}</TableCell>
+                                        <TableCell>{key.last_used_at ? new Date(key.last_used_at).toLocaleDateString() : 'Never'}</TableCell>
                                         <TableCell>
-                                            <Link
-                                                to={`/licenses/${license.id}`}
-                                                className="font-mono text-sm hover:underline"
-                                            >
-                                                {license.license_key?.substring(0, 16)}...
-                                            </Link>
-                                        </TableCell>
-                                        <TableCell>
-                                            {license.plan_slug || (
-                                                <span className="text-muted-foreground">—</span>
-                                            )}
-                                        </TableCell>
-                                        <TableCell>{getLicenseStatusBadge(license)}</TableCell>
-                                        <TableCell>
-                                            {license.device_count || 0} / {license.max_devices || '∞'}
-                                        </TableCell>
-                                        <TableCell>
-                                            {license.expires_at
-                                                ? new Date(license.expires_at).toLocaleDateString()
-                                                : 'Never'}
+                                            <AlertDialog>
+                                                <AlertDialogTrigger asChild>
+                                                    <Tooltip>
+                                                        <TooltipTrigger asChild>
+                                                            <Button variant="ghost" size="icon">
+                                                                <Trash2 className="h-4 w-4" />
+                                                            </Button>
+                                                        </TooltipTrigger>
+                                                        <TooltipContent>
+                                                            <p>Delete API key</p>
+                                                        </TooltipContent>
+                                                    </Tooltip>
+                                                </AlertDialogTrigger>
+                                                <AlertDialogContent>
+                                                    <AlertDialogHeader>
+                                                        <AlertDialogTitle>Delete API Key</AlertDialogTitle>
+                                                        <AlertDialogDescription>
+                                                            Permanently delete this API key. Any applications using it will lose access.
+                                                        </AlertDialogDescription>
+                                                    </AlertDialogHeader>
+                                                    <AlertDialogFooter>
+                                                        <AlertDialogCancel>Cancel</AlertDialogCancel>
+                                                        <AlertDialogAction onClick={() => deleteKeyMutation.mutate(key.id)} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">Delete</AlertDialogAction>
+                                                    </AlertDialogFooter>
+                                                </AlertDialogContent>
+                                            </AlertDialog>
                                         </TableCell>
                                     </TableRow>
                                 ))}
@@ -382,6 +437,103 @@ export function ClientDetailPage() {
                     )}
                 </CardContent>
             </Card>
-        </div>
+
+            <Dialog open={newKeyDialogOpen} onOpenChange={setNewKeyDialogOpen}>
+                <DialogContent>
+                    <DialogHeader>
+                        <DialogTitle>API Key Created</DialogTitle>
+                        <DialogDescription>Copy your client API key now. You won't be able to see it again!</DialogDescription>
+                    </DialogHeader>
+                    <Alert>
+                        <AlertTriangle className="h-4 w-4" />
+                        <AlertTitle>Important</AlertTitle>
+                        <AlertDescription>Store this key securely. It will only be shown once.</AlertDescription>
+                    </Alert>
+                    <div className="flex items-center gap-2 mt-4">
+                        <Input value={newKeyValue} readOnly className="font-mono text-xs" />
+                        <Button variant="outline" size="icon" onClick={() => navigator.clipboard.writeText(newKeyValue)}>
+                            <Copy className="h-4 w-4" />
+                        </Button>
+                    </div>
+                    <DialogFooter>
+                        <Button onClick={() => setNewKeyDialogOpen(false)}>Done</Button>
+                    </DialogFooter>
+                </DialogContent>
+            </Dialog>
+            <CardHeader className="flex flex-row items-center justify-between">
+                <div>
+                    <CardTitle>Licenses</CardTitle>
+                    <CardDescription>Licenses assigned to this client</CardDescription>
+                </div>
+                <Button asChild>
+                    <Link to={`/licenses/new?clientId=${client.id}`}>
+                        <Key className="mr-2 h-4 w-4" />
+                        New License
+                    </Link>
+                </Button>
+            </CardHeader>
+            <CardContent>
+                {licensesLoading ? (
+                    <div className="space-y-2">
+                        {[...Array(3)].map((_, i) => (
+                            <Skeleton key={i} className="h-12 w-full" />
+                        ))}
+                    </div>
+                ) : licenses.length === 0 ? (
+                    <div className="flex flex-col items-center justify-center py-8 text-center">
+                        <Key className="h-12 w-12 text-muted-foreground" />
+                        <p className="mt-2 text-sm text-muted-foreground">
+                            No licenses found for this client
+                        </p>
+                        <Button asChild className="mt-4">
+                            <Link to={`/licenses/new?clientId=${client.id}`}>
+                                Create License
+                            </Link>
+                        </Button>
+                    </div>
+                ) : (
+                    <Table>
+                        <TableHeader>
+                            <TableRow>
+                                <TableHead>License Key</TableHead>
+                                <TableHead>Plan</TableHead>
+                                <TableHead>Status</TableHead>
+                                <TableHead>Devices</TableHead>
+                                <TableHead>Expires</TableHead>
+                            </TableRow>
+                        </TableHeader>
+                        <TableBody>
+                            {licenses.map((license) => (
+                                <TableRow key={license.id}>
+                                    <TableCell>
+                                        <Link
+                                            to={`/licenses/${license.id}`}
+                                            className="font-mono text-sm hover:underline"
+                                        >
+                                            {license.license_key?.substring(0, 16)}...
+                                        </Link>
+                                    </TableCell>
+                                    <TableCell>
+                                        {license.plan_slug || (
+                                            <span className="text-muted-foreground">—</span>
+                                        )}
+                                    </TableCell>
+                                    <TableCell>{getLicenseStatusBadge(license)}</TableCell>
+                                    <TableCell>
+                                        {license.device_count || 0} / {license.max_devices || '∞'}
+                                    </TableCell>
+                                    <TableCell>
+                                        {license.expires_at
+                                            ? new Date(license.expires_at).toLocaleDateString()
+                                            : 'Never'}
+                                    </TableCell>
+                                </TableRow>
+                            ))}
+                        </TableBody>
+                    </Table>
+                )}
+            </CardContent>
+        </Card>
+        </div >
     );
 }

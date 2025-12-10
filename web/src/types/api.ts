@@ -91,6 +91,7 @@ export interface ScopePermission {
 
 export interface Client {
     id: string;
+    username?: string;
     email: string;
     status: 'active' | 'banned';
     created_at: string;
@@ -173,6 +174,7 @@ export interface AdminUser {
 export interface APIKey {
     id: string;
     user_id: string;
+    client_id?: string;
     prefix: string;
     created_at: string;
     last_used_at?: string;
@@ -213,7 +215,8 @@ export interface ApiResponse<T> {
 }
 
 export interface LoginRequest {
-    username: string;
+    email?: string;
+    username?: string;
     password: string;
 }
 
@@ -252,6 +255,8 @@ export interface ScopeSelection {
 
 export interface CreateClientRequest {
     email: string;
+    username?: string;
+    password?: string;
 }
 
 export interface CreateProductRequest {
