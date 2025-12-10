@@ -6,7 +6,6 @@ BEGIN TRANSACTION;
 
 -- Add columns if they don't exist
 ALTER TABLE clients ADD COLUMN username TEXT;
-ALTER TABLE clients ADD COLUMN username_lower TEXT;
 ALTER TABLE clients ADD COLUMN password_hash BLOB;
 
 ALTER TABLE api_keys ADD COLUMN client_id TEXT;
@@ -15,5 +14,4 @@ COMMIT;
 PRAGMA foreign_keys = ON;
 
 -- Add indexes
-CREATE UNIQUE INDEX IF NOT EXISTS idx_clients_username_lower ON clients(username_lower);
 CREATE INDEX IF NOT EXISTS idx_api_keys_client_id ON api_keys(client_id);

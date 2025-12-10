@@ -1,4 +1,5 @@
 import type { FeatureScopeSelection, LicenseEntitlements, ScopeSelection, ScopePermissionValue } from '@/types/api';
+import { cliScopes, guiScopes, apiScopes, type CategorizedScopes, type ScopeDefinition } from '@/data/menuData';
 
 const WORD_BOUNDARY = /[-_]/g;
 
@@ -39,4 +40,59 @@ export function normalizePermission(permission?: ScopePermissionValue): ScopePer
         return permission;
     }
     return 'allow';
+}
+
+// Build grouped scopes for a feature using the catalog (cli/gui/api)
+export function groupScopesForFeature(featureSlug: string, scopes?: ScopeSelection[]) {
+    if (!scopes || scopes.length === 0) return [] as { title: string; scopes: Array<{ selection: ScopeSelection; definition?: ScopeDefinition }> }[];
+    const catalogMap: Record<string, CategorizedScopes | undefined> = {
+        cli: cliScopes,
+        gui: guiScopes,
+        api: apiScopes,
+    };
+    const cat = featureSlug?.toLowerCase();
+    const catalog = (cat === 'cli' || cat === 'gui' || cat === 'api') ? catalogMap[cat] : undefined;
+    if (!catalog) {
+        return [
+            {
+                title: 'Scopes',
+                scopes: scopes.map((selection) => ({ selection })),
+            },
+        ];
+    }
+    const scopeMap = new Map(scopes.map((s) => [s.scope_slug, s]));
+    const consumed = new Set<string>();
+    const groups: { title: string; scopes: Array<{ selection: ScopeSelection; definition?: ScopeDefinition }> }[] = [];
+    Object.entries(catalog).forEach(([groupTitle, defs]) => {
+        const matches: Array<{ selection: ScopeSelection; definition?: ScopeDefinition }> = [];
+        defs.forEach((def) => {
+            const sel = scopeMap.get(def.slug);
+            if (sel) {
+                consumed.add(sel.scope_slug);
+                matches.push({ selection: sel, definition: def });
+            }
+        });
+        if (matches.length > 0) {
+            groups.push({ title: groupTitle, scopes: matches });
+        }
+    });
+    const remainder = scopes.filter((s) => !consumed.has(s.scope_slug));
+    if (remainder.length > 0) {
+        groups.push({ title: 'Other', scopes: remainder.map((s) => ({ selection: s })) });
+    }
+    return groups;
+}
+
+// Categorize selections into cli/gui/api/other
+export function categorizeSelections(selections: FeatureScopeSelection[]) {
+    const result: Record<'cli' | 'gui' | 'api' | 'other', FeatureScopeSelection[]> = { cli: [], gui: [], api: [], other: [] };
+    selections.forEach((f) => {
+        const cat = (f.feature_slug || '').toLowerCase();
+        if (cat === 'cli' || cat === 'gui' || cat === 'api') {
+            result[cat].push(f);
+        } else {
+            result.other.push(f);
+        }
+    });
+    return result;
 }

@@ -134,7 +134,7 @@ func (ws *WebServer) handleAPILicenseDetail(w http.ResponseWriter, r *http.Reque
 			ws.respondAPIError(w, http.StatusMethodNotAllowed, "Method not allowed")
 			return
 		}
-		license, err := ws.lm.Storage().GetLicense(ctx, licenseID)
+		license, err := ws.lm.GetLicenseByID(ctx, licenseID)
 		if err != nil {
 			ws.respondAPIError(w, http.StatusNotFound, "License not found")
 			return

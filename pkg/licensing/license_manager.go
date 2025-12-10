@@ -1773,6 +1773,21 @@ func (lm *LicenseManager) GetLicense(ctx context.Context, licenseKey string) (*L
 	return lm.storage.GetLicenseByKey(ctx, normalizeLicenseKey(licenseKey))
 }
 
+// GetLicenseByID loads a license by its ID and ensures entitlements are computed
+// so that callers (e.g., API responses) receive a fully-populated license object
+// including feature grants and scopes.
+func (lm *LicenseManager) GetLicenseByID(ctx context.Context, licenseID string) (*License, error) {
+	license, err := lm.storage.GetLicense(ctx, licenseID)
+	if err != nil {
+		return nil, err
+	}
+	// Compute entitlements if missing; don't fail the request if this errors.
+	if err := lm.ensureLicenseEntitlements(ctx, license); err != nil {
+		log.Printf("Warning: failed to compute entitlements for license %s: %v", license.ID, err)
+	}
+	return license, nil
+}
+
 func (lm *LicenseManager) ListLicenses(ctx context.Context) ([]*License, error) {
 	return lm.storage.ListLicenses(ctx)
 }

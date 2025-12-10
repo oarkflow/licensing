@@ -460,80 +460,81 @@ export function ClientDetailPage() {
                     </DialogFooter>
                 </DialogContent>
             </Dialog>
-            <CardHeader className="flex flex-row items-center justify-between">
-                <div>
-                    <CardTitle>Licenses</CardTitle>
-                    <CardDescription>Licenses assigned to this client</CardDescription>
-                </div>
-                <Button asChild>
-                    <Link to={`/licenses/new?clientId=${client.id}`}>
-                        <Key className="mr-2 h-4 w-4" />
-                        New License
-                    </Link>
-                </Button>
-            </CardHeader>
-            <CardContent>
-                {licensesLoading ? (
-                    <div className="space-y-2">
-                        {[...Array(3)].map((_, i) => (
-                            <Skeleton key={i} className="h-12 w-full" />
-                        ))}
+            <Card>
+                <CardHeader className="flex flex-row items-center justify-between">
+                    <div>
+                        <CardTitle>Licenses</CardTitle>
+                        <CardDescription>Licenses assigned to this client</CardDescription>
                     </div>
-                ) : licenses.length === 0 ? (
-                    <div className="flex flex-col items-center justify-center py-8 text-center">
-                        <Key className="h-12 w-12 text-muted-foreground" />
-                        <p className="mt-2 text-sm text-muted-foreground">
-                            No licenses found for this client
-                        </p>
-                        <Button asChild className="mt-4">
-                            <Link to={`/licenses/new?clientId=${client.id}`}>
-                                Create License
-                            </Link>
-                        </Button>
-                    </div>
-                ) : (
-                    <Table>
-                        <TableHeader>
-                            <TableRow>
-                                <TableHead>License Key</TableHead>
-                                <TableHead>Plan</TableHead>
-                                <TableHead>Status</TableHead>
-                                <TableHead>Devices</TableHead>
-                                <TableHead>Expires</TableHead>
-                            </TableRow>
-                        </TableHeader>
-                        <TableBody>
-                            {licenses.map((license) => (
-                                <TableRow key={license.id}>
-                                    <TableCell>
-                                        <Link
-                                            to={`/licenses/${license.id}`}
-                                            className="font-mono text-sm hover:underline"
-                                        >
-                                            {license.license_key?.substring(0, 16)}...
-                                        </Link>
-                                    </TableCell>
-                                    <TableCell>
-                                        {license.plan_slug || (
-                                            <span className="text-muted-foreground">—</span>
-                                        )}
-                                    </TableCell>
-                                    <TableCell>{getLicenseStatusBadge(license)}</TableCell>
-                                    <TableCell>
-                                        {license.device_count || 0} / {license.max_devices || '∞'}
-                                    </TableCell>
-                                    <TableCell>
-                                        {license.expires_at
-                                            ? new Date(license.expires_at).toLocaleDateString()
-                                            : 'Never'}
-                                    </TableCell>
-                                </TableRow>
+                    <Button asChild>
+                        <Link to={`/licenses/new?clientId=${client.id}`}>
+                            <Key className="mr-2 h-4 w-4" />
+                            New License
+                        </Link>
+                    </Button>
+                </CardHeader>
+                <CardContent>
+                    {licensesLoading ? (
+                        <div className="space-y-2">
+                            {[...Array(3)].map((_, i) => (
+                                <Skeleton key={i} className="h-12 w-full" />
                             ))}
-                        </TableBody>
-                    </Table>
-                )}
-            </CardContent>
-        </Card>
-        </div >
+                        </div>
+                    ) : licenses.length === 0 ? (
+                        <div className="flex flex-col items-center justify-center py-8 text-center">
+                            <Key className="h-12 w-12 text-muted-foreground" />
+                            <p className="mt-2 text-sm text-muted-foreground">
+                                No licenses found for this client
+                            </p>
+                            <Button asChild className="mt-4">
+                                <Link to={`/licenses/new?clientId=${client.id}`}>
+                                    Create License
+                                </Link>
+                            </Button>
+                        </div>
+                    ) : (
+                        <Table>
+                            <TableHeader>
+                                <TableRow>
+                                    <TableHead>License Key</TableHead>
+                                    <TableHead>Plan</TableHead>
+                                    <TableHead>Status</TableHead>
+                                    <TableHead>Devices</TableHead>
+                                    <TableHead>Expires</TableHead>
+                                </TableRow>
+                            </TableHeader>
+                            <TableBody>
+                                {licenses.map((license) => (
+                                    <TableRow key={license.id}>
+                                        <TableCell>
+                                            <Link
+                                                to={`/licenses/${license.id}`}
+                                                className="font-mono text-sm hover:underline"
+                                            >
+                                                {license.license_key?.substring(0, 16)}...
+                                            </Link>
+                                        </TableCell>
+                                        <TableCell>
+                                            {license.plan_slug || (
+                                                <span className="text-muted-foreground">—</span>
+                                            )}
+                                        </TableCell>
+                                        <TableCell>{getLicenseStatusBadge(license)}</TableCell>
+                                        <TableCell>
+                                            {license.device_count || 0} / {license.max_devices || '∞'}
+                                        </TableCell>
+                                        <TableCell>
+                                            {license.expires_at
+                                                ? new Date(license.expires_at).toLocaleDateString()
+                                                : 'Never'}
+                                        </TableCell>
+                                    </TableRow>
+                                ))}
+                            </TableBody>
+                        </Table>
+                    )}
+                </CardContent>
+            </Card>
+        </div>
     );
 }

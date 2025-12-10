@@ -68,7 +68,6 @@ func ensureSQLiteSchema(db *squealx.DB) error {
 					email TEXT NOT NULL,
 					email_lower TEXT NOT NULL UNIQUE,
 					username TEXT,
-					username_lower TEXT UNIQUE,
 			    password_hash BLOB,
 			name TEXT,
 			company_name TEXT,
@@ -135,7 +134,6 @@ func ensureSQLiteSchema(db *squealx.DB) error {
 		`CREATE TABLE IF NOT EXISTS admin_users (
             id TEXT PRIMARY KEY,
             username TEXT NOT NULL,
-            username_lower TEXT NOT NULL UNIQUE,
             password_hash BLOB NOT NULL,
             created_at TIMESTAMP NOT NULL,
             updated_at TIMESTAMP NOT NULL
@@ -176,8 +174,8 @@ func ensureSQLiteSchema(db *squealx.DB) error {
 			updated_at TIMESTAMP NOT NULL
 		);`,
 		`CREATE UNIQUE INDEX IF NOT EXISTS idx_email_providers_slug ON email_providers(slug_lower);`,
-		`CREATE UNIQUE INDEX IF NOT EXISTS idx_clients_username_lower ON clients(username_lower);`,
-		`CREATE INDEX IF NOT EXISTS idx_api_keys_client_id ON api_keys(client_id);`,
+		// idx_clients_username_lower is created after schema migration using LOWER(username) to avoid depending on username_lower column
+		// idx_api_keys_client_id is created after schema migration using ensureSQLiteColumn
 		`CREATE TABLE IF NOT EXISTS email_templates (
 			id TEXT PRIMARY KEY,
 			name TEXT NOT NULL,
@@ -258,8 +256,41 @@ func ensureSQLiteSchema(db *squealx.DB) error {
 			return fmt.Errorf("sqlite schema migration failed: %w", err)
 		}
 	}
+	// Ensure the username_lower column exists in clients and admin_users for compatibility
+	// Ensure we have a case-insensitive unique index on username using LOWER(username)
+	// First ensure the clients.username column exists (older DBs may not have it)
+	if err := ensureSQLiteColumn(db, "clients", "username", "TEXT"); err != nil {
+		return err
+	}
+	// Use an expression index so we don't need to maintain a duplicate column in the schema.
+	if _, err := db.Exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_clients_username_lower ON clients(LOWER(username))`); err != nil {
+		// If the SQLite version does not support expression indexes, gracefully ignore and continue.
+		if strings.Contains(err.Error(), "syntax error") || strings.Contains(err.Error(), "no such function") {
+			// continue
+		} else {
+			return fmt.Errorf("sqlite schema migration failed creating clients username index: %w", err)
+		}
+	}
+	if _, err := db.Exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_admin_users_username_lower ON admin_users(LOWER(username))`); err != nil {
+		if strings.Contains(err.Error(), "syntax error") || strings.Contains(err.Error(), "no such function") {
+			// continue
+		} else {
+			return fmt.Errorf("sqlite schema migration failed creating admin_users username index: %w", err)
+		}
+	}
 	if err := ensureClientProfileColumns(db); err != nil {
 		return err
+	}
+	// Ensure api_keys.client_id exists and create index after column migration
+	if err := ensureSQLiteColumn(db, "api_keys", "client_id", "TEXT"); err != nil {
+		return err
+	}
+	if _, err := db.Exec(`CREATE INDEX IF NOT EXISTS idx_api_keys_client_id ON api_keys(client_id)`); err != nil {
+		// If there is a sqlite error due to older versions, it's fine to continue
+		if strings.Contains(err.Error(), "no such column") {
+			return fmt.Errorf("sqlite schema migration failed: api_keys.client_id column not available: %w", err)
+		}
+		return fmt.Errorf("sqlite schema migration failed: %w", err)
 	}
 	if err := ensureSQLiteColumn(db, "licenses", "max_devices", "INTEGER NOT NULL DEFAULT 0"); err != nil {
 		return err
@@ -616,14 +647,13 @@ func (s *SQLiteStorage) SaveClient(ctx context.Context, client *Client) error {
 	if client == nil {
 		return fmt.Errorf("client is nil")
 	}
-	query := `INSERT INTO clients (id, email, email_lower, username, username_lower, password_hash, name, company_name, status, created_at, updated_at, banned_at, ban_reason)
-			  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+	query := `INSERT INTO clients (id, email, email_lower, username, password_hash, name, company_name, status, created_at, updated_at, banned_at, ban_reason)
+			  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 	_, err := s.db.ExecContext(ctx, query,
 		client.ID,
 		client.Email,
 		normalizeEmail(client.Email),
 		client.Username,
-		strings.ToLower(strings.TrimSpace(client.Username)),
 		client.PasswordHash,
 		client.Name,
 		client.CompanyName,
@@ -647,13 +677,12 @@ func (s *SQLiteStorage) UpdateClient(ctx context.Context, client *Client) error 
 		return fmt.Errorf("client is nil")
 	}
 	query := `UPDATE clients
-			  SET email = ?, email_lower = ?, username = ?, username_lower = ?, password_hash = ?, name = ?, company_name = ?, status = ?, created_at = ?, updated_at = ?, banned_at = ?, ban_reason = ?
+			  SET email = ?, email_lower = ?, username = ?, password_hash = ?, name = ?, company_name = ?, status = ?, created_at = ?, updated_at = ?, banned_at = ?, ban_reason = ?
 			  WHERE id = ?`
 	res, err := s.db.ExecContext(ctx, query,
 		client.Email,
 		normalizeEmail(client.Email),
 		client.Username,
-		strings.ToLower(strings.TrimSpace(client.Username)),
 		client.PasswordHash,
 		client.Name,
 		client.CompanyName,
@@ -707,7 +736,7 @@ func (s *SQLiteStorage) GetClientByEmail(ctx context.Context, email string) (*Cl
 
 func (s *SQLiteStorage) GetClientByUsername(ctx context.Context, username string) (*Client, error) {
 	query := `SELECT id, email, username, password_hash, name, company_name, status, created_at, updated_at, banned_at, ban_reason
-			  FROM clients WHERE username_lower = ?`
+			  FROM clients WHERE LOWER(username) = ?`
 	row := s.db.QueryRowContext(ctx, query, strings.ToLower(strings.TrimSpace(username)))
 	client, err := scanClientRow(row)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -1118,12 +1147,11 @@ func (s *SQLiteStorage) CreateAdminUser(ctx context.Context, user *AdminUser) er
 	if user == nil {
 		return fmt.Errorf("admin user is nil")
 	}
-	query := `INSERT INTO admin_users (id, username, username_lower, password_hash, created_at, updated_at)
-              VALUES (?, ?, ?, ?, ?, ?)`
+	query := `INSERT INTO admin_users (id, username, password_hash, created_at, updated_at)
+			  VALUES (?, ?, ?, ?, ?)`
 	_, err := s.db.ExecContext(ctx, query,
 		user.ID,
 		user.Username,
-		strings.ToLower(strings.TrimSpace(user.Username)),
 		user.PasswordHash,
 		user.CreatedAt,
 		user.UpdatedAt,
@@ -1141,10 +1169,9 @@ func (s *SQLiteStorage) UpdateAdminUser(ctx context.Context, user *AdminUser) er
 	if user == nil {
 		return fmt.Errorf("admin user is nil")
 	}
-	query := `UPDATE admin_users SET username = ?, username_lower = ?, password_hash = ?, updated_at = ? WHERE id = ?`
+	query := `UPDATE admin_users SET username = ?, password_hash = ?, updated_at = ? WHERE id = ?`
 	res, err := s.db.ExecContext(ctx, query,
 		user.Username,
-		strings.ToLower(strings.TrimSpace(user.Username)),
 		user.PasswordHash,
 		user.UpdatedAt,
 		user.ID,
@@ -1176,7 +1203,7 @@ func (s *SQLiteStorage) GetAdminUser(ctx context.Context, userID string) (*Admin
 }
 
 func (s *SQLiteStorage) GetAdminUserByUsername(ctx context.Context, username string) (*AdminUser, error) {
-	query := `SELECT id, username, password_hash, created_at, updated_at FROM admin_users WHERE username_lower = ?`
+	query := `SELECT id, username, password_hash, created_at, updated_at FROM admin_users WHERE LOWER(username) = ?`
 	row := s.db.QueryRowContext(ctx, query, strings.ToLower(strings.TrimSpace(username)))
 	var user AdminUser
 	var createdAt, updatedAt sqliteTimeValue

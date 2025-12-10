@@ -63,7 +63,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { useToast } from '@/hooks/use-toast';
 import type { FeatureScopeSelection, License, LicenseDevice } from '@/types/api';
 import { FeatureScopeSelector } from '@/components/licenses/FeatureScopeSelector';
-import { entitlementsToSelections } from '@/lib/entitlements';
+import { entitlementsToSelections, slugToLabel, groupScopesForFeature, categorizeSelections } from '@/lib/entitlements';
 
 function getLicenseStatusBadge(license: License) {
     if (license.is_revoked) {
@@ -649,25 +649,70 @@ export function LicenseDetailPage() {
                         )}
                     </CardHeader>
                     <CardContent>
-                        <div className="grid gap-2 sm:grid-cols-2 md:grid-cols-3">
-                            {Object.entries(license.entitlements.features).map(([slug, entitlement]) => (
-                                <div
-                                    key={slug}
-                                    className="flex items-center gap-2 rounded-md border p-3"
-                                >
-                                    {entitlement.enabled ? (
-                                        <CheckCircle className="h-4 w-4 text-primary" />
-                                    ) : (
-                                        <XCircle className="h-4 w-4 text-destructive" />
-                                    )}
-                                    <span className="text-sm">{slug}</span>
-                                    {entitlement.category && (
-                                        <Badge variant="outline" className="ml-auto">
-                                            {entitlement.category}
-                                        </Badge>
-                                    )}
-                                </div>
-                            ))}
+                        <div className="space-y-6">
+                            {/* Convert entitlements into selections and categorize into cli/gui/api/other */}
+                            {(() => {
+                                const selections = entitlementsToSelections(license.entitlements);
+                                const categories = categorizeSelections(selections);
+                                const catOrder: Array<'cli' | 'gui' | 'api' | 'other'> = ['cli', 'gui', 'api', 'other'];
+                                return (
+                                    <div className="space-y-6">
+                                        {catOrder.map((cat) => (
+                                            <div key={cat}>
+                                                {categories[cat].length > 0 && (
+                                                    <div>
+                                                        <div className="mb-2 flex items-center gap-2">
+                                                            <span className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">{cat.toUpperCase()}</span>
+                                                            <Badge variant="outline" className="text-[11px]">{categories[cat].length}</Badge>
+                                                        </div>
+                                                        <div>
+                                                            {categories[cat].map((feature) => {
+                                                                const groups = groupScopesForFeature(feature.feature_slug, feature.scopes);
+                                                                return (
+                                                                    <div key={feature.feature_slug} className="rounded-md border p-3">
+                                                                        <div className="flex items-center gap-2">
+                                                                            {feature.enabled ? (
+                                                                                <CheckCircle className="h-4 w-4 text-primary" />
+                                                                            ) : (
+                                                                                <XCircle className="h-4 w-4 text-destructive" />
+                                                                            )}
+                                                                            <span className="font-medium">{slugToLabel(feature.feature_slug)}</span>
+                                                                            {feature.feature_slug && (
+                                                                                <Badge variant="outline" className="ml-auto">{feature.feature_slug}</Badge>
+                                                                            )}
+                                                                        </div>
+                                                                        {groups.length === 0 ? (
+                                                                            <p className="mt-2 text-sm italic text-muted-foreground">No scopes defined for this feature yet.</p>
+                                                                        ) : (
+                                                                            <div className="grid gap-2 sm:grid-cols-2 md:grid-cols-3 mt-2 space-y-2">
+                                                                                {groups.map((g) => (
+                                                                                    <div key={g.title} className="rounded-2xl border border-border/60 bg-muted/10 p-2">
+                                                                                        <div className="flex items-center justify-between text-xs uppercase tracking-[0.3em] text-muted-foreground">
+                                                                                            <span>{g.title}</span>
+                                                                                            <Badge variant="outline" className="rounded-full px-2 py-0.5 text-[10px]">{g.scopes.length}</Badge>
+                                                                                        </div>
+                                                                                        <div className="mt-2 flex flex-wrap gap-2">
+                                                                                            {g.scopes.map(({ selection, definition }) => (
+                                                                                                <Badge key={selection.scope_slug} variant={selection.permission === 'deny' ? 'destructive' : selection.permission === 'limit' ? 'outline' : 'default'} className="uppercase text-[11px]">
+                                                                                                    {slugToLabel(definition?.slug ?? selection.scope_slug)}{selection.permission === 'limit' && selection.limit ? ` (${selection.limit})` : ''}
+                                                                                                </Badge>
+                                                                                            ))}
+                                                                                        </div>
+                                                                                    </div>
+                                                                                ))}
+                                                                            </div>
+                                                                        )}
+                                                                    </div>
+                                                                );
+                                                            })}
+                                                        </div>
+                                                    </div>
+                                                )}
+                                            </div>
+                                        ))}
+                                    </div>
+                                );
+                            })()}
                         </div>
                     </CardContent>
                 </Card>
