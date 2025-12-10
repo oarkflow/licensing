@@ -70,6 +70,10 @@ const adminNavItems = [
         title: 'API Keys',
         url: '/admin/api-keys',
     },
+    {
+        title: 'Signing Keys',
+        url: '/admin/signing-keys',
+    },
 ];
 
 const messagingNavItems = [

@@ -23,7 +23,8 @@ func ensureOfflineValidationSchema(db *squealx.DB) error {
 			created_at TIMESTAMP NOT NULL,
 			revoked_at TIMESTAMP,
 			revoked_by TEXT,
-			revoked_reason TEXT
+			revoked_reason TEXT,
+			signing_key_id TEXT
 		);`,
 		`CREATE INDEX IF NOT EXISTS idx_offline_tokens_license ON offline_validation_tokens(license_key);`,
 		`CREATE INDEX IF NOT EXISTS idx_offline_tokens_client ON offline_validation_tokens(client_id);`,
@@ -53,6 +54,18 @@ func ensureOfflineValidationSchema(db *squealx.DB) error {
 			return fmt.Errorf("offline validation schema creation failed: %w", err)
 		}
 	}
+
+	// Ensure signing_keys table exists
+	if _, err := db.Exec(`CREATE TABLE IF NOT EXISTS signing_keys (
+		id TEXT PRIMARY KEY,
+		name TEXT,
+		public_key BLOB NOT NULL,
+		private_key BLOB,
+		is_active INTEGER NOT NULL DEFAULT 0,
+		created_at TIMESTAMP NOT NULL
+	)`); err != nil {
+		return fmt.Errorf("failed to create signing_keys table: %w", err)
+	}
 	return nil
 }
 
@@ -65,13 +78,14 @@ func (s *SQLiteStorage) SaveOfflineValidationToken(ctx context.Context, token *O
 
 	query := `INSERT INTO offline_validation_tokens (
 		token, license_key, client_id, device_fingerprint, valid_until,
-		usage_count, max_uses, is_revoked, created_at, revoked_at, revoked_by, revoked_reason
-	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+		usage_count, max_uses, is_revoked, created_at, revoked_at, revoked_by, revoked_reason, signing_key_id
+	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 
 	_, err := s.db.ExecContext(ctx, query,
 		token.Token, token.LicenseKey, token.ClientID, token.DeviceFingerprint,
 		token.ValidUntil, token.UsageCount, token.MaxUses, token.IsRevoked,
 		token.CreatedAt, token.RevokedAt, token.RevokedBy, token.RevokedReason,
+		token.SigningKeyID,
 	)
 
 	if err != nil {
@@ -85,7 +99,7 @@ func (s *SQLiteStorage) SaveOfflineValidationToken(ctx context.Context, token *O
 
 func (s *SQLiteStorage) GetOfflineValidationToken(ctx context.Context, token string) (*OfflineValidationToken, error) {
 	query := `SELECT
-		token, license_key, client_id, device_fingerprint, valid_until,
+		token, license_key, client_id, device_fingerprint, signing_key_id, valid_until,
 		usage_count, max_uses, is_revoked, created_at, revoked_at, revoked_by, revoked_reason
 	FROM offline_validation_tokens WHERE token = ?`
 
@@ -96,7 +110,7 @@ func (s *SQLiteStorage) GetOfflineValidationToken(ctx context.Context, token str
 	row := s.db.QueryRowContext(ctx, query, token)
 	err := row.Scan(
 		&offlineToken.Token, &offlineToken.LicenseKey, &offlineToken.ClientID,
-		&offlineToken.DeviceFingerprint, &validUntil, &offlineToken.UsageCount,
+		&offlineToken.DeviceFingerprint, &offlineToken.SigningKeyID, &validUntil, &offlineToken.UsageCount,
 		&offlineToken.MaxUses, &offlineToken.IsRevoked, &createdAt,
 		&revokedAt, &revokedBy, &revokedReason,
 	)
@@ -130,13 +144,13 @@ func (s *SQLiteStorage) UpdateOfflineValidationToken(ctx context.Context, token 
 	}
 
 	query := `UPDATE offline_validation_tokens SET
-		license_key = ?, client_id = ?, device_fingerprint = ?, valid_until = ?,
+		license_key = ?, client_id = ?, device_fingerprint = ?, signing_key_id = ?, valid_until = ?,
 		usage_count = ?, max_uses = ?, is_revoked = ?, revoked_at = ?,
 		revoked_by = ?, revoked_reason = ?
 	WHERE token = ?`
 
 	_, err := s.db.ExecContext(ctx, query,
-		token.LicenseKey, token.ClientID, token.DeviceFingerprint, token.ValidUntil,
+		token.LicenseKey, token.ClientID, token.DeviceFingerprint, token.SigningKeyID, token.ValidUntil,
 		token.UsageCount, token.MaxUses, token.IsRevoked, token.RevokedAt,
 		token.RevokedBy, token.RevokedReason, token.Token,
 	)
@@ -167,7 +181,7 @@ func (s *SQLiteStorage) DeleteOfflineValidationToken(ctx context.Context, token 
 
 func (s *SQLiteStorage) ListOfflineValidationTokens(ctx context.Context) ([]*OfflineValidationToken, error) {
 	query := `SELECT
-		token, license_key, client_id, device_fingerprint, valid_until,
+		token, license_key, client_id, device_fingerprint, signing_key_id, valid_until,
 		usage_count, max_uses, is_revoked, created_at, revoked_at, revoked_by, revoked_reason
 	FROM offline_validation_tokens ORDER BY created_at DESC`
 
@@ -185,7 +199,7 @@ func (s *SQLiteStorage) ListOfflineValidationTokens(ctx context.Context) ([]*Off
 
 		err := rows.Scan(
 			&token.Token, &token.LicenseKey, &token.ClientID,
-			&token.DeviceFingerprint, &validUntil, &token.UsageCount,
+			&token.DeviceFingerprint, &token.SigningKeyID, &validUntil, &token.UsageCount,
 			&token.MaxUses, &token.IsRevoked, &createdAt,
 			&revokedAt, &revokedBy, &revokedReason,
 		)
@@ -214,7 +228,7 @@ func (s *SQLiteStorage) ListOfflineValidationTokens(ctx context.Context) ([]*Off
 
 func (s *SQLiteStorage) FindOfflineValidationTokensByLicense(ctx context.Context, licenseKey string) ([]*OfflineValidationToken, error) {
 	query := `SELECT
-		token, license_key, client_id, device_fingerprint, valid_until,
+		token, license_key, client_id, device_fingerprint, signing_key_id, valid_until,
 		usage_count, max_uses, is_revoked, created_at, revoked_at, revoked_by, revoked_reason
 	FROM offline_validation_tokens WHERE license_key = ? ORDER BY created_at DESC`
 
@@ -232,7 +246,7 @@ func (s *SQLiteStorage) FindOfflineValidationTokensByLicense(ctx context.Context
 
 		err := rows.Scan(
 			&token.Token, &token.LicenseKey, &token.ClientID,
-			&token.DeviceFingerprint, &validUntil, &token.UsageCount,
+			&token.DeviceFingerprint, &token.SigningKeyID, &validUntil, &token.UsageCount,
 			&token.MaxUses, &token.IsRevoked, &createdAt,
 			&revokedAt, &revokedBy, &revokedReason,
 		)
@@ -261,7 +275,7 @@ func (s *SQLiteStorage) FindOfflineValidationTokensByLicense(ctx context.Context
 
 func (s *SQLiteStorage) FindOfflineValidationTokensByClient(ctx context.Context, clientID string) ([]*OfflineValidationToken, error) {
 	query := `SELECT
-		token, license_key, client_id, device_fingerprint, valid_until,
+		token, license_key, client_id, device_fingerprint, signing_key_id, valid_until,
 		usage_count, max_uses, is_revoked, created_at, revoked_at, revoked_by, revoked_reason
 	FROM offline_validation_tokens WHERE client_id = ? ORDER BY created_at DESC`
 
@@ -279,7 +293,7 @@ func (s *SQLiteStorage) FindOfflineValidationTokensByClient(ctx context.Context,
 
 		err := rows.Scan(
 			&token.Token, &token.LicenseKey, &token.ClientID,
-			&token.DeviceFingerprint, &validUntil, &token.UsageCount,
+			&token.DeviceFingerprint, &token.SigningKeyID, &validUntil, &token.UsageCount,
 			&token.MaxUses, &token.IsRevoked, &createdAt,
 			&revokedAt, &revokedBy, &revokedReason,
 		)
@@ -305,6 +319,98 @@ func (s *SQLiteStorage) FindOfflineValidationTokensByClient(ctx context.Context,
 
 	return tokens, nil
 }
+
+// Signing key methods for SQLiteStorage
+func (s *SQLiteStorage) SaveSigningKey(ctx context.Context, key *SigningKey) error {
+	if key == nil {
+		return fmt.Errorf("signing key is nil")
+	}
+	query := `INSERT INTO signing_keys (id, name, public_key, private_key, is_active, created_at) VALUES (?, ?, ?, ?, ?, ?)`
+	_, err := s.db.ExecContext(ctx, query, key.ID, key.Name, key.PublicKey, key.PrivateKey, boolToInt(key.IsActive), key.CreatedAt)
+	if err != nil {
+		return fmt.Errorf("failed to save signing key: %w", err)
+	}
+	return nil
+}
+
+func (s *SQLiteStorage) GetSigningKey(ctx context.Context, keyID string) (*SigningKey, error) {
+	query := `SELECT id, name, public_key, private_key, is_active, created_at FROM signing_keys WHERE id = ?`
+	row := s.db.QueryRowContext(ctx, query, keyID)
+	var k SigningKey
+	var isActive int
+	var createdAt sqliteTimeValue
+	err := row.Scan(&k.ID, &k.Name, &k.PublicKey, &k.PrivateKey, &isActive, &createdAt)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, fmt.Errorf("signing key not found")
+		}
+		return nil, fmt.Errorf("failed to get signing key: %w", err)
+	}
+	k.IsActive = isActive == 1
+	k.CreatedAt = createdAt.Time
+	return &k, nil
+}
+
+func (s *SQLiteStorage) GetActiveSigningKey(ctx context.Context) (*SigningKey, error) {
+	query := `SELECT id, name, public_key, private_key, is_active, created_at FROM signing_keys WHERE is_active = 1 LIMIT 1`
+	row := s.db.QueryRowContext(ctx, query)
+	var k SigningKey
+	var isActive int
+	var createdAt sqliteTimeValue
+	err := row.Scan(&k.ID, &k.Name, &k.PublicKey, &k.PrivateKey, &isActive, &createdAt)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, fmt.Errorf("no active signing key")
+		}
+		return nil, fmt.Errorf("failed to get active signing key: %w", err)
+	}
+	k.IsActive = isActive == 1
+	k.CreatedAt = createdAt.Time
+	return &k, nil
+}
+
+func (s *SQLiteStorage) ListSigningKeys(ctx context.Context) ([]*SigningKey, error) {
+	query := `SELECT id, name, public_key, private_key, is_active, created_at FROM signing_keys ORDER BY created_at DESC`
+	rows, err := s.db.QueryContext(ctx, query)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list signing keys: %w", err)
+	}
+	defer rows.Close()
+	var keys []*SigningKey
+	for rows.Next() {
+		var k SigningKey
+		var isActive int
+		var createdAt sqliteTimeValue
+		if err := rows.Scan(&k.ID, &k.Name, &k.PublicKey, &k.PrivateKey, &isActive, &createdAt); err != nil {
+			return nil, fmt.Errorf("failed to scan signing key: %w", err)
+		}
+		k.IsActive = isActive == 1
+		k.CreatedAt = createdAt.Time
+		keys = append(keys, &k)
+	}
+	return keys, nil
+}
+
+func (s *SQLiteStorage) SetActiveSigningKey(ctx context.Context, keyID string) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("failed to begin transaction: %w", err)
+	}
+	// Clear existing active flags
+	if _, err := tx.ExecContext(ctx, `UPDATE signing_keys SET is_active = 0`); err != nil {
+		tx.Rollback()
+		return fmt.Errorf("failed to clear active signing keys: %w", err)
+	}
+	if keyID != "" {
+		if _, err := tx.ExecContext(ctx, `UPDATE signing_keys SET is_active = 1 WHERE id = ?`, keyID); err != nil {
+			tx.Rollback()
+			return fmt.Errorf("failed to set active signing key: %w", err)
+		}
+	}
+	return tx.Commit()
+}
+
+// boolToInt exists in storage_sqlite.go already; do not redefine here.
 
 // OfflineValidationLog methods for SQLiteStorage
 

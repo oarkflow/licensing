@@ -64,6 +64,8 @@ func main() {
 	licenseFile := flag.String("license-file", "", "Path to JSON file with license credentials")
 	httpAddr := flag.String("http", ":3000", "HTTP server address")
 	configDir := flag.String("config-dir", "", "Configuration directory (default: ~/.myapp)")
+	offlineBundle := flag.String("offline-bundle", "", "Path to a signed offline bundle JSON to verify locally")
+	offlineCache := flag.String("offline-cache", "", "Directory to cache revocation manifest for offline verification")
 	insecure := flag.Bool("insecure", false, "Allow insecure HTTP (dev only)")
 	flag.Parse()
 
@@ -96,6 +98,29 @@ func main() {
 	fmt.Println("║         Using Go Licensing SDK            ║")
 	fmt.Println("╚═══════════════════════════════════════════╝")
 	fmt.Println()
+
+	// If offline bundle provided, run offline verification and exit
+	if *offlineBundle != "" {
+		fmt.Println("🔎 Offline verification mode — using offline verification SDK")
+		oc, err := licensing.NewOfflineClient(licensing.OfflineConfig{ServerURL: *serverURL, CacheDir: *offlineCache})
+		if err != nil {
+			log.Fatalf("failed to create offline client: %v", err)
+		}
+		data, err := os.ReadFile(*offlineBundle)
+		if err != nil {
+			log.Fatalf("failed to read bundle: %v", err)
+		}
+		ctx := context.Background()
+		payload, err := oc.VerifySignedBundle(ctx, string(data), "")
+		if err != nil {
+			log.Fatalf("offline verification failed: %v", err)
+		}
+		fmt.Printf("✅ Offline bundle verified: %+v\n", payload)
+		if _, err := oc.SyncManifest(ctx, ""); err == nil {
+			fmt.Println("manifest synced — revocation checks applied if any")
+		}
+		return
+	}
 
 	// Create licensing client
 	client, err := licensing.NewClient(licensing.Config{

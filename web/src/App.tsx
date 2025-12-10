@@ -44,6 +44,7 @@ const AdminUsersPage = lazy(() => import("@/pages/admin").then(module => ({ defa
 const AdminUserNewPage = lazy(() => import("@/pages/admin").then(module => ({ default: module.AdminUserNewPage })));
 const AdminUserEditPage = lazy(() => import("@/pages/admin").then(module => ({ default: module.AdminUserEditPage })));
 const AdminAPIKeysPage = lazy(() => import("@/pages/admin").then(module => ({ default: module.AdminAPIKeysPage })));
+const AdminSigningKeysPage = lazy(() => import("@/pages/admin").then(module => ({ default: module.AdminSigningKeysPage })));
 
 const MessagingProvidersPage = lazy(() => import("@/pages/messaging").then(module => ({ default: module.MessagingProvidersPage })));
 const MessagingProviderFormPage = lazy(() => import("@/pages/messaging").then(module => ({ default: module.MessagingProviderFormPage })));
@@ -134,6 +135,7 @@ const App = () => (
                                     <Route path="/admin/users/new" element={<AdminUserNewPage />} />
                                     <Route path="/admin/users/:id/edit" element={<AdminUserEditPage />} />
                                     <Route path="/admin/api-keys" element={<AdminAPIKeysPage />} />
+                                    <Route path="/admin/signing-keys" element={<AdminSigningKeysPage />} />
 
                                     {/* Profile */}
                                     <Route path="/profile" element={<ProfilePage />} />

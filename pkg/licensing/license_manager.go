@@ -9,6 +9,7 @@ import (
 	"crypto/sha256"
 	"crypto/x509"
 	"encoding/base32"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"encoding/pem"
@@ -20,6 +21,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"crypto/ed25519"
 
 	"github.com/google/uuid"
 	"golang.org/x/crypto/bcrypt"
@@ -149,6 +152,8 @@ type LicenseManager struct {
 	storage              Storage
 	signer               SigningProvider
 	signerID             string
+	offlineSigner        OfflineSigningProvider
+	offlineSignerID      string
 	publicKeyPath        string
 	mu                   sync.RWMutex
 	defaultCheckMode     LicenseCheckMode
@@ -169,8 +174,18 @@ func NewLicenseManager(storage Storage) (*LicenseManager, error) {
 		storage:              storage,
 		signer:               signer,
 		signerID:             signer.ID(),
+		offlineSigner:        nil,
+		offlineSignerID:      "",
 		defaultCheckMode:     LicenseCheckModeYearly,
 		defaultCheckInterval: defaultCustomCheckInterval,
+	}
+
+	// Configure offline signing provider if available
+	if offSigner, err2 := BuildOfflineSigningProviderFromEnv(storage); err2 == nil {
+		lm.offlineSigner = offSigner
+		if id, err3 := offSigner.ActiveKeyID(); err3 == nil {
+			lm.offlineSignerID = id
+		}
 	}
 
 	path, err := lm.savePublicKey()
@@ -1715,36 +1730,36 @@ func (lm *LicenseManager) DeactivateDevice(ctx context.Context, licenseID, finge
 // Offline Validation Token Management
 
 // GenerateOfflineValidationToken creates a new offline validation token for a license
-func (lm *LicenseManager) GenerateOfflineValidationToken(ctx context.Context, licenseKey, deviceFingerprint string, maxUses int, validityDays int) (*OfflineValidationToken, error) {
+func (lm *LicenseManager) GenerateOfflineValidationToken(ctx context.Context, licenseKey, deviceFingerprint string, maxUses int, validityDays int) (*OfflineValidationToken, string, error) {
 	// Get the license
 	license, err := lm.storage.GetLicenseByKey(ctx, licenseKey)
 	if err != nil {
-		return nil, fmt.Errorf("license not found: %w", err)
+		return nil, "", fmt.Errorf("license not found: %w", err)
 	}
 
 	// Validate the license
 	if license.IsRevoked {
-		return nil, fmt.Errorf("license has been revoked")
+		return nil, "", fmt.Errorf("license has been revoked")
 	}
 
 	if time.Now().After(license.ExpiresAt) {
-		return nil, fmt.Errorf("license has expired")
+		return nil, "", fmt.Errorf("license has expired")
 	}
 
 	// Check if the device is authorized for this license
 	if len(license.Devices) == 0 {
-		return nil, fmt.Errorf("license has no activated devices")
+		return nil, "", fmt.Errorf("license has no activated devices")
 	}
 
 	_, exists := license.Devices[deviceFingerprint]
 	if !exists {
-		return nil, fmt.Errorf("device not found in license")
+		return nil, "", fmt.Errorf("device not found in license")
 	}
 
 	// Generate a unique token
 	tokenBytes, err := lm.randomBytes(32)
 	if err != nil {
-		return nil, fmt.Errorf("failed to generate token: %w", err)
+		return nil, "", fmt.Errorf("failed to generate token: %w", err)
 	}
 	token := hex.EncodeToString(tokenBytes)
 
@@ -1765,12 +1780,69 @@ func (lm *LicenseManager) GenerateOfflineValidationToken(ctx context.Context, li
 		CreatedAt:         now,
 	}
 
-	// Save the token
-	if err := lm.storage.SaveOfflineValidationToken(ctx, offlineToken); err != nil {
-		return nil, fmt.Errorf("failed to save offline validation token: %w", err)
+	// Attempt to find an active signing key
+	var signedBundle string
+	var activeKeyID string
+	// Prefer configured offline signer/provider
+	if lm.offlineSigner != nil {
+		if id, err := lm.offlineSigner.ActiveKeyID(); err == nil {
+			activeKeyID = id
+			offlineToken.SigningKeyID = id
+		}
+	} else {
+		// fallback to storage for backward compatibility
+		if activeKey, keyErr := lm.storage.GetActiveSigningKey(ctx); keyErr == nil && activeKey != nil {
+			activeKeyID = activeKey.ID
+			offlineToken.SigningKeyID = activeKey.ID
+		}
 	}
 
-	return offlineToken, nil
+	if err := lm.storage.SaveOfflineValidationToken(ctx, offlineToken); err != nil {
+		return nil, "", fmt.Errorf("failed to save offline validation token: %w", err)
+	}
+
+	// If we have an active signing key id, attempt to create a signed bundle
+	if activeKeyID != "" {
+		// Build payload
+		payload := map[string]interface{}{
+			"token":              offlineToken.Token,
+			"license_key":        offlineToken.LicenseKey,
+			"client_id":          offlineToken.ClientID,
+			"device_fingerprint": offlineToken.DeviceFingerprint,
+			"valid_until":        offlineToken.ValidUntil.Format(time.RFC3339),
+			"max_uses":           offlineToken.MaxUses,
+			"issued_at":          time.Now().UTC().Format(time.RFC3339),
+			"signing_key_id":     activeKeyID,
+		}
+		payloadBytes, _ := json.Marshal(payload)
+		// Sign using configured offline signer or fallback to storage private key
+		var sig []byte
+		var signErr error
+		if lm.offlineSigner != nil {
+			sig, signErr = lm.offlineSigner.Sign(activeKeyID, payloadBytes)
+		} else {
+			if ak, err := lm.storage.GetSigningKey(ctx, activeKeyID); err == nil && len(ak.PrivateKey) > 0 {
+				sig = ed25519.Sign(ed25519.PrivateKey(ak.PrivateKey), payloadBytes)
+			} else {
+				signErr = fmt.Errorf("private key not available for active key %s", activeKeyID)
+			}
+		}
+		if signErr == nil && len(sig) > 0 {
+			bundle := map[string]interface{}{
+				"payload":   payload,
+				"signature": base64.StdEncoding.EncodeToString(sig),
+			}
+			b, _ := json.Marshal(bundle)
+			signedBundle = string(b)
+			// Update offline token record to include signing key id (already set earlier) — persist the change
+			if err := lm.storage.UpdateOfflineValidationToken(ctx, offlineToken); err != nil {
+				// Not fatal — token issued; just log
+				log.Printf("Warning: failed to persist signing_key_id for offline token: %v", err)
+			}
+		}
+	}
+
+	return offlineToken, signedBundle, nil
 }
 
 // GetOfflineValidationToken retrieves an offline validation token
@@ -1780,6 +1852,66 @@ func (lm *LicenseManager) GetOfflineValidationToken(ctx context.Context, token s
 
 // ValidateOfflineToken validates an offline validation token and returns the license if valid
 func (lm *LicenseManager) ValidateOfflineToken(ctx context.Context, token string, deviceFingerprint string) (*License, *OfflineValidationToken, error) {
+	// Accept either a raw token id, or a signed JSON bundle containing payload+signature.
+	token = strings.TrimSpace(token)
+	if strings.HasPrefix(token, "{") {
+		var bundle struct {
+			Payload   map[string]interface{} `json:"payload"`
+			Signature string                 `json:"signature"`
+		}
+		if err := json.Unmarshal([]byte(token), &bundle); err != nil {
+			return nil, nil, fmt.Errorf("invalid offline token bundle: %w", err)
+		}
+		// Extract signing key id from payload
+		skidVal, ok := bundle.Payload["signing_key_id"]
+		if !ok {
+			return nil, nil, fmt.Errorf("bundle missing signing_key_id")
+		}
+		skid, ok := skidVal.(string)
+		if !ok || skid == "" {
+			return nil, nil, fmt.Errorf("invalid signing_key_id in bundle")
+		}
+		// Get signing key public part, prefer configured offline signer
+		var pub []byte
+		var perr error
+		if lm.offlineSigner != nil {
+			pub, perr = lm.offlineSigner.PublicKey(skid)
+			if perr != nil {
+				return nil, nil, fmt.Errorf("signing key not available from provider: %w", perr)
+			}
+		} else {
+			key, err := lm.storage.GetSigningKey(ctx, skid)
+			if err != nil {
+				return nil, nil, fmt.Errorf("signing key not found: %w", err)
+			}
+			if len(key.PublicKey) == 0 {
+				return nil, nil, fmt.Errorf("signing key missing public key")
+			}
+			pub = key.PublicKey
+		}
+		// Re-marshal the payload deterministically and verify signature
+		payloadBytes, err := json.Marshal(bundle.Payload)
+		if err != nil {
+			return nil, nil, fmt.Errorf("failed to re-marshal bundle payload: %w", err)
+		}
+		sig, err := base64.StdEncoding.DecodeString(strings.TrimSpace(bundle.Signature))
+		if err != nil {
+			return nil, nil, fmt.Errorf("invalid signature encoding: %w", err)
+		}
+		if !ed25519.Verify(ed25519.PublicKey(pub), payloadBytes, sig) {
+			return nil, nil, fmt.Errorf("invalid bundle signature")
+		}
+		// Extract token id from payload
+		tVal, ok := bundle.Payload["token"]
+		if !ok {
+			return nil, nil, fmt.Errorf("bundle payload missing token")
+		}
+		t, ok := tVal.(string)
+		if !ok || t == "" {
+			return nil, nil, fmt.Errorf("invalid token in bundle payload")
+		}
+		token = t
+	}
 	// Get the offline token
 	offlineToken, err := lm.storage.GetOfflineValidationToken(ctx, token)
 	if err != nil {

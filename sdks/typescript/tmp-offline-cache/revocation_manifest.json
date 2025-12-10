@@ -1,0 +1,17 @@
+{
+  "manifest": {
+    "version": "1",
+    "generated_at": "2025-12-10T01:19:34.070Z",
+    "revoked_offline_tokens": [
+      {
+        "token": "tok-123",
+        "license_key": "LIC-AAA",
+        "revoked_at": "2025-12-10T01:19:34.071Z"
+      }
+    ],
+    "revoked_licenses": [],
+    "_signingKeyId": "k1"
+  },
+  "signature": "/RAiOItfcu6XER4i/IvB1b5cC3V4c1382OZbH8N8njeOHDZQW7LL7TkFfn8DjdT7HRBOq1Xxjd3mfwsHa9Z8Ag==",
+  "signing_key_id": "k1"
+}

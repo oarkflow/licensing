@@ -104,6 +104,13 @@ type Storage interface {
 	FindOfflineValidationLogsByLicense(ctx context.Context, licenseKey string) ([]*OfflineValidationLog, error)
 	FindOfflineValidationLogsByClient(ctx context.Context, clientID string) ([]*OfflineValidationLog, error)
 
+	// Signing keys used to sign offline bundles (asymmetric keys)
+	SaveSigningKey(ctx context.Context, key *SigningKey) error
+	GetSigningKey(ctx context.Context, keyID string) (*SigningKey, error)
+	GetActiveSigningKey(ctx context.Context) (*SigningKey, error)
+	ListSigningKeys(ctx context.Context) ([]*SigningKey, error)
+	SetActiveSigningKey(ctx context.Context, keyID string) error
+
 	// Subscription management
 	SaveSubscription(ctx context.Context, sub *Subscription) error
 	UpdateSubscription(ctx context.Context, sub *Subscription) error
@@ -191,6 +198,7 @@ type OfflineValidationToken struct {
 	LicenseKey        string    `json:"license_key"`
 	ClientID          string    `json:"client_id"`
 	DeviceFingerprint string    `json:"device_fingerprint"`
+	SigningKeyID      string    `json:"signing_key_id,omitempty"`
 	ValidUntil        time.Time `json:"valid_until"`
 	UsageCount        int       `json:"usage_count"`
 	MaxUses           int       `json:"max_uses"`
@@ -215,6 +223,16 @@ type OfflineValidationLog struct {
 	UserAgent         string    `json:"user_agent,omitempty"`
 	AppVersion        string    `json:"app_version,omitempty"`
 	Metadata          string    `json:"metadata,omitempty"`
+}
+
+// SigningKey represents an offline signing key pair (Ed25519) stored in the server
+type SigningKey struct {
+	ID         string    `json:"id"`
+	Name       string    `json:"name,omitempty"`
+	PublicKey  []byte    `json:"public_key"`            // raw public key bytes
+	PrivateKey []byte    `json:"private_key,omitempty"` // raw private key bytes (stored only in server storage)
+	IsActive   bool      `json:"is_active"`
+	CreatedAt  time.Time `json:"created_at"`
 }
 
 type AdminUser struct {
@@ -279,6 +297,9 @@ type InMemoryStorage struct {
 	// Offline validation
 	offlineValidationTokens map[string]*OfflineValidationToken // key: token
 	offlineValidationLogs   map[string][]*OfflineValidationLog // key: token
+	// Signing keys
+	signingKeys        map[string]*SigningKey
+	activeSigningKeyID string
 	// Email management
 	emailProviders       map[string]*email.EmailProvider
 	emailProvidersBySlug map[string]string
@@ -319,20 +340,24 @@ func NewInMemoryStorage() *InMemoryStorage {
 		emailRoutes:             make(map[string]*email.EmailTemplateRoute),
 		emailMessages:           make(map[string]*email.EmailMessage),
 		emailEvents:             make(map[string][]*email.EmailEvent),
+		signingKeys:             make(map[string]*SigningKey),
+		activeSigningKeyID:      "",
 	}
 }
 
 type storageSnapshot struct {
-	Clients        map[string]*Client                   `json:"clients"`
-	Licenses       map[string]*License                  `json:"licenses"`
-	Activations    map[string][]*ActivationRecord       `json:"activations"`
-	AdminUsers     map[string]*AdminUser                `json:"admin_users"`
-	APIKeys        map[string]*APIKeyRecord             `json:"api_keys"`
-	EmailProviders map[string]*email.EmailProvider      `json:"email_providers,omitempty"`
-	EmailTemplates map[string]*email.EmailTemplate      `json:"email_templates,omitempty"`
-	EmailRoutes    map[string]*email.EmailTemplateRoute `json:"email_routes,omitempty"`
-	EmailMessages  map[string]*email.EmailMessage       `json:"email_messages,omitempty"`
-	EmailEvents    map[string][]*email.EmailEvent       `json:"email_events,omitempty"`
+	Clients            map[string]*Client                   `json:"clients"`
+	Licenses           map[string]*License                  `json:"licenses"`
+	Activations        map[string][]*ActivationRecord       `json:"activations"`
+	AdminUsers         map[string]*AdminUser                `json:"admin_users"`
+	APIKeys            map[string]*APIKeyRecord             `json:"api_keys"`
+	EmailProviders     map[string]*email.EmailProvider      `json:"email_providers,omitempty"`
+	EmailTemplates     map[string]*email.EmailTemplate      `json:"email_templates,omitempty"`
+	EmailRoutes        map[string]*email.EmailTemplateRoute `json:"email_routes,omitempty"`
+	EmailMessages      map[string]*email.EmailMessage       `json:"email_messages,omitempty"`
+	EmailEvents        map[string][]*email.EmailEvent       `json:"email_events,omitempty"`
+	SigningKeys        map[string]*SigningKey               `json:"signing_keys,omitempty"`
+	ActiveSigningKeyID string                               `json:"active_signing_key_id,omitempty"`
 }
 
 func (s *InMemoryStorage) SaveClient(_ context.Context, client *Client) error {
@@ -1160,6 +1185,83 @@ func (s *InMemoryStorage) FindOfflineValidationTokensByClient(_ context.Context,
 	return tokens, nil
 }
 
+// SigningKey methods for InMemoryStorage
+func (s *InMemoryStorage) SaveSigningKey(_ context.Context, key *SigningKey) error {
+	if key == nil {
+		return fmt.Errorf("signing key is nil")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, exists := s.signingKeys[key.ID]; exists {
+		return fmt.Errorf("signing key already exists")
+	}
+	// clone
+	k := *key
+	s.signingKeys[key.ID] = &k
+	if key.IsActive {
+		s.activeSigningKeyID = key.ID
+	}
+	return nil
+}
+
+func (s *InMemoryStorage) GetSigningKey(_ context.Context, keyID string) (*SigningKey, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	key, ok := s.signingKeys[keyID]
+	if !ok {
+		return nil, fmt.Errorf("signing key not found")
+	}
+	k := *key
+	return &k, nil
+}
+
+func (s *InMemoryStorage) GetActiveSigningKey(_ context.Context) (*SigningKey, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if s.activeSigningKeyID == "" {
+		return nil, fmt.Errorf("no active signing key")
+	}
+	key, ok := s.signingKeys[s.activeSigningKeyID]
+	if !ok {
+		return nil, fmt.Errorf("active signing key not found")
+	}
+	k := *key
+	return &k, nil
+}
+
+func (s *InMemoryStorage) ListSigningKeys(_ context.Context) ([]*SigningKey, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	var out []*SigningKey
+	for _, key := range s.signingKeys {
+		k := *key
+		out = append(out, &k)
+	}
+	return out, nil
+}
+
+func (s *InMemoryStorage) SetActiveSigningKey(_ context.Context, keyID string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if keyID == "" {
+		s.activeSigningKeyID = ""
+		return nil
+	}
+	if _, ok := s.signingKeys[keyID]; !ok {
+		return fmt.Errorf("signing key not found")
+	}
+	s.activeSigningKeyID = keyID
+	// update flags
+	for id, k := range s.signingKeys {
+		if id == keyID {
+			k.IsActive = true
+		} else {
+			k.IsActive = false
+		}
+	}
+	return nil
+}
+
 // OfflineValidationLog methods for InMemoryStorage
 
 func (s *InMemoryStorage) SaveOfflineValidationLog(_ context.Context, log *OfflineValidationLog) error {
@@ -1290,6 +1392,17 @@ func (s *InMemoryStorage) snapshot() *storageSnapshot {
 		}
 		snapshot.EmailEvents[id] = copies
 	}
+
+	// Include signing keys - DO NOT persist private keys in the file snapshot
+	if len(s.signingKeys) > 0 {
+		snapshot.SigningKeys = make(map[string]*SigningKey, len(s.signingKeys))
+		for id, key := range s.signingKeys {
+			copy := *key
+			copy.PrivateKey = nil
+			snapshot.SigningKeys[id] = &copy
+		}
+	}
+	snapshot.ActiveSigningKeyID = s.activeSigningKeyID
 	return snapshot
 }
 
@@ -1370,6 +1483,14 @@ func (s *InMemoryStorage) loadSnapshot(snapshot *storageSnapshot) {
 		}
 		s.emailEvents[id] = copies
 	}
+
+	// Load signing keys (public parts only if persisted). Private keys won't be present in snapshot.
+	s.signingKeys = make(map[string]*SigningKey, len(snapshot.SigningKeys))
+	for id, key := range snapshot.SigningKeys {
+		copied := *key
+		s.signingKeys[id] = &copied
+	}
+	s.activeSigningKeyID = snapshot.ActiveSigningKeyID
 }
 
 type PersistentStorage struct {
@@ -1568,6 +1689,33 @@ func (ps *PersistentStorage) DeleteOfflineValidationToken(ctx context.Context, t
 
 func (ps *PersistentStorage) ListOfflineValidationTokens(ctx context.Context) ([]*OfflineValidationToken, error) {
 	return ps.backend.ListOfflineValidationTokens(ctx)
+}
+
+// SigningKey methods for PersistentStorage
+func (ps *PersistentStorage) SaveSigningKey(ctx context.Context, key *SigningKey) error {
+	if err := ps.backend.SaveSigningKey(ctx, key); err != nil {
+		return err
+	}
+	return ps.persist()
+}
+
+func (ps *PersistentStorage) GetSigningKey(ctx context.Context, keyID string) (*SigningKey, error) {
+	return ps.backend.GetSigningKey(ctx, keyID)
+}
+
+func (ps *PersistentStorage) GetActiveSigningKey(ctx context.Context) (*SigningKey, error) {
+	return ps.backend.GetActiveSigningKey(ctx)
+}
+
+func (ps *PersistentStorage) ListSigningKeys(ctx context.Context) ([]*SigningKey, error) {
+	return ps.backend.ListSigningKeys(ctx)
+}
+
+func (ps *PersistentStorage) SetActiveSigningKey(ctx context.Context, keyID string) error {
+	if err := ps.backend.SetActiveSigningKey(ctx, keyID); err != nil {
+		return err
+	}
+	return ps.persist()
 }
 
 func (ps *PersistentStorage) FindOfflineValidationTokensByLicense(ctx context.Context, licenseKey string) ([]*OfflineValidationToken, error) {

@@ -25,6 +25,7 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"log"
@@ -44,6 +45,8 @@ func main() {
 	licenseFile := flag.String("license-file", "", "Path to JSON file with license credentials")
 	productID := flag.String("product-id", "secretr", "Product ID")
 	sshKeyPath := flag.String("ssh-key", "", "Path to SSH private key for authentication")
+	offlineBundle := flag.String("offline-bundle", "", "Path to a signed offline bundle JSON to verify locally")
+	offlineCache := flag.String("offline-cache", "", "Directory to cache revocation manifest for offline verification")
 	generateKey := flag.Bool("generate-key", false, "Generate new SSH key pair")
 	verify := flag.Bool("verify", false, "Verify existing license only")
 	enableTamper := flag.Bool("enable-tamper-detection", false, "Enable runtime tamper detection")
@@ -81,6 +84,29 @@ func main() {
 	// Set SSH key path
 	if *sshKeyPath != "" {
 		credSSHKey = *sshKeyPath
+	}
+
+	// If offline bundle provided, run offline verification and exit
+	if *offlineBundle != "" {
+		fmt.Println("🔎 Offline verification mode — using offline verification SDK")
+		oc, err := licensing.NewOfflineClient(licensing.OfflineConfig{ServerURL: *serverURL, CacheDir: *offlineCache})
+		if err != nil {
+			log.Fatalf("failed to create offline client: %v", err)
+		}
+		data, err := os.ReadFile(*offlineBundle)
+		if err != nil {
+			log.Fatalf("failed to read bundle: %v", err)
+		}
+		ctx := context.Background()
+		payload, err := oc.VerifySignedBundle(ctx, string(data), "")
+		if err != nil {
+			log.Fatalf("offline verification failed: %v", err)
+		}
+		fmt.Printf("✅ Offline bundle verified: %+v\n", payload)
+		if _, err := oc.SyncManifest(ctx, ""); err == nil {
+			fmt.Println("manifest synced — revocation checks applied if any")
+		}
+		return
 	}
 
 	// Create licensing client with security features

@@ -448,3 +448,33 @@ export interface EmailComposeResponse {
 }
 
 export type LicenseCheckMode = 'none' | 'each-run' | 'monthly' | 'yearly' | 'custom';
+
+// Offline tokens & signing keys
+export interface OfflineValidationToken {
+    token: string;
+    license_key: string;
+    client_id: string;
+    device_fingerprint: string;
+    signing_key_id?: string;
+    valid_until: string;
+    usage_count: number;
+    max_uses: number;
+    is_revoked: boolean;
+    created_at: string;
+    revoked_at?: string;
+    revoked_by?: string;
+    revoked_reason?: string;
+}
+
+export interface SignedBundleResponse {
+    payload: Record<string, unknown>;
+    signature: string;
+}
+
+export interface SigningKeyMeta {
+    id: string;
+    name?: string;
+    public_key: string; // base64
+    is_active: boolean;
+    created_at: string;
+}

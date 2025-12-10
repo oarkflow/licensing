@@ -2,6 +2,7 @@ package licensing
 
 import (
 	"context"
+	"crypto/ed25519"
 	"crypto/rand"
 	"crypto/sha256"
 	"crypto/subtle"
@@ -116,8 +117,9 @@ func NewServer(lm *LicenseManager, port string, apiKeys []string, limiter *RateL
 	if !allowInsecure && (strings.TrimSpace(tlsCertPath) == "" || strings.TrimSpace(tlsKeyPath) == "") {
 		return nil, fmt.Errorf("tls cert/key required unless allowInsecure HTTP is enabled")
 	}
-	// Initialize email template loader
-	emailTemplateLoader := NewEmailTemplateLoader()
+	// Initialize email template loader with embedded templates
+	// This allows the server to run as a standalone binary
+	emailTemplateLoader := NewEmailTemplateLoader(TemplatesFS)
 	if err := emailTemplateLoader.LoadTemplates(); err != nil {
 		return nil, fmt.Errorf("failed to load email templates: %w", err)
 	}
@@ -1153,12 +1155,327 @@ func (s *Server) handleGenerateOfflineToken(w http.ResponseWriter, r *http.Reque
 	if req.MaxUses <= 0 {
 		req.MaxUses = 30
 	}
-	token, err := s.lm.GenerateOfflineValidationToken(r.Context(), req.LicenseKey, req.DeviceFingerprint, req.MaxUses, req.ValidityDays)
+	token, signedBundle, err := s.lm.GenerateOfflineValidationToken(r.Context(), req.LicenseKey, req.DeviceFingerprint, req.MaxUses, req.ValidityDays)
 	if err != nil {
 		s.respondError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	s.respondJSON(w, http.StatusCreated, token)
+	// Return the offline token object at the top-level. If a signed bundle was
+	// generated, include it as `signed_bundle` alongside the token fields so
+	// callers that unmarshal directly into OfflineValidationToken continue to
+	// work and callers that want the signed bundle can read it too.
+	if signedBundle == "" {
+		s.respondJSON(w, http.StatusCreated, token)
+		return
+	}
+
+	// Merge token fields and the signed bundle into a single top-level object
+	var tokenMap map[string]interface{}
+	tb, _ := json.Marshal(token)
+	_ = json.Unmarshal(tb, &tokenMap)
+	tokenMap["signed_bundle"] = json.RawMessage(signedBundle)
+	s.respondJSON(w, http.StatusCreated, tokenMap)
+}
+
+// Public endpoint exposing the active offline signing public key
+func (s *Server) handleGetActiveSigningPublicKey(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		s.respondError(w, http.StatusMethodNotAllowed, "Method not allowed")
+		return
+	}
+	if !s.enforceRateLimit(w, r) {
+		return
+	}
+	// Prefer the configured offline signer provider for the public key; fall back to storage
+	var keyID string
+	var pub []byte
+	if s.lm != nil && s.lm.offlineSigner != nil {
+		if id, err := s.lm.offlineSigner.ActiveKeyID(); err == nil {
+			keyID = id
+			if b, err2 := s.lm.offlineSigner.PublicKey(id); err2 == nil {
+				pub = b
+			}
+		}
+	}
+	if keyID == "" || len(pub) == 0 {
+		storage := s.lm.Storage()
+		if storage == nil {
+			s.respondError(w, http.StatusInternalServerError, "storage backend unavailable")
+			return
+		}
+		key, err := storage.GetActiveSigningKey(r.Context())
+		if err != nil {
+			s.respondError(w, http.StatusNotFound, err.Error())
+			return
+		}
+		keyID = key.ID
+		pub = key.PublicKey
+	}
+	resp := map[string]string{"key_id": keyID, "public_key": base64.StdEncoding.EncodeToString(pub)}
+	s.respondJSON(w, http.StatusOK, resp)
+}
+
+// GET /api/keys/offline-signing-public/{id}
+// Returns the public key for a specific signing key id.
+func (s *Server) handleGetSigningPublicKeyByID(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		s.respondError(w, http.StatusMethodNotAllowed, "Method not allowed")
+		return
+	}
+	if !s.enforceRateLimit(w, r) {
+		return
+	}
+
+	id := strings.TrimPrefix(r.URL.Path, "/api/keys/offline-signing-public/")
+	id = strings.TrimSpace(id)
+	if id == "" {
+		s.respondError(w, http.StatusBadRequest, "signing key id required")
+		return
+	}
+
+	storage := s.lm.Storage()
+	if storage == nil {
+		s.respondError(w, http.StatusInternalServerError, "storage backend unavailable")
+		return
+	}
+
+	key, err := storage.GetSigningKey(r.Context(), id)
+	if err != nil {
+		s.respondError(w, http.StatusNotFound, err.Error())
+		return
+	}
+	if len(key.PublicKey) == 0 {
+		s.respondError(w, http.StatusNotFound, "public key not available for requested id")
+		return
+	}
+
+	resp := map[string]string{"key_id": key.ID, "public_key": base64.StdEncoding.EncodeToString(key.PublicKey)}
+	s.respondJSON(w, http.StatusOK, resp)
+}
+
+// handleGetRevocationManifest returns a signed revocation manifest clients can use
+// Manifest includes revoked offline tokens and revoked license keys, optionally filtered by 'since' ISO timestamp
+func (s *Server) handleGetRevocationManifest(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		s.respondError(w, http.StatusMethodNotAllowed, "Method not allowed")
+		return
+	}
+	if !s.enforceRateLimit(w, r) {
+		return
+	}
+
+	since := strings.TrimSpace(r.URL.Query().Get("since"))
+	var sinceTime time.Time
+	var err error
+	if since != "" {
+		sinceTime, err = time.Parse(time.RFC3339, since)
+		if err != nil {
+			s.respondError(w, http.StatusBadRequest, "invalid since timestamp")
+			return
+		}
+	}
+
+	storage := s.lm.Storage()
+	if storage == nil {
+		s.respondError(w, http.StatusInternalServerError, "storage backend unavailable")
+		return
+	}
+
+	// collect revoked offline tokens
+	tokens, err := storage.ListOfflineValidationTokens(r.Context())
+	if err != nil {
+		s.respondError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	revokedTokens := make([]map[string]interface{}, 0)
+	for _, t := range tokens {
+		if t.IsRevoked {
+			if !sinceTime.IsZero() && t.RevokedAt.IsZero() {
+				continue
+			}
+			if !sinceTime.IsZero() && t.RevokedAt.Before(sinceTime) {
+				continue
+			}
+			revokedTokens = append(revokedTokens, map[string]interface{}{
+				"token":       t.Token,
+				"license_key": t.LicenseKey,
+				"revoked_at":  t.RevokedAt,
+			})
+		}
+	}
+
+	// collect revoked licenses
+	licenses, err := s.lm.ListLicenses(r.Context())
+	if err != nil {
+		s.respondError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	revokedLicenses := make([]map[string]interface{}, 0)
+	for _, lic := range licenses {
+		if lic.IsRevoked {
+			if !sinceTime.IsZero() && lic.RevokedAt.IsZero() {
+				continue
+			}
+			if !sinceTime.IsZero() && lic.RevokedAt.Before(sinceTime) {
+				continue
+			}
+			revokedLicenses = append(revokedLicenses, map[string]interface{}{
+				"license_key": lic.LicenseKey,
+				"revoked_at":  lic.RevokedAt,
+			})
+		}
+	}
+
+	manifest := map[string]interface{}{
+		"version":                "1",
+		"generated_at":           time.Now().UTC().Format(time.RFC3339),
+		"revoked_offline_tokens": revokedTokens,
+		"revoked_licenses":       revokedLicenses,
+	}
+
+	// Sign manifest if possible using offline signer
+	var signature string
+	var keyID string
+	if s.lm != nil && s.lm.offlineSigner != nil {
+		if id, err := s.lm.offlineSigner.ActiveKeyID(); err == nil {
+			keyID = id
+			payload, _ := json.Marshal(manifest)
+			if sig, err := s.lm.offlineSigner.Sign(id, payload); err == nil {
+				signature = base64.StdEncoding.EncodeToString(sig)
+			}
+		}
+	} else {
+		// fallback to storage stored keys
+		if activeKey, err := s.lm.Storage().GetActiveSigningKey(r.Context()); err == nil && len(activeKey.PrivateKey) > 0 {
+			p, _ := json.Marshal(manifest)
+			sig := ed25519.Sign(ed25519.PrivateKey(activeKey.PrivateKey), p)
+			signature = base64.StdEncoding.EncodeToString(sig)
+			keyID = activeKey.ID
+		}
+	}
+
+	resp := map[string]interface{}{
+		"manifest": manifest,
+	}
+	if signature != "" {
+		resp["signature"] = signature
+		resp["signing_key_id"] = keyID
+	}
+
+	s.respondJSON(w, http.StatusOK, resp)
+}
+
+// Admin endpoints to manage signing keys
+func (s *Server) handleAdminSigningKeys(w http.ResponseWriter, r *http.Request) {
+	if !s.enforceRateLimit(w, r) {
+		return
+	}
+	if !s.authorizeAdmin(w, r) {
+		return
+	}
+
+	switch r.Method {
+	case http.MethodGet:
+		keys, err := s.lm.Storage().ListSigningKeys(r.Context())
+		if err != nil {
+			s.respondError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		// Respond with public info only
+		out := make([]map[string]interface{}, 0, len(keys))
+		for _, k := range keys {
+			out = append(out, map[string]interface{}{
+				"id":         k.ID,
+				"name":       k.Name,
+				"public_key": base64.StdEncoding.EncodeToString(k.PublicKey),
+				"is_active":  k.IsActive,
+				"created_at": k.CreatedAt,
+			})
+		}
+		s.respondJSON(w, http.StatusOK, out)
+	case http.MethodPost:
+		var req struct {
+			Name     string `json:"name,omitempty"`
+			Activate bool   `json:"activate,omitempty"`
+		}
+		if !s.decodeJSONBody(w, r, &req, maxAdminPayloadBytes) {
+			return
+		}
+		// Generate an ed25519 key pair
+		pub, priv, err := ed25519.GenerateKey(rand.Reader)
+		if err != nil {
+			s.respondError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		key := &SigningKey{
+			ID:         uuid.New().String(),
+			Name:       strings.TrimSpace(req.Name),
+			PublicKey:  pub,
+			PrivateKey: priv,
+			IsActive:   req.Activate,
+			CreatedAt:  time.Now().UTC(),
+		}
+		if err := s.lm.Storage().SaveSigningKey(r.Context(), key); err != nil {
+			s.respondError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		if req.Activate {
+			if err := s.lm.Storage().SetActiveSigningKey(r.Context(), key.ID); err != nil {
+				s.respondError(w, http.StatusInternalServerError, err.Error())
+				return
+			}
+		}
+		s.respondJSON(w, http.StatusCreated, map[string]interface{}{
+			"id":         key.ID,
+			"name":       key.Name,
+			"public_key": base64.StdEncoding.EncodeToString(key.PublicKey),
+			"is_active":  key.IsActive,
+			"created_at": key.CreatedAt,
+		})
+	default:
+		s.respondError(w, http.StatusMethodNotAllowed, "Method not allowed")
+	}
+}
+
+func (s *Server) handleAdminSigningKeyActions(w http.ResponseWriter, r *http.Request) {
+	if !s.enforceRateLimit(w, r) {
+		return
+	}
+	if !s.authorizeAdmin(w, r) {
+		return
+	}
+
+	path := strings.TrimPrefix(r.URL.Path, "/api/admin/signing-keys/")
+	id := strings.TrimSpace(path)
+	if id == "" {
+		s.respondError(w, http.StatusBadRequest, "signing key id is required")
+		return
+	}
+
+	switch r.Method {
+	case http.MethodPost:
+		// only action supported today: activate
+		q := strings.TrimSpace(r.URL.Query().Get("action"))
+		if q == "activate" {
+			if err := s.lm.Storage().SetActiveSigningKey(r.Context(), id); err != nil {
+				s.respondError(w, http.StatusInternalServerError, err.Error())
+				return
+			}
+			s.respondJSON(w, http.StatusOK, map[string]string{"message": "activated"})
+			return
+		}
+		s.respondError(w, http.StatusBadRequest, "action is required (e.g. action=activate)")
+	case http.MethodDelete:
+		// delete (remove key)
+		// Note: For now we only allow removing (deleting) a key by id if found
+		if err := s.lm.Storage().SetActiveSigningKey(r.Context(), ""); err != nil {
+			// ignore
+		}
+		// No direct delete storage method implemented — fall back to SetActiveSigningKey empty
+		s.respondJSON(w, http.StatusOK, map[string]string{"message": "delete not implemented; set inactive via POST?action=activate on another key"})
+	default:
+		s.respondError(w, http.StatusMethodNotAllowed, "Method not allowed")
+	}
 }
 
 // Offline token validation - open endpoint that validates a provided token
@@ -2291,6 +2608,8 @@ func (s *Server) Start() error {
 	mux.HandleFunc("/api/admin/users", s.handleAdminUsers)
 	mux.HandleFunc("/api/admin/api-keys", s.handleAdminAPIKeys)
 	mux.HandleFunc("/api/admin/api-keys/", s.handleAdminAPIKeyActions)
+	mux.HandleFunc("/api/admin/signing-keys", s.handleAdminSigningKeys)
+	mux.HandleFunc("/api/admin/signing-keys/", s.handleAdminSigningKeyActions)
 	mux.HandleFunc("/api/admin/licenses/provision", s.handleProvisionLicense)
 	mux.HandleFunc("/api/products", s.handleProducts)
 	mux.HandleFunc("/api/products/", s.handleProductActions)
@@ -2301,6 +2620,12 @@ func (s *Server) Start() error {
 	mux.HandleFunc("/api/licenses/offline-token", s.handleGenerateOfflineToken)
 	mux.HandleFunc("/api/licenses/offline-validate", s.handleValidateOfflineToken)
 	mux.HandleFunc("/api/licenses/offline-tokens", s.handleListOfflineTokens)
+	// Revocation manifest for offline clients to fetch
+	mux.HandleFunc("/api/licenses/offline-revocations", s.handleGetRevocationManifest)
+	// Expose active signing public key for clients to verify offline bundles
+	mux.HandleFunc("/api/keys/offline-signing-public", s.handleGetActiveSigningPublicKey)
+	// allow fetching a specific public key by id
+	mux.HandleFunc("/api/keys/offline-signing-public/", s.handleGetSigningPublicKeyByID)
 	mux.HandleFunc("/api/licenses/offline-logs", s.handleListOfflineLogs)
 	// Client auth endpoints
 	mux.HandleFunc("/api/client/auth/register", s.handleClientRegister)

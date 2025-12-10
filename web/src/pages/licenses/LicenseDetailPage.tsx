@@ -82,6 +82,29 @@ export function LicenseDetailPage() {
     const { toast } = useToast();
     const [revokeReason, setRevokeReason] = useState('');
     const [revokeDialogOpen, setRevokeDialogOpen] = useState(false);
+    const [issueDialogOpen, setIssueDialogOpen] = useState(false);
+    const [deviceFingerprint, setDeviceFingerprint] = useState('');
+    const [tokenMaxUses, setTokenMaxUses] = useState<number | undefined>(30);
+    const [tokenValidity, setTokenValidity] = useState<number | undefined>(30);
+    const [issuedTokenBundle, setIssuedTokenBundle] = useState<any | null>(null);
+
+    const issueMutation = useMutation({
+        mutationFn: (payload: { license_key: string; device_fingerprint: string; max_uses?: number; validity_days?: number }) => api.createOfflineToken(payload),
+        onSuccess: (response) => {
+            if (response.success && response.data) {
+                // response.data can be object with token and signed_bundle
+                setIssuedTokenBundle(response.data.signed_bundle || response.data.token || null);
+                setIssueDialogOpen(true);
+                queryClient.invalidateQueries({ queryKey: ['license', id] });
+                toast({ title: 'Offline token issued' });
+            } else {
+                toast({ title: 'Failed to issue offline token', description: response.error || 'Unknown error', variant: 'destructive' });
+            }
+        },
+        onError: (err) => {
+            toast({ title: 'Failed to issue offline token', description: (err as Error).message, variant: 'destructive' });
+        }
+    });
     const [entitlementDialogOpen, setEntitlementDialogOpen] = useState(false);
     const [editedFeatureScopes, setEditedFeatureScopes] = useState<FeatureScopeSelection[]>([]);
     const [initialFeatureScopes, setInitialFeatureScopes] = useState<FeatureScopeSelection[]>([]);
@@ -280,6 +303,60 @@ export function LicenseDetailPage() {
                     </p>
                 </div>
                 <div className="flex gap-2">
+                    <Dialog open={issueDialogOpen} onOpenChange={setIssueDialogOpen}>
+                        <DialogTrigger asChild>
+                            <Button variant="outline">Issue Offline Token</Button>
+                        </DialogTrigger>
+                        <DialogContent>
+                            <DialogHeader>
+                                <DialogTitle>Issue Offline Token</DialogTitle>
+                                <DialogDescription>
+                                    Create an offline validation token that can be used by clients when offline.
+                                </DialogDescription>
+                            </DialogHeader>
+                            <div className="space-y-3 py-2">
+                                <div className="space-y-1">
+                                    <Label>Device fingerprint</Label>
+                                    <Input placeholder="device fingerprint (e.g. device id)" value={deviceFingerprint} onChange={(e) => setDeviceFingerprint(e.target.value)} />
+                                </div>
+                                <div className="grid grid-cols-2 gap-2">
+                                    <div className="space-y-1">
+                                        <Label>Max uses</Label>
+                                        <Input type="number" value={tokenMaxUses ?? ''} onChange={(e) => setTokenMaxUses(parseInt(e.target.value || '0'))} />
+                                    </div>
+                                    <div className="space-y-1">
+                                        <Label>Validity days</Label>
+                                        <Input type="number" value={tokenValidity ?? ''} onChange={(e) => setTokenValidity(parseInt(e.target.value || '0'))} />
+                                    </div>
+                                </div>
+                            </div>
+                            <DialogFooter>
+                                <Button variant="ghost" onClick={() => setIssueDialogOpen(false)}>Cancel</Button>
+                                <Button onClick={() => issueMutation.mutate({ license_key: license!.license_key, device_fingerprint: deviceFingerprint, max_uses: tokenMaxUses, validity_days: tokenValidity })}>
+                                    {issueMutation.isPending ? 'Issuing…' : 'Issue Token'}
+                                </Button>
+                            </DialogFooter>
+                        </DialogContent>
+                    </Dialog>
+
+                    {/* Show issued bundle dialog */}
+                    {issuedTokenBundle && (
+                        <Dialog open={Boolean(issuedTokenBundle)} onOpenChange={() => setIssuedTokenBundle(null)}>
+                            <DialogContent>
+                                <DialogHeader>
+                                    <DialogTitle>Issued Offline Token</DialogTitle>
+                                    <DialogDescription>Copy the signed bundle or token for the client.</DialogDescription>
+                                </DialogHeader>
+                                <div className="space-y-3 py-2">
+                                    <Textarea readOnly value={typeof issuedTokenBundle === 'string' ? issuedTokenBundle : JSON.stringify(issuedTokenBundle, null, 2)} className="font-mono text-xs" />
+                                </div>
+                                <DialogFooter>
+                                    <Button onClick={() => { navigator.clipboard.writeText(typeof issuedTokenBundle === 'string' ? issuedTokenBundle : JSON.stringify(issuedTokenBundle)); toast({ title: 'Copied to clipboard' }); }}>Copy</Button>
+                                    <Button onClick={() => setIssuedTokenBundle(null)}>Close</Button>
+                                </DialogFooter>
+                            </DialogContent>
+                        </Dialog>
+                    )}
                     {license.is_revoked ? (
                         <AlertDialog>
                             <AlertDialogTrigger asChild>

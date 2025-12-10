@@ -37,6 +37,7 @@ func TestEmailTemplateLoader(t *testing.T) {
 	if err != nil {
 		t.Errorf("Failed to render welcome email template: %v", err)
 	} else {
+
 		// Verify the rendered HTML contains expected content
 		if !strings.Contains(welcomeHTML, "John Doe") {
 			t.Error("Welcome email doesn't contain client name")
@@ -63,6 +64,7 @@ func TestEmailTemplateLoader(t *testing.T) {
 	if err != nil {
 		t.Errorf("Failed to render license email template: %v", err)
 	} else {
+
 		// Verify the rendered HTML contains expected content
 		if !strings.Contains(licenseHTML, "Jane Smith") {
 			t.Error("License email doesn't contain client name")
