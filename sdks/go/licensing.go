@@ -59,6 +59,7 @@ package licensing
 
 import (
 	"github.com/oarkflow/licensing/pkg/client"
+	off "github.com/oarkflow/licensing/pkg/client/offline"
 )
 
 // Re-export core types from the internal client package.
@@ -163,4 +164,15 @@ func NewClient(cfg Config) (*Client, error) {
 // The file should contain: {"email": "...", "client_id": "...", "license_key": "..."}
 func LoadCredentialsFile(path string) (*CredentialsFile, error) {
 	return client.LoadCredentialsFile(path)
+}
+
+// Offline re-exports for offline verification SDK
+type (
+	OfflineConfig = off.Config
+	OfflineClient = off.OfflineClient
+)
+
+// NewOfflineClient creates a new offline verification client using the shared SDK.
+func NewOfflineClient(cfg OfflineConfig) (*OfflineClient, error) {
+	return off.New(cfg)
 }

@@ -63,7 +63,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { useToast } from '@/hooks/use-toast';
 import type { FeatureScopeSelection, License, LicenseDevice } from '@/types/api';
 import { FeatureScopeSelector } from '@/components/licenses/FeatureScopeSelector';
-import { entitlementsToSelections } from '@/lib/entitlements';
+import { entitlementsToSelections, slugToLabel, groupScopesForFeature, categorizeSelections } from '@/lib/entitlements';
 
 function getLicenseStatusBadge(license: License) {
     if (license.is_revoked) {
@@ -82,6 +82,29 @@ export function LicenseDetailPage() {
     const { toast } = useToast();
     const [revokeReason, setRevokeReason] = useState('');
     const [revokeDialogOpen, setRevokeDialogOpen] = useState(false);
+    const [issueDialogOpen, setIssueDialogOpen] = useState(false);
+    const [deviceFingerprint, setDeviceFingerprint] = useState('');
+    const [tokenMaxUses, setTokenMaxUses] = useState<number | undefined>(30);
+    const [tokenValidity, setTokenValidity] = useState<number | undefined>(30);
+    const [issuedTokenBundle, setIssuedTokenBundle] = useState<any | null>(null);
+
+    const issueMutation = useMutation({
+        mutationFn: (payload: { license_key: string; device_fingerprint: string; max_uses?: number; validity_days?: number }) => api.createOfflineToken(payload),
+        onSuccess: (response) => {
+            if (response.success && response.data) {
+                // response.data can be object with token and signed_bundle
+                setIssuedTokenBundle(response.data.signed_bundle || response.data.token || null);
+                setIssueDialogOpen(true);
+                queryClient.invalidateQueries({ queryKey: ['license', id] });
+                toast({ title: 'Offline token issued' });
+            } else {
+                toast({ title: 'Failed to issue offline token', description: response.error || 'Unknown error', variant: 'destructive' });
+            }
+        },
+        onError: (err) => {
+            toast({ title: 'Failed to issue offline token', description: (err as Error).message, variant: 'destructive' });
+        }
+    });
     const [entitlementDialogOpen, setEntitlementDialogOpen] = useState(false);
     const [editedFeatureScopes, setEditedFeatureScopes] = useState<FeatureScopeSelection[]>([]);
     const [initialFeatureScopes, setInitialFeatureScopes] = useState<FeatureScopeSelection[]>([]);
@@ -280,6 +303,60 @@ export function LicenseDetailPage() {
                     </p>
                 </div>
                 <div className="flex gap-2">
+                    <Dialog open={issueDialogOpen} onOpenChange={setIssueDialogOpen}>
+                        <DialogTrigger asChild>
+                            <Button variant="outline">Issue Offline Token</Button>
+                        </DialogTrigger>
+                        <DialogContent>
+                            <DialogHeader>
+                                <DialogTitle>Issue Offline Token</DialogTitle>
+                                <DialogDescription>
+                                    Create an offline validation token that can be used by clients when offline.
+                                </DialogDescription>
+                            </DialogHeader>
+                            <div className="space-y-3 py-2">
+                                <div className="space-y-1">
+                                    <Label>Device fingerprint</Label>
+                                    <Input placeholder="device fingerprint (e.g. device id)" value={deviceFingerprint} onChange={(e) => setDeviceFingerprint(e.target.value)} />
+                                </div>
+                                <div className="grid grid-cols-2 gap-2">
+                                    <div className="space-y-1">
+                                        <Label>Max uses</Label>
+                                        <Input type="number" value={tokenMaxUses ?? ''} onChange={(e) => setTokenMaxUses(parseInt(e.target.value || '0'))} />
+                                    </div>
+                                    <div className="space-y-1">
+                                        <Label>Validity days</Label>
+                                        <Input type="number" value={tokenValidity ?? ''} onChange={(e) => setTokenValidity(parseInt(e.target.value || '0'))} />
+                                    </div>
+                                </div>
+                            </div>
+                            <DialogFooter>
+                                <Button variant="ghost" onClick={() => setIssueDialogOpen(false)}>Cancel</Button>
+                                <Button onClick={() => issueMutation.mutate({ license_key: license!.license_key, device_fingerprint: deviceFingerprint, max_uses: tokenMaxUses, validity_days: tokenValidity })}>
+                                    {issueMutation.isPending ? 'Issuing…' : 'Issue Token'}
+                                </Button>
+                            </DialogFooter>
+                        </DialogContent>
+                    </Dialog>
+
+                    {/* Show issued bundle dialog */}
+                    {issuedTokenBundle && (
+                        <Dialog open={Boolean(issuedTokenBundle)} onOpenChange={() => setIssuedTokenBundle(null)}>
+                            <DialogContent>
+                                <DialogHeader>
+                                    <DialogTitle>Issued Offline Token</DialogTitle>
+                                    <DialogDescription>Copy the signed bundle or token for the client.</DialogDescription>
+                                </DialogHeader>
+                                <div className="space-y-3 py-2">
+                                    <Textarea readOnly value={typeof issuedTokenBundle === 'string' ? issuedTokenBundle : JSON.stringify(issuedTokenBundle, null, 2)} className="font-mono text-xs" />
+                                </div>
+                                <DialogFooter>
+                                    <Button onClick={() => { navigator.clipboard.writeText(typeof issuedTokenBundle === 'string' ? issuedTokenBundle : JSON.stringify(issuedTokenBundle)); toast({ title: 'Copied to clipboard' }); }}>Copy</Button>
+                                    <Button onClick={() => setIssuedTokenBundle(null)}>Close</Button>
+                                </DialogFooter>
+                            </DialogContent>
+                        </Dialog>
+                    )}
                     {license.is_revoked ? (
                         <AlertDialog>
                             <AlertDialogTrigger asChild>
@@ -572,25 +649,70 @@ export function LicenseDetailPage() {
                         )}
                     </CardHeader>
                     <CardContent>
-                        <div className="grid gap-2 sm:grid-cols-2 md:grid-cols-3">
-                            {Object.entries(license.entitlements.features).map(([slug, entitlement]) => (
-                                <div
-                                    key={slug}
-                                    className="flex items-center gap-2 rounded-md border p-3"
-                                >
-                                    {entitlement.enabled ? (
-                                        <CheckCircle className="h-4 w-4 text-primary" />
-                                    ) : (
-                                        <XCircle className="h-4 w-4 text-destructive" />
-                                    )}
-                                    <span className="text-sm">{slug}</span>
-                                    {entitlement.category && (
-                                        <Badge variant="outline" className="ml-auto">
-                                            {entitlement.category}
-                                        </Badge>
-                                    )}
-                                </div>
-                            ))}
+                        <div className="space-y-6">
+                            {/* Convert entitlements into selections and categorize into cli/gui/api/other */}
+                            {(() => {
+                                const selections = entitlementsToSelections(license.entitlements);
+                                const categories = categorizeSelections(selections);
+                                const catOrder: Array<'cli' | 'gui' | 'api' | 'other'> = ['cli', 'gui', 'api', 'other'];
+                                return (
+                                    <div className="space-y-6">
+                                        {catOrder.map((cat) => (
+                                            <div key={cat}>
+                                                {categories[cat].length > 0 && (
+                                                    <div>
+                                                        <div className="mb-2 flex items-center gap-2">
+                                                            <span className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">{cat.toUpperCase()}</span>
+                                                            <Badge variant="outline" className="text-[11px]">{categories[cat].length}</Badge>
+                                                        </div>
+                                                        <div>
+                                                            {categories[cat].map((feature) => {
+                                                                const groups = groupScopesForFeature(feature.feature_slug, feature.scopes);
+                                                                return (
+                                                                    <div key={feature.feature_slug} className="rounded-md border p-3">
+                                                                        <div className="flex items-center gap-2">
+                                                                            {feature.enabled ? (
+                                                                                <CheckCircle className="h-4 w-4 text-primary" />
+                                                                            ) : (
+                                                                                <XCircle className="h-4 w-4 text-destructive" />
+                                                                            )}
+                                                                            <span className="font-medium">{slugToLabel(feature.feature_slug)}</span>
+                                                                            {feature.feature_slug && (
+                                                                                <Badge variant="outline" className="ml-auto">{feature.feature_slug}</Badge>
+                                                                            )}
+                                                                        </div>
+                                                                        {groups.length === 0 ? (
+                                                                            <p className="mt-2 text-sm italic text-muted-foreground">No scopes defined for this feature yet.</p>
+                                                                        ) : (
+                                                                            <div className="grid gap-2 sm:grid-cols-2 md:grid-cols-3 mt-2 space-y-2">
+                                                                                {groups.map((g) => (
+                                                                                    <div key={g.title} className="rounded-2xl border border-border/60 bg-muted/10 p-2">
+                                                                                        <div className="flex items-center justify-between text-xs uppercase tracking-[0.3em] text-muted-foreground">
+                                                                                            <span>{g.title}</span>
+                                                                                            <Badge variant="outline" className="rounded-full px-2 py-0.5 text-[10px]">{g.scopes.length}</Badge>
+                                                                                        </div>
+                                                                                        <div className="mt-2 flex flex-wrap gap-2">
+                                                                                            {g.scopes.map(({ selection, definition }) => (
+                                                                                                <Badge key={selection.scope_slug} variant={selection.permission === 'deny' ? 'destructive' : selection.permission === 'limit' ? 'outline' : 'default'} className="uppercase text-[11px]">
+                                                                                                    {slugToLabel(definition?.slug ?? selection.scope_slug)}{selection.permission === 'limit' && selection.limit ? ` (${selection.limit})` : ''}
+                                                                                                </Badge>
+                                                                                            ))}
+                                                                                        </div>
+                                                                                    </div>
+                                                                                ))}
+                                                                            </div>
+                                                                        )}
+                                                                    </div>
+                                                                );
+                                                            })}
+                                                        </div>
+                                                    </div>
+                                                )}
+                                            </div>
+                                        ))}
+                                    </div>
+                                );
+                            })()}
                         </div>
                     </CardContent>
                 </Card>

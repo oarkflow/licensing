@@ -20,6 +20,7 @@ type Storage interface {
 	UpdateClient(ctx context.Context, client *Client) error
 	GetClient(ctx context.Context, clientID string) (*Client, error)
 	GetClientByEmail(ctx context.Context, email string) (*Client, error)
+	GetClientByUsername(ctx context.Context, username string) (*Client, error)
 	ListClients(ctx context.Context) ([]*Client, error)
 	SaveLicense(ctx context.Context, license *License) error
 	UpdateLicense(ctx context.Context, license *License) error
@@ -39,6 +40,7 @@ type Storage interface {
 	DeleteAPIKey(ctx context.Context, keyID string) error
 	GetAPIKeyByHash(ctx context.Context, hash string) (*APIKeyRecord, error)
 	ListAPIKeysByUser(ctx context.Context, userID string) ([]*APIKeyRecord, error)
+	ListAPIKeysByClient(ctx context.Context, clientID string) ([]*APIKeyRecord, error)
 
 	// Product management
 	SaveProduct(ctx context.Context, product *Product) error
@@ -88,6 +90,28 @@ type Storage interface {
 	GetDeviceTrial(ctx context.Context, deviceFingerprint string) (*DeviceTrial, error)
 	HasDeviceUsedTrial(ctx context.Context, deviceFingerprint string) (bool, error)
 	ListDeviceTrials(ctx context.Context) ([]*DeviceTrial, error)
+
+	// Offline validation token management
+	SaveOfflineValidationToken(ctx context.Context, token *OfflineValidationToken) error
+	GetOfflineValidationToken(ctx context.Context, token string) (*OfflineValidationToken, error)
+	UpdateOfflineValidationToken(ctx context.Context, token *OfflineValidationToken) error
+	DeleteOfflineValidationToken(ctx context.Context, token string) error
+	ListOfflineValidationTokens(ctx context.Context) ([]*OfflineValidationToken, error)
+	FindOfflineValidationTokensByLicense(ctx context.Context, licenseKey string) ([]*OfflineValidationToken, error)
+	FindOfflineValidationTokensByClient(ctx context.Context, clientID string) ([]*OfflineValidationToken, error)
+
+	// Offline validation log management
+	SaveOfflineValidationLog(ctx context.Context, log *OfflineValidationLog) error
+	ListOfflineValidationLogs(ctx context.Context, token string) ([]*OfflineValidationLog, error)
+	FindOfflineValidationLogsByLicense(ctx context.Context, licenseKey string) ([]*OfflineValidationLog, error)
+	FindOfflineValidationLogsByClient(ctx context.Context, clientID string) ([]*OfflineValidationLog, error)
+
+	// Signing keys used to sign offline bundles (asymmetric keys)
+	SaveSigningKey(ctx context.Context, key *SigningKey) error
+	GetSigningKey(ctx context.Context, keyID string) (*SigningKey, error)
+	GetActiveSigningKey(ctx context.Context) (*SigningKey, error)
+	ListSigningKeys(ctx context.Context) ([]*SigningKey, error)
+	SetActiveSigningKey(ctx context.Context, keyID string) error
 
 	// Subscription management
 	SaveSubscription(ctx context.Context, sub *Subscription) error
@@ -152,6 +176,9 @@ var (
 	errEmailRouteMissing       = errors.New("email route not found")
 	errEmailMessageMissing     = errors.New("email message not found")
 	errEmailStorageUnsupported = errors.New("email storage is not supported by this backend")
+	errOfflineTokenExists      = errors.New("offline validation token already exists")
+	errOfflineTokenMissing     = errors.New("offline validation token not found")
+	errOfflineLogMissing       = errors.New("offline validation log not found")
 )
 
 // DeviceTrial tracks devices that have used a trial license.
@@ -167,6 +194,49 @@ type DeviceTrial struct {
 	CreatedAt         time.Time `json:"created_at"`
 }
 
+// OfflineValidationToken represents a token for offline license validation
+type OfflineValidationToken struct {
+	Token             string    `json:"token"`
+	LicenseKey        string    `json:"license_key"`
+	ClientID          string    `json:"client_id"`
+	DeviceFingerprint string    `json:"device_fingerprint"`
+	SigningKeyID      string    `json:"signing_key_id,omitempty"`
+	ValidUntil        time.Time `json:"valid_until"`
+	UsageCount        int       `json:"usage_count"`
+	MaxUses           int       `json:"max_uses"`
+	IsRevoked         bool      `json:"is_revoked"`
+	CreatedAt         time.Time `json:"created_at"`
+	RevokedAt         time.Time `json:"revoked_at,omitempty"`
+	RevokedBy         string    `json:"revoked_by,omitempty"`
+	RevokedReason     string    `json:"revoked_reason,omitempty"`
+}
+
+// OfflineValidationLog tracks usage of offline validation tokens
+type OfflineValidationLog struct {
+	ID                string    `json:"id"`
+	Token             string    `json:"token"`
+	LicenseKey        string    `json:"license_key"`
+	ClientID          string    `json:"client_id"`
+	DeviceFingerprint string    `json:"device_fingerprint"`
+	ValidationTime    time.Time `json:"validation_time"`
+	Success           bool      `json:"success"`
+	ErrorMessage      string    `json:"error_message,omitempty"`
+	IPAddress         string    `json:"ip_address,omitempty"`
+	UserAgent         string    `json:"user_agent,omitempty"`
+	AppVersion        string    `json:"app_version,omitempty"`
+	Metadata          string    `json:"metadata,omitempty"`
+}
+
+// SigningKey represents an offline signing key pair (Ed25519) stored in the server
+type SigningKey struct {
+	ID         string    `json:"id"`
+	Name       string    `json:"name,omitempty"`
+	PublicKey  []byte    `json:"public_key"`            // raw public key bytes
+	PrivateKey []byte    `json:"private_key,omitempty"` // raw private key bytes (stored only in server storage)
+	IsActive   bool      `json:"is_active"`
+	CreatedAt  time.Time `json:"created_at"`
+}
+
 type AdminUser struct {
 	ID           string    `json:"id"`
 	Username     string    `json:"username"`
@@ -178,6 +248,7 @@ type AdminUser struct {
 type APIKeyRecord struct {
 	ID        string    `json:"id"`
 	UserID    string    `json:"user_id"`
+	ClientID  string    `json:"client_id,omitempty"`
 	Hash      string    `json:"hash"`
 	Prefix    string    `json:"prefix"`
 	CreatedAt time.Time `json:"created_at"`
@@ -204,17 +275,19 @@ func cloneAPIKeyRecord(key *APIKeyRecord) *APIKeyRecord {
 }
 
 type InMemoryStorage struct {
-	mu             sync.RWMutex
-	clients        map[string]*Client
-	clientsByEmail map[string]string
-	licenses       map[string]*License
-	licensesByKey  map[string]string
-	activations    map[string][]*ActivationRecord
-	adminUsers     map[string]*AdminUser
-	adminByName    map[string]string
-	apiKeys        map[string]*APIKeyRecord
-	apiKeysByHash  map[string]string
-	apiKeysByUser  map[string]map[string]struct{}
+	mu                sync.RWMutex
+	clients           map[string]*Client
+	clientsByEmail    map[string]string
+	clientsByUsername map[string]string
+	licenses          map[string]*License
+	licensesByKey     map[string]string
+	activations       map[string][]*ActivationRecord
+	adminUsers        map[string]*AdminUser
+	adminByName       map[string]string
+	apiKeys           map[string]*APIKeyRecord
+	apiKeysByHash     map[string]string
+	apiKeysByUser     map[string]map[string]struct{}
+	apiKeysByClient   map[string]map[string]struct{}
 	// Product management
 	products       map[string]*Product
 	productsBySlug map[string]string
@@ -226,6 +299,12 @@ type InMemoryStorage struct {
 	planFeatures   map[string]*PlanFeature // key: "planID:featureID"
 	// Trial registry
 	deviceTrials map[string]*DeviceTrial // key: device fingerprint
+	// Offline validation
+	offlineValidationTokens map[string]*OfflineValidationToken // key: token
+	offlineValidationLogs   map[string][]*OfflineValidationLog // key: token
+	// Signing keys
+	signingKeys        map[string]*SigningKey
+	activeSigningKeyID string
 	// Email management
 	emailProviders       map[string]*email.EmailProvider
 	emailProvidersBySlug map[string]string
@@ -238,46 +317,54 @@ type InMemoryStorage struct {
 
 func NewInMemoryStorage() *InMemoryStorage {
 	return &InMemoryStorage{
-		clients:              make(map[string]*Client),
-		clientsByEmail:       make(map[string]string),
-		licenses:             make(map[string]*License),
-		licensesByKey:        make(map[string]string),
-		activations:          make(map[string][]*ActivationRecord),
-		adminUsers:           make(map[string]*AdminUser),
-		adminByName:          make(map[string]string),
-		apiKeys:              make(map[string]*APIKeyRecord),
-		apiKeysByHash:        make(map[string]string),
-		apiKeysByUser:        make(map[string]map[string]struct{}),
-		products:             make(map[string]*Product),
-		productsBySlug:       make(map[string]string),
-		plans:                make(map[string]*Plan),
-		plansBySlug:          make(map[string]string),
-		features:             make(map[string]*Feature),
-		featuresBySlug:       make(map[string]string),
-		featureScopes:        make(map[string]*FeatureScope),
-		planFeatures:         make(map[string]*PlanFeature),
-		deviceTrials:         make(map[string]*DeviceTrial),
-		emailProviders:       make(map[string]*email.EmailProvider),
-		emailProvidersBySlug: make(map[string]string),
-		emailTemplates:       make(map[string]*email.EmailTemplate),
-		emailTemplatesBySlug: make(map[string]string),
-		emailRoutes:          make(map[string]*email.EmailTemplateRoute),
-		emailMessages:        make(map[string]*email.EmailMessage),
-		emailEvents:          make(map[string][]*email.EmailEvent),
+		clients:                 make(map[string]*Client),
+		clientsByEmail:          make(map[string]string),
+		clientsByUsername:       make(map[string]string),
+		licenses:                make(map[string]*License),
+		licensesByKey:           make(map[string]string),
+		activations:             make(map[string][]*ActivationRecord),
+		adminUsers:              make(map[string]*AdminUser),
+		adminByName:             make(map[string]string),
+		apiKeys:                 make(map[string]*APIKeyRecord),
+		apiKeysByHash:           make(map[string]string),
+		apiKeysByUser:           make(map[string]map[string]struct{}),
+		apiKeysByClient:         make(map[string]map[string]struct{}),
+		products:                make(map[string]*Product),
+		productsBySlug:          make(map[string]string),
+		plans:                   make(map[string]*Plan),
+		plansBySlug:             make(map[string]string),
+		features:                make(map[string]*Feature),
+		featuresBySlug:          make(map[string]string),
+		featureScopes:           make(map[string]*FeatureScope),
+		planFeatures:            make(map[string]*PlanFeature),
+		deviceTrials:            make(map[string]*DeviceTrial),
+		offlineValidationTokens: make(map[string]*OfflineValidationToken),
+		offlineValidationLogs:   make(map[string][]*OfflineValidationLog),
+		emailProviders:          make(map[string]*email.EmailProvider),
+		emailProvidersBySlug:    make(map[string]string),
+		emailTemplates:          make(map[string]*email.EmailTemplate),
+		emailTemplatesBySlug:    make(map[string]string),
+		emailRoutes:             make(map[string]*email.EmailTemplateRoute),
+		emailMessages:           make(map[string]*email.EmailMessage),
+		emailEvents:             make(map[string][]*email.EmailEvent),
+		signingKeys:             make(map[string]*SigningKey),
+		activeSigningKeyID:      "",
 	}
 }
 
 type storageSnapshot struct {
-	Clients        map[string]*Client                   `json:"clients"`
-	Licenses       map[string]*License                  `json:"licenses"`
-	Activations    map[string][]*ActivationRecord       `json:"activations"`
-	AdminUsers     map[string]*AdminUser                `json:"admin_users"`
-	APIKeys        map[string]*APIKeyRecord             `json:"api_keys"`
-	EmailProviders map[string]*email.EmailProvider      `json:"email_providers,omitempty"`
-	EmailTemplates map[string]*email.EmailTemplate      `json:"email_templates,omitempty"`
-	EmailRoutes    map[string]*email.EmailTemplateRoute `json:"email_routes,omitempty"`
-	EmailMessages  map[string]*email.EmailMessage       `json:"email_messages,omitempty"`
-	EmailEvents    map[string][]*email.EmailEvent       `json:"email_events,omitempty"`
+	Clients            map[string]*Client                   `json:"clients"`
+	Licenses           map[string]*License                  `json:"licenses"`
+	Activations        map[string][]*ActivationRecord       `json:"activations"`
+	AdminUsers         map[string]*AdminUser                `json:"admin_users"`
+	APIKeys            map[string]*APIKeyRecord             `json:"api_keys"`
+	EmailProviders     map[string]*email.EmailProvider      `json:"email_providers,omitempty"`
+	EmailTemplates     map[string]*email.EmailTemplate      `json:"email_templates,omitempty"`
+	EmailRoutes        map[string]*email.EmailTemplateRoute `json:"email_routes,omitempty"`
+	EmailMessages      map[string]*email.EmailMessage       `json:"email_messages,omitempty"`
+	EmailEvents        map[string][]*email.EmailEvent       `json:"email_events,omitempty"`
+	SigningKeys        map[string]*SigningKey               `json:"signing_keys,omitempty"`
+	ActiveSigningKeyID string                               `json:"active_signing_key_id,omitempty"`
 }
 
 func (s *InMemoryStorage) SaveClient(_ context.Context, client *Client) error {
@@ -290,11 +377,18 @@ func (s *InMemoryStorage) SaveClient(_ context.Context, client *Client) error {
 		return errClientExists
 	}
 	emailKey := normalizeEmail(client.Email)
+	usernameKey := strings.ToLower(strings.TrimSpace(client.Username))
 	if emailKey != "" {
 		if _, exists := s.clientsByEmail[emailKey]; exists {
 			return errClientExists
 		}
 		s.clientsByEmail[emailKey] = client.ID
+	}
+	if usernameKey != "" {
+		if _, exists := s.clientsByUsername[usernameKey]; exists {
+			return fmt.Errorf("client username already exists")
+		}
+		s.clientsByUsername[usernameKey] = client.ID
 	}
 	s.clients[client.ID] = cloneClient(client)
 	return nil
@@ -311,6 +405,8 @@ func (s *InMemoryStorage) UpdateClient(_ context.Context, client *Client) error 
 		return errClientMissing
 	}
 	oldEmail := normalizeEmail(current.Email)
+	oldUsername := strings.ToLower(strings.TrimSpace(current.Username))
+	newUsername := strings.ToLower(strings.TrimSpace(client.Username))
 	newEmail := normalizeEmail(client.Email)
 	if oldEmail != newEmail {
 		if mappedID, taken := s.clientsByEmail[newEmail]; taken && mappedID != client.ID {
@@ -318,8 +414,17 @@ func (s *InMemoryStorage) UpdateClient(_ context.Context, client *Client) error 
 		}
 		delete(s.clientsByEmail, oldEmail)
 	}
+	if oldUsername != newUsername {
+		if mappedID, taken := s.clientsByUsername[newUsername]; taken && mappedID != client.ID {
+			return fmt.Errorf("client username already exists")
+		}
+		delete(s.clientsByUsername, oldUsername)
+	}
 	s.clients[client.ID] = cloneClient(client)
 	s.clientsByEmail[newEmail] = client.ID
+	if newUsername != "" {
+		s.clientsByUsername[newUsername] = client.ID
+	}
 	return nil
 }
 
@@ -337,6 +442,16 @@ func (s *InMemoryStorage) GetClientByEmail(_ context.Context, email string) (*Cl
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	clientID, ok := s.clientsByEmail[normalizeEmail(email)]
+	if !ok {
+		return nil, errClientMissing
+	}
+	return cloneClient(s.clients[clientID]), nil
+}
+
+func (s *InMemoryStorage) GetClientByUsername(_ context.Context, username string) (*Client, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	clientID, ok := s.clientsByUsername[strings.ToLower(strings.TrimSpace(username))]
 	if !ok {
 		return nil, errClientMissing
 	}
@@ -568,6 +683,12 @@ func (s *InMemoryStorage) SaveAPIKey(_ context.Context, key *APIKeyRecord) error
 		s.apiKeysByUser[key.UserID] = make(map[string]struct{})
 	}
 	s.apiKeysByUser[key.UserID][key.ID] = struct{}{}
+	if key.ClientID != "" {
+		if _, ok := s.apiKeysByClient[key.ClientID]; !ok {
+			s.apiKeysByClient[key.ClientID] = make(map[string]struct{})
+		}
+		s.apiKeysByClient[key.ClientID][key.ID] = struct{}{}
+	}
 	return nil
 }
 
@@ -584,7 +705,22 @@ func (s *InMemoryStorage) UpdateAPIKey(_ context.Context, key *APIKeyRecord) err
 	if stored.Hash != key.Hash {
 		return fmt.Errorf("api key hash mismatch")
 	}
+	// Update apiKeys map
+	prev := stored.ClientID
 	s.apiKeys[key.ID] = cloneAPIKeyRecord(key)
+	if prev != key.ClientID {
+		if prev != "" {
+			if keys, ok := s.apiKeysByClient[prev]; ok {
+				delete(keys, key.ID)
+			}
+		}
+		if key.ClientID != "" {
+			if _, ok := s.apiKeysByClient[key.ClientID]; !ok {
+				s.apiKeysByClient[key.ClientID] = make(map[string]struct{})
+			}
+			s.apiKeysByClient[key.ClientID][key.ID] = struct{}{}
+		}
+	}
 	return nil
 }
 
@@ -599,6 +735,11 @@ func (s *InMemoryStorage) DeleteAPIKey(_ context.Context, keyID string) error {
 	delete(s.apiKeysByHash, key.Hash)
 	if keys, ok := s.apiKeysByUser[key.UserID]; ok {
 		delete(keys, keyID)
+	}
+	if key.ClientID != "" {
+		if keys, ok := s.apiKeysByClient[key.ClientID]; ok {
+			delete(keys, keyID)
+		}
 	}
 	return nil
 }
@@ -617,6 +758,22 @@ func (s *InMemoryStorage) ListAPIKeysByUser(_ context.Context, userID string) ([
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	keyIDs := s.apiKeysByUser[userID]
+	if len(keyIDs) == 0 {
+		return []*APIKeyRecord{}, nil
+	}
+	keys := make([]*APIKeyRecord, 0, len(keyIDs))
+	for keyID := range keyIDs {
+		if record, ok := s.apiKeys[keyID]; ok {
+			keys = append(keys, cloneAPIKeyRecord(record))
+		}
+	}
+	return keys, nil
+}
+
+func (s *InMemoryStorage) ListAPIKeysByClient(_ context.Context, clientID string) ([]*APIKeyRecord, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	keyIDs := s.apiKeysByClient[clientID]
 	if len(keyIDs) == 0 {
 		return []*APIKeyRecord{}, nil
 	}
@@ -967,6 +1124,22 @@ func cloneDeviceTrial(trial *DeviceTrial) *DeviceTrial {
 	return &clone
 }
 
+func cloneOfflineValidationToken(token *OfflineValidationToken) *OfflineValidationToken {
+	if token == nil {
+		return nil
+	}
+	clone := *token
+	return &clone
+}
+
+func cloneOfflineValidationLog(log *OfflineValidationLog) *OfflineValidationLog {
+	if log == nil {
+		return nil
+	}
+	clone := *log
+	return &clone
+}
+
 func (s *InMemoryStorage) SaveDeviceTrial(_ context.Context, trial *DeviceTrial) error {
 	if trial == nil {
 		return fmt.Errorf("device trial is nil")
@@ -1005,6 +1178,217 @@ func (s *InMemoryStorage) ListDeviceTrials(_ context.Context) ([]*DeviceTrial, e
 		trials = append(trials, cloneDeviceTrial(trial))
 	}
 	return trials, nil
+}
+
+// OfflineValidationToken methods for InMemoryStorage
+
+func (s *InMemoryStorage) SaveOfflineValidationToken(_ context.Context, token *OfflineValidationToken) error {
+	if token == nil {
+		return fmt.Errorf("offline validation token is nil")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, exists := s.offlineValidationTokens[token.Token]; exists {
+		return errOfflineTokenExists
+	}
+	s.offlineValidationTokens[token.Token] = cloneOfflineValidationToken(token)
+	return nil
+}
+
+func (s *InMemoryStorage) GetOfflineValidationToken(_ context.Context, token string) (*OfflineValidationToken, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	offlineToken, exists := s.offlineValidationTokens[token]
+	if !exists {
+		return nil, errOfflineTokenMissing
+	}
+	return cloneOfflineValidationToken(offlineToken), nil
+}
+
+func (s *InMemoryStorage) UpdateOfflineValidationToken(_ context.Context, token *OfflineValidationToken) error {
+	if token == nil {
+		return fmt.Errorf("offline validation token is nil")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, exists := s.offlineValidationTokens[token.Token]; !exists {
+		return errOfflineTokenMissing
+	}
+	s.offlineValidationTokens[token.Token] = cloneOfflineValidationToken(token)
+	return nil
+}
+
+func (s *InMemoryStorage) DeleteOfflineValidationToken(_ context.Context, token string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, exists := s.offlineValidationTokens[token]; !exists {
+		return errOfflineTokenMissing
+	}
+	delete(s.offlineValidationTokens, token)
+	return nil
+}
+
+func (s *InMemoryStorage) ListOfflineValidationTokens(_ context.Context) ([]*OfflineValidationToken, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	tokens := make([]*OfflineValidationToken, 0, len(s.offlineValidationTokens))
+	for _, token := range s.offlineValidationTokens {
+		tokens = append(tokens, cloneOfflineValidationToken(token))
+	}
+	return tokens, nil
+}
+
+func (s *InMemoryStorage) FindOfflineValidationTokensByLicense(_ context.Context, licenseKey string) ([]*OfflineValidationToken, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	var tokens []*OfflineValidationToken
+	for _, token := range s.offlineValidationTokens {
+		if token.LicenseKey == licenseKey {
+			tokens = append(tokens, cloneOfflineValidationToken(token))
+		}
+	}
+	return tokens, nil
+}
+
+func (s *InMemoryStorage) FindOfflineValidationTokensByClient(_ context.Context, clientID string) ([]*OfflineValidationToken, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	var tokens []*OfflineValidationToken
+	for _, token := range s.offlineValidationTokens {
+		if token.ClientID == clientID {
+			tokens = append(tokens, cloneOfflineValidationToken(token))
+		}
+	}
+	return tokens, nil
+}
+
+// SigningKey methods for InMemoryStorage
+func (s *InMemoryStorage) SaveSigningKey(_ context.Context, key *SigningKey) error {
+	if key == nil {
+		return fmt.Errorf("signing key is nil")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, exists := s.signingKeys[key.ID]; exists {
+		return fmt.Errorf("signing key already exists")
+	}
+	// clone
+	k := *key
+	s.signingKeys[key.ID] = &k
+	if key.IsActive {
+		s.activeSigningKeyID = key.ID
+	}
+	return nil
+}
+
+func (s *InMemoryStorage) GetSigningKey(_ context.Context, keyID string) (*SigningKey, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	key, ok := s.signingKeys[keyID]
+	if !ok {
+		return nil, fmt.Errorf("signing key not found")
+	}
+	k := *key
+	return &k, nil
+}
+
+func (s *InMemoryStorage) GetActiveSigningKey(_ context.Context) (*SigningKey, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if s.activeSigningKeyID == "" {
+		return nil, fmt.Errorf("no active signing key")
+	}
+	key, ok := s.signingKeys[s.activeSigningKeyID]
+	if !ok {
+		return nil, fmt.Errorf("active signing key not found")
+	}
+	k := *key
+	return &k, nil
+}
+
+func (s *InMemoryStorage) ListSigningKeys(_ context.Context) ([]*SigningKey, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	var out []*SigningKey
+	for _, key := range s.signingKeys {
+		k := *key
+		out = append(out, &k)
+	}
+	return out, nil
+}
+
+func (s *InMemoryStorage) SetActiveSigningKey(_ context.Context, keyID string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if keyID == "" {
+		s.activeSigningKeyID = ""
+		return nil
+	}
+	if _, ok := s.signingKeys[keyID]; !ok {
+		return fmt.Errorf("signing key not found")
+	}
+	s.activeSigningKeyID = keyID
+	// update flags
+	for id, k := range s.signingKeys {
+		if id == keyID {
+			k.IsActive = true
+		} else {
+			k.IsActive = false
+		}
+	}
+	return nil
+}
+
+// OfflineValidationLog methods for InMemoryStorage
+
+func (s *InMemoryStorage) SaveOfflineValidationLog(_ context.Context, log *OfflineValidationLog) error {
+	if log == nil {
+		return fmt.Errorf("offline validation log is nil")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	cloned := cloneOfflineValidationLog(log)
+	s.offlineValidationLogs[log.Token] = append(s.offlineValidationLogs[log.Token], cloned)
+	return nil
+}
+
+func (s *InMemoryStorage) ListOfflineValidationLogs(_ context.Context, token string) ([]*OfflineValidationLog, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	logs := s.offlineValidationLogs[token]
+	result := make([]*OfflineValidationLog, 0, len(logs))
+	for _, log := range logs {
+		result = append(result, cloneOfflineValidationLog(log))
+	}
+	return result, nil
+}
+
+func (s *InMemoryStorage) FindOfflineValidationLogsByLicense(_ context.Context, licenseKey string) ([]*OfflineValidationLog, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	var logs []*OfflineValidationLog
+	for _, tokenLogs := range s.offlineValidationLogs {
+		for _, log := range tokenLogs {
+			if log.LicenseKey == licenseKey {
+				logs = append(logs, cloneOfflineValidationLog(log))
+			}
+		}
+	}
+	return logs, nil
+}
+
+func (s *InMemoryStorage) FindOfflineValidationLogsByClient(_ context.Context, clientID string) ([]*OfflineValidationLog, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	var logs []*OfflineValidationLog
+	for _, tokenLogs := range s.offlineValidationLogs {
+		for _, log := range tokenLogs {
+			if log.ClientID == clientID {
+				logs = append(logs, cloneOfflineValidationLog(log))
+			}
+		}
+	}
+	return logs, nil
 }
 
 // Subscription methods for InMemoryStorage - not fully implemented for in-memory
@@ -1085,6 +1469,17 @@ func (s *InMemoryStorage) snapshot() *storageSnapshot {
 		}
 		snapshot.EmailEvents[id] = copies
 	}
+
+	// Include signing keys - DO NOT persist private keys in the file snapshot
+	if len(s.signingKeys) > 0 {
+		snapshot.SigningKeys = make(map[string]*SigningKey, len(s.signingKeys))
+		for id, key := range s.signingKeys {
+			copy := *key
+			copy.PrivateKey = nil
+			snapshot.SigningKeys[id] = &copy
+		}
+	}
+	snapshot.ActiveSigningKeyID = s.activeSigningKeyID
 	return snapshot
 }
 
@@ -1096,10 +1491,14 @@ func (s *InMemoryStorage) loadSnapshot(snapshot *storageSnapshot) {
 	defer s.mu.Unlock()
 	s.clients = make(map[string]*Client, len(snapshot.Clients))
 	s.clientsByEmail = make(map[string]string, len(snapshot.Clients))
+	s.clientsByUsername = make(map[string]string, len(snapshot.Clients))
 	for id, client := range snapshot.Clients {
 		cloned := cloneClient(client)
 		s.clients[id] = cloned
 		s.clientsByEmail[normalizeEmail(cloned.Email)] = id
+		if cloned.Username != "" {
+			s.clientsByUsername[strings.ToLower(strings.TrimSpace(cloned.Username))] = id
+		}
 	}
 	s.licenses = make(map[string]*License, len(snapshot.Licenses))
 	s.licensesByKey = make(map[string]string, len(snapshot.Licenses))
@@ -1165,6 +1564,14 @@ func (s *InMemoryStorage) loadSnapshot(snapshot *storageSnapshot) {
 		}
 		s.emailEvents[id] = copies
 	}
+
+	// Load signing keys (public parts only if persisted). Private keys won't be present in snapshot.
+	s.signingKeys = make(map[string]*SigningKey, len(snapshot.SigningKeys))
+	for id, key := range snapshot.SigningKeys {
+		copied := *key
+		s.signingKeys[id] = &copied
+	}
+	s.activeSigningKeyID = snapshot.ActiveSigningKeyID
 }
 
 type PersistentStorage struct {
@@ -1208,6 +1615,10 @@ func (ps *PersistentStorage) GetClient(ctx context.Context, clientID string) (*C
 
 func (ps *PersistentStorage) GetClientByEmail(ctx context.Context, email string) (*Client, error) {
 	return ps.backend.GetClientByEmail(ctx, email)
+}
+
+func (ps *PersistentStorage) GetClientByUsername(ctx context.Context, username string) (*Client, error) {
+	return ps.backend.GetClientByUsername(ctx, username)
 }
 
 func (ps *PersistentStorage) ListClients(ctx context.Context) ([]*Client, error) {
@@ -1313,6 +1724,10 @@ func (ps *PersistentStorage) ListAPIKeysByUser(ctx context.Context, userID strin
 	return ps.backend.ListAPIKeysByUser(ctx, userID)
 }
 
+func (ps *PersistentStorage) ListAPIKeysByClient(ctx context.Context, clientID string) ([]*APIKeyRecord, error) {
+	return ps.backend.ListAPIKeysByClient(ctx, clientID)
+}
+
 // DeviceTrial methods for PersistentStorage
 
 func (ps *PersistentStorage) SaveDeviceTrial(ctx context.Context, trial *DeviceTrial) error {
@@ -1332,6 +1747,93 @@ func (ps *PersistentStorage) HasDeviceUsedTrial(ctx context.Context, deviceFinge
 
 func (ps *PersistentStorage) ListDeviceTrials(ctx context.Context) ([]*DeviceTrial, error) {
 	return ps.backend.ListDeviceTrials(ctx)
+}
+
+// OfflineValidationToken methods for PersistentStorage
+
+func (ps *PersistentStorage) SaveOfflineValidationToken(ctx context.Context, token *OfflineValidationToken) error {
+	if err := ps.backend.SaveOfflineValidationToken(ctx, token); err != nil {
+		return err
+	}
+	return ps.persist()
+}
+
+func (ps *PersistentStorage) GetOfflineValidationToken(ctx context.Context, token string) (*OfflineValidationToken, error) {
+	return ps.backend.GetOfflineValidationToken(ctx, token)
+}
+
+func (ps *PersistentStorage) UpdateOfflineValidationToken(ctx context.Context, token *OfflineValidationToken) error {
+	if err := ps.backend.UpdateOfflineValidationToken(ctx, token); err != nil {
+		return err
+	}
+	return ps.persist()
+}
+
+func (ps *PersistentStorage) DeleteOfflineValidationToken(ctx context.Context, token string) error {
+	if err := ps.backend.DeleteOfflineValidationToken(ctx, token); err != nil {
+		return err
+	}
+	return ps.persist()
+}
+
+func (ps *PersistentStorage) ListOfflineValidationTokens(ctx context.Context) ([]*OfflineValidationToken, error) {
+	return ps.backend.ListOfflineValidationTokens(ctx)
+}
+
+// SigningKey methods for PersistentStorage
+func (ps *PersistentStorage) SaveSigningKey(ctx context.Context, key *SigningKey) error {
+	if err := ps.backend.SaveSigningKey(ctx, key); err != nil {
+		return err
+	}
+	return ps.persist()
+}
+
+func (ps *PersistentStorage) GetSigningKey(ctx context.Context, keyID string) (*SigningKey, error) {
+	return ps.backend.GetSigningKey(ctx, keyID)
+}
+
+func (ps *PersistentStorage) GetActiveSigningKey(ctx context.Context) (*SigningKey, error) {
+	return ps.backend.GetActiveSigningKey(ctx)
+}
+
+func (ps *PersistentStorage) ListSigningKeys(ctx context.Context) ([]*SigningKey, error) {
+	return ps.backend.ListSigningKeys(ctx)
+}
+
+func (ps *PersistentStorage) SetActiveSigningKey(ctx context.Context, keyID string) error {
+	if err := ps.backend.SetActiveSigningKey(ctx, keyID); err != nil {
+		return err
+	}
+	return ps.persist()
+}
+
+func (ps *PersistentStorage) FindOfflineValidationTokensByLicense(ctx context.Context, licenseKey string) ([]*OfflineValidationToken, error) {
+	return ps.backend.FindOfflineValidationTokensByLicense(ctx, licenseKey)
+}
+
+func (ps *PersistentStorage) FindOfflineValidationTokensByClient(ctx context.Context, clientID string) ([]*OfflineValidationToken, error) {
+	return ps.backend.FindOfflineValidationTokensByClient(ctx, clientID)
+}
+
+// OfflineValidationLog methods for PersistentStorage
+
+func (ps *PersistentStorage) SaveOfflineValidationLog(ctx context.Context, log *OfflineValidationLog) error {
+	if err := ps.backend.SaveOfflineValidationLog(ctx, log); err != nil {
+		return err
+	}
+	return ps.persist()
+}
+
+func (ps *PersistentStorage) ListOfflineValidationLogs(ctx context.Context, token string) ([]*OfflineValidationLog, error) {
+	return ps.backend.ListOfflineValidationLogs(ctx, token)
+}
+
+func (ps *PersistentStorage) FindOfflineValidationLogsByLicense(ctx context.Context, licenseKey string) ([]*OfflineValidationLog, error) {
+	return ps.backend.FindOfflineValidationLogsByLicense(ctx, licenseKey)
+}
+
+func (ps *PersistentStorage) FindOfflineValidationLogsByClient(ctx context.Context, clientID string) ([]*OfflineValidationLog, error) {
+	return ps.backend.FindOfflineValidationLogsByClient(ctx, clientID)
 }
 
 // Subscription methods - forward to backend

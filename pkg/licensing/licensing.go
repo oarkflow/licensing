@@ -11,6 +11,7 @@ import (
 
 type Client struct {
 	ID          string       `json:"id"`
+	Username    string       `json:"username,omitempty"`
 	Email       string       `json:"email"`
 	Name        string       `json:"name,omitempty"`
 	CompanyName string       `json:"company_name,omitempty"`
@@ -19,6 +20,23 @@ type Client struct {
 	UpdatedAt   time.Time    `json:"updated_at"`
 	BannedAt    time.Time    `json:"banned_at,omitempty"`
 	BanReason   string       `json:"ban_reason,omitempty"`
+	// Authentication fields (optional; persisted after migration)
+	PasswordHash       []byte    `json:"-"`
+	LastLogin          time.Time `json:"last_login,omitempty"`
+	LoginAttempts      int       `json:"login_attempts,omitempty"`
+	AccountLockedUntil time.Time `json:"account_locked_until,omitempty"`
+}
+
+// ClientSession represents a client session (non-admin)
+type ClientSession struct {
+	ID           string    `json:"id"`
+	ClientID     string    `json:"client_id"`
+	RefreshToken string    `json:"refresh_token"`
+	CreatedAt    time.Time `json:"created_at"`
+	ExpiresAt    time.Time `json:"expires_at"`
+	IPAddress    string    `json:"ip_address,omitempty"`
+	UserAgent    string    `json:"user_agent,omitempty"`
+	Revoked      bool      `json:"revoked"`
 }
 
 type License struct {
@@ -260,6 +278,8 @@ type createClientRequest struct {
 	Name        string            `json:"name,omitempty"`
 	CompanyName string            `json:"company_name,omitempty"`
 	Metadata    map[string]string `json:"metadata,omitempty"`
+	Username    string            `json:"username,omitempty"`
+	Password    string            `json:"password,omitempty"`
 }
 
 type banClientRequest struct {

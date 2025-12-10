@@ -129,6 +129,7 @@ export function ClientsPage() {
                             <TableRow>
                                 <TableHead>ID</TableHead>
                                 <TableHead>Email</TableHead>
+                                <TableHead>Username</TableHead>
                                 <TableHead>Status</TableHead>
                                 <TableHead>Created</TableHead>
                             </TableRow>
@@ -145,6 +146,7 @@ export function ClientsPage() {
                                         </Link>
                                     </TableCell>
                                     <TableCell>{client.email}</TableCell>
+                                    <TableCell>{client.username || '—'}</TableCell>
                                     <TableCell>{getClientStatusBadge(client)}</TableCell>
                                     <TableCell>
                                         {client.created_at ? new Date(client.created_at).toLocaleDateString() : '—'}

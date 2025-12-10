@@ -300,6 +300,47 @@ class ApiService {
         return this.request<Activation[]>(`/api/licenses/${licenseId}/activations`);
     }
 
+    // Offline tokens
+    async createOfflineToken(data: { license_key: string; device_fingerprint: string; max_uses?: number; validity_days?: number; }): Promise<ApiResponse<{ token: OfflineValidationToken | null; signed_bundle?: any }>> {
+        return this.request('/api/licenses/offline-token', {
+            method: 'POST',
+            body: JSON.stringify(data),
+        });
+    }
+
+    async listOfflineTokens(): Promise<ApiResponse<OfflineValidationToken[]>> {
+        return this.request<OfflineValidationToken[]>('/api/licenses/offline-tokens');
+    }
+
+    async validateOfflineToken(payload: { offline_token: string; device_fingerprint?: string; }): Promise<ApiResponse<any>> {
+        return this.request('/api/licenses/offline-validate', {
+            method: 'POST',
+            body: JSON.stringify(payload),
+        });
+    }
+
+    // Public keys & signing keys
+    async getActiveOfflineSigningPublicKey(): Promise<ApiResponse<{ key_id: string; public_key: string }>> {
+        return this.request('/api/keys/offline-signing-public');
+    }
+
+    async getOfflineSigningPublicKeyByID(id: string): Promise<ApiResponse<{ key_id: string; public_key: string }>> {
+        return this.request(`/api/keys/offline-signing-public/${encodeURIComponent(id)}`);
+    }
+
+    // Admin signing key management
+    async listSigningKeys(): Promise<ApiResponse<SigningKeyMeta[]>> {
+        return this.request<SigningKeyMeta[]>('/api/admin/signing-keys');
+    }
+
+    async createSigningKey(payload: { name?: string; activate?: boolean }): Promise<ApiResponse<SigningKeyMeta>> {
+        return this.request('/api/admin/signing-keys', { method: 'POST', body: JSON.stringify(payload) });
+    }
+
+    async activateSigningKey(id: string): Promise<ApiResponse<any>> {
+        return this.request(`/api/admin/signing-keys/${id}?action=activate`, { method: 'POST' });
+    }
+
     // Clients
     async listClients(filter?: string): Promise<ApiResponse<Client[]>> {
         const query = filter ? `?filter=${filter}` : '';
@@ -332,6 +373,14 @@ class ApiService {
 
     async getClientLicenses(clientId: string): Promise<ApiResponse<License[]>> {
         return this.request<License[]>(`/api/clients/${clientId}/licenses`);
+    }
+
+    async listClientAPIKeys(clientId: string): Promise<ApiResponse<APIKey[]>> {
+        return this.request<APIKey[]>(`/api/clients/${clientId}/keys`);
+    }
+
+    async createClientAPIKey(clientId: string): Promise<ApiResponse<{ token: string; metadata: APIKey }>> {
+        return this.request(`/api/clients/${clientId}/keys`, { method: 'POST' }) as Promise<ApiResponse<{ token: string; metadata: APIKey }>>;
     }
 
     // Products
@@ -590,6 +639,12 @@ class ApiService {
 
     async deleteAPIKey(id: string): Promise<ApiResponse<void>> {
         return this.request<void>(`/api/admin/api-keys/${id}`, {
+            method: 'DELETE',
+        });
+    }
+
+    async deleteClientAPIKey(id: string): Promise<ApiResponse<void>> {
+        return this.request<void>(`/api/client/keys/${encodeURIComponent(id)}`, {
             method: 'DELETE',
         });
     }

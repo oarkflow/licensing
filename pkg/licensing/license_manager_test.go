@@ -11,7 +11,7 @@ func TestClientProfileHelpers(t *testing.T) {
 	lm := &LicenseManager{storage: storage}
 	ctx := context.Background()
 
-	client, err := lm.CreateClientWithProfile(ctx, "profile@example.com", "  Ada Lovelace  ", "  Analytical Engines  ")
+	client, err := lm.CreateClientWithProfile(ctx, "profile@example.com", "", "  Ada Lovelace  ", "  Analytical Engines  ")
 	if err != nil {
 		t.Fatalf("expected client to be created: %v", err)
 	}

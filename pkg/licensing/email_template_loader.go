@@ -2,8 +2,10 @@ package licensing
 
 import (
 	"bytes"
+	"embed"
 	"fmt"
 	"html/template"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -29,19 +31,81 @@ type EmailTemplateData struct {
 // EmailTemplateLoader loads and renders email templates
 type EmailTemplateLoader struct {
 	templates map[string]*template.Template
+	embedFS   embed.FS // optional embedded filesystem
 }
 
 // NewEmailTemplateLoader creates a new template loader
-func NewEmailTemplateLoader() *EmailTemplateLoader {
-	return &EmailTemplateLoader{
+// Pass an optional embed.FS to load templates from compiled binary.
+// If embedFS has content, it will be preferred over filesystem templates.
+func NewEmailTemplateLoader(embedFS ...embed.FS) *EmailTemplateLoader {
+	loader := &EmailTemplateLoader{
 		templates: make(map[string]*template.Template),
 	}
+	if len(embedFS) > 0 {
+		loader.embedFS = embedFS[0]
+	}
+	return loader
 }
 
 // LoadTemplates loads email templates from the templates directory
 func (etl *EmailTemplateLoader) LoadTemplates() error {
-	// Navigate to the templates/email directory from project root
-	templatesDir := filepath.Join("templates", "email")
+	// First, try loading from embedded filesystem if available
+	if etl.loadFromEmbedded() == nil {
+		return nil // Successfully loaded from embed.FS
+	}
+
+	// Fallback to filesystem-based loading
+	// Search upwards from the current working directory for a templates/email dir
+	templatesDir := ""
+	cwd, err := os.Getwd()
+	if err != nil {
+		return fmt.Errorf("failed to get working dir: %w", err)
+	}
+
+	// Walk up the directory tree looking for templates/email
+	var candidates []string
+	cur := cwd
+	for i := 0; i < 8; i++ {
+		cand := filepath.Join(cur, "templates", "email")
+		if fi, err := os.Stat(cand); err == nil && fi.IsDir() {
+			candidates = append(candidates, cand)
+		}
+		parent := filepath.Dir(cur)
+		if parent == cur {
+			break
+		}
+		cur = parent
+	}
+
+	// 1) If an explicit directory is provided via env, prefer it. This is useful when running
+	//    compiled binaries or in containerized environments where there's no repo metadata.
+	if env := os.Getenv("EMAIL_TEMPLATES_DIR"); env != "" {
+		if fi, err := os.Stat(env); err == nil && fi.IsDir() {
+			templatesDir = env
+		}
+	}
+
+	// 2) If we still don't have a templates dir, check next to the running executable. This
+	//    supports compiled binaries that ship templates alongside the binary (e.g. /opt/app/templates/email).
+	if templatesDir == "" {
+		if exePath, err := os.Executable(); err == nil {
+			exeDir := filepath.Dir(exePath)
+			cand := filepath.Join(exeDir, "templates", "email")
+			if fi, err := os.Stat(cand); err == nil && fi.IsDir() {
+				templatesDir = cand
+			}
+		}
+	}
+
+	// If we still don't have a templatesDir but found candidates earlier, pick the highest-level candidate
+	if templatesDir == "" && len(candidates) > 0 {
+		templatesDir = candidates[len(candidates)-1]
+	}
+
+	// fallback to project-relative path if nothing found
+	if templatesDir == "" {
+		templatesDir = filepath.Join("templates", "email")
+	}
 	// Read all HTML files from the templates directory
 	files, err := os.ReadDir(templatesDir)
 	if err != nil {
@@ -66,6 +130,46 @@ func (etl *EmailTemplateLoader) LoadTemplates() error {
 
 			etl.templates[templateName] = tmpl
 		}
+	}
+
+	return nil
+}
+
+// loadFromEmbedded loads templates from the embedded filesystem
+func (etl *EmailTemplateLoader) loadFromEmbedded() error {
+	// Check if embedFS is set and has content
+	if etl.embedFS == (embed.FS{}) {
+		return fmt.Errorf("no embedded filesystem available")
+	}
+
+	// Try to read from templates/email path in embed.FS
+	entries, err := fs.ReadDir(etl.embedFS, "templates/email")
+	if err != nil {
+		return fmt.Errorf("failed to read embedded templates: %w", err)
+	}
+
+	// Load each template file
+	for _, entry := range entries {
+		if !entry.IsDir() && strings.HasSuffix(entry.Name(), ".html") {
+			templateName := strings.TrimSuffix(entry.Name(), ".html")
+			templatePath := filepath.Join("templates/email", entry.Name())
+
+			content, err := fs.ReadFile(etl.embedFS, templatePath)
+			if err != nil {
+				return fmt.Errorf("failed to read embedded template %s: %w", templateName, err)
+			}
+
+			tmpl, err := template.New(templateName).Funcs(etl.templateFuncs()).Parse(string(content))
+			if err != nil {
+				return fmt.Errorf("failed to parse embedded template %s: %w", templateName, err)
+			}
+
+			etl.templates[templateName] = tmpl
+		}
+	}
+
+	if len(etl.templates) == 0 {
+		return fmt.Errorf("no templates loaded from embedded filesystem")
 	}
 
 	return nil
