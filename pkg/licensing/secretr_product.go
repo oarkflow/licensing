@@ -435,6 +435,11 @@ var cliFeature = secretrFeatureDefinition{
 		{ID: "cli_s110", Name: "Interactive Logs", Slug: "view", Description: "Interactive log viewer", MinPlan: "team"},
 		{ID: "cli_s111", Name: "Interactive Audit Logs", Slug: "view_audit-logs", Description: "Interactive audit log viewer", MinPlan: "team"},
 		{ID: "cli_s112", Name: "Interactive Access Logs", Slug: "view_access-logs", Description: "Interactive access log viewer", MinPlan: "team"},
+
+		// Envelope Management (Enterprise)
+		{ID: "cli_s210", Name: "Envelope", Slug: "envelope", Description: "Manage envelopes", MinPlan: "enterprise"},
+		{ID: "cli_s211", Name: "Envelope Create", Slug: "envelope_new", Description: "Create envelope", MinPlan: "enterprise"},
+		{ID: "cli_s212", Name: "Envelope Import", Slug: "envelope_open", Description: "Open envelope", MinPlan: "enterprise"},
 	}),
 }
 
