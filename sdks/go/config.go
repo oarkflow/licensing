@@ -9,15 +9,11 @@ import (
 // ResolveClientConfig builds a Config with immutable security settings
 func ResolveClientConfig(cfg Config) Config {
 	home, _ := os.UserHomeDir()
-	if cfg.DefaultDir == "" {
-		if home != "" {
-			cfg.DefaultDir = ".licensing"
-		}
+	if cfg.DefaultDir == "" && home != "" {
+		cfg.DefaultDir = ".licensing"
 	}
-	if cfg.ConfigDir == "" {
-		if home != "" {
-			cfg.ConfigDir = filepath.Join(home, cfg.DefaultDir)
-		}
+	if cfg.ConfigDir == "" && home != "" {
+		cfg.ConfigDir = filepath.Join(home, cfg.DefaultDir)
 	}
 	if cfg.HTTPTimeout == 0 {
 		cfg.HTTPTimeout = 15 * time.Second
