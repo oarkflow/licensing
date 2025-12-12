@@ -67,6 +67,7 @@ var ErrServerUnavailable = errors.New("license server unavailable")
 // Config controls how the licensing client persists data and contacts the server.
 type Config struct {
 	ConfigDir         string
+	DefaultDir        string
 	LicenseFile       string
 	ServerURL         string
 	AppName           string
