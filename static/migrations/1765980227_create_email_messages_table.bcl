@@ -1,0 +1,34 @@
+Migration "1765980227_create_email_messages_table" {
+	Version = "1.0.0"
+	Description = "Create table email_messages."
+	Connection = "default"
+	Up {
+		CreateTable "email_messages" {
+			Field "id" { type = "text" primary_key = true }
+				Field "template_id" { type = "text" nullable = true foreign_key = { reference_table = "email_templates" reference_field = "id" } index = true }
+						Field "provider_id" { type = "text" nullable = true foreign_key = { reference_table = "email_providers" reference_field = "id" } }
+						Field "to_address" { type = "text" not_null = true }
+							Field "cc" { type = "text" nullable = true }
+								Field "bcc" { type = "text" nullable = true }
+									Field "subject" { type = "text" not_null = true }
+										Field "rendered_html" { type = "text" nullable = true }
+											Field "rendered_text" { type = "text" nullable = true }
+												Field "variables" { type = "text" nullable = true }
+													Field "metadata" { type = "text" nullable = true }
+														Field "status" { type = "text" not_null = true }
+															Field "retry_count" { type = "integer" not_null = true default = 0 }
+																Field "failover_count" { type = "integer" not_null = true default = 0 }
+																	Field "max_retries" { type = "integer" not_null = true default = 0 }
+																		Field "last_error" { type = "text" nullable = true }
+																			Field "next_attempt_at" { type = "datetime" nullable = true }
+																				Field "last_attempt_at" { type = "datetime" nullable = true }
+																					Field "created_at" { type = "datetime" not_null = true }
+																						Field "updated_at" { type = "datetime" not_null = true }
+																						}
+																						CreateIndex "idx_email_messages_status_next_attempt" { Table = "email_messages" Columns = ["status", "next_attempt_at"] }
+																
+																							}
+																							Down {
+																								DropTable "email_messages" { Cascade = true }
+																								}
+																							}

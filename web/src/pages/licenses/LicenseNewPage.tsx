@@ -81,35 +81,41 @@ export function LicenseNewPage() {
         return plans.find(p => p.id === formData.plan_id);
     }, [plans, formData.plan_id]);
 
-    // Calculate price based on selected plan and device count
+    // Calculate price based on selected plan and unit
     const priceInfo = useMemo(() => {
         if (!selectedPlan) return null;
 
-        const pricePerDevice = (selectedPlan.price_per_device || 0) / 100; // Convert from cents
-        const minDevices = selectedPlan.min_devices || 1;
-        const deviceCount = Math.max(formData.max_devices || 1, minDevices);
-        const totalPrice = pricePerDevice * deviceCount;
+        const pricePerUnit = (selectedPlan.price || 0) / 100; // Convert from cents
+        const unit = selectedPlan.price_unit || 'none';
         const currency = selectedPlan.currency || 'USD';
         const billingCycle = selectedPlan.billing_cycle || 'yearly';
 
+        let deviceCount = formData.max_devices || 1;
+        let totalPrice = pricePerUnit;
+        if (unit === 'device') {
+            totalPrice = pricePerUnit * deviceCount;
+        }
+
+        const minDevices = 1;
+        const isUnderMinimum = deviceCount < minDevices;
+
         return {
-            pricePerDevice,
-            minDevices,
+            pricePerUnit,
+            unit,
             deviceCount,
             totalPrice,
             currency,
             billingCycle,
-            isUnderMinimum: (formData.max_devices || 1) < minDevices,
+            minDevices,
+            isUnderMinimum,
         };
     }, [selectedPlan, formData.max_devices]);
 
-    // Update max_devices to minimum when plan changes
+    // No plan-level minimums are enforced; keep user-entered values or default to 1
     useEffect(() => {
-        if (selectedPlan && selectedPlan.min_devices > (formData.max_devices || 1)) {
-            setFormData((prev) => ({
-                ...prev,
-                max_devices: selectedPlan.min_devices,
-            }));
+        if (!selectedPlan) return;
+        if (!formData.max_devices) {
+            setFormData((prev) => ({ ...prev, max_devices: 1 }));
         }
     }, [selectedPlan]);
 
@@ -123,7 +129,7 @@ export function LicenseNewPage() {
                     ...prev,
                     plan_id: planIdFromUrl,
                     plan_slug: plan.slug,
-                    max_devices: Math.max(prev.max_devices || 1, plan.min_devices || 1),
+                    max_devices: prev.max_devices || 1,
                     duration_days: plan.is_trial ? (plan.trial_days || 30) : (prev.duration_days || 365),
                     is_trial: plan.is_trial || false,
                 }));
@@ -172,20 +178,10 @@ export function LicenseNewPage() {
         // Prepare form data with defaults
         const submitData = {
             ...formData,
-            max_devices: formData.max_devices || (selectedPlan?.min_devices || 1),
+            max_devices: formData.max_devices || 1,
             duration_days: formData.duration_days || (selectedPlan?.is_trial ? (selectedPlan.trial_days || 30) : 365),
             feature_scopes: featureScopes.length > 0 ? featureScopes : undefined,
         };
-
-        // Enforce minimum devices
-        if (priceInfo && priceInfo.isUnderMinimum) {
-            toast({
-                title: 'Invalid device count',
-                description: `This plan requires at least ${priceInfo.minDevices} devices`,
-                variant: 'destructive',
-            });
-            return;
-        }
 
         createMutation.mutate(submitData);
     };
@@ -196,8 +192,8 @@ export function LicenseNewPage() {
             ...prev,
             plan_id: planId,
             plan_slug: plan?.slug || '',
-            // Set max_devices to plan's minimum if current value is less
-            max_devices: plan ? Math.max(prev.max_devices || 1, plan.min_devices || 1) : prev.max_devices,
+            // No plan-level minimums enforced; default to 1 if unset
+            max_devices: prev.max_devices || 1,
             // Set duration to trial_days if this is a trial plan
             duration_days: plan?.is_trial ? (plan.trial_days || 30) : (prev.duration_days || 365),
             // Set is_trial flag based on plan
@@ -373,11 +369,10 @@ export function LicenseNewPage() {
                                                                         )}
                                                                     </div>
                                                                     <span className="text-xs text-muted-foreground">
-                                                                        {plan.price_per_device > 0
-                                                                            ? `${formatCurrency(plan.price_per_device / 100, plan.currency || 'USD')}/device/${formatBillingCycle(plan.billing_cycle)}`
+                                                                        {(plan.price ?? 0) > 0
+                                                                            ? `${formatCurrencyFromCents(plan.price!, plan.currency || 'USD')}${plan.price_unit && plan.price_unit !== 'none' ? ` / ${plan.price_unit}` : ''}/${formatBillingCycle(plan.billing_cycle)}`
                                                                             : plan.slug
                                                                         }
-                                                                        {` · min ${plan.min_devices || 1} device${(plan.min_devices || 1) > 1 ? 's' : ''}`}
                                                                         {plan.is_trial && ` · ${plan.trial_days || 30} days`}
                                                                     </span>
                                                                 </div>
@@ -392,15 +387,11 @@ export function LicenseNewPage() {
                                                         <span className="text-muted-foreground">Plan</span>
                                                         <span className="font-medium">{selectedPlan.name}</span>
                                                     </div>
-                                                    <div className="flex items-center justify-between text-sm">
-                                                        <span className="text-muted-foreground">Min Devices Required</span>
-                                                        <span className="font-medium">{selectedPlan.min_devices || 1}</span>
-                                                    </div>
-                                                    {selectedPlan.price_per_device > 0 && (
+                                                    {(selectedPlan.price ?? 0) > 0 && (
                                                         <div className="flex items-center justify-between text-sm">
-                                                            <span className="text-muted-foreground">Price per Device</span>
+                                                            <span className="text-muted-foreground">Price</span>
                                                             <span className="font-medium">
-                                                                {formatCurrency(selectedPlan.price_per_device / 100, selectedPlan.currency || 'USD')}/{formatBillingCycle(selectedPlan.billing_cycle)}
+                                                                {formatCurrencyFromCents(selectedPlan.price!, selectedPlan.currency || 'USD')}{selectedPlan.price_unit && selectedPlan.price_unit !== 'none' ? ` / ${selectedPlan.price_unit}` : ''}/{formatBillingCycle(selectedPlan.billing_cycle)}
                                                             </span>
                                                         </div>
                                                     )}
@@ -440,7 +431,7 @@ export function LicenseNewPage() {
                                         onBlur={(e) => {
                                             const value = e.target.value;
                                             if (value === '' || isNaN(parseInt(value, 10))) {
-                                                const minDevices = selectedPlan?.min_devices || 1;
+                                                const minDevices = priceInfo?.minDevices || 1;
                                                 setFormData((prev) => ({
                                                     ...prev,
                                                     max_devices: minDevices,
@@ -586,19 +577,13 @@ export function LicenseNewPage() {
                                 <Separator className="border" />
                                 <div className="space-y-2 text-sm">
                                     <div className="flex justify-between">
-                                        <span className="text-muted-foreground">Price per device</span>
-                                        <span>{formatCurrency(priceInfo.pricePerDevice, priceInfo.currency)}</span>
+                                        <span className="text-muted-foreground">{priceInfo.unit === 'device' ? 'Price per device' : 'Unit price'}</span>
+                                        <span>{formatCurrency(priceInfo.pricePerUnit, priceInfo.currency)}</span>
                                     </div>
                                     <div className="flex justify-between">
-                                        <span className="text-muted-foreground">Devices</span>
+                                        <span className="text-muted-foreground">{priceInfo.unit === 'device' ? 'Devices' : 'Unit'}</span>
                                         <span>{priceInfo.deviceCount}</span>
                                     </div>
-                                    {priceInfo.minDevices > 1 && (
-                                        <div className="flex justify-between text-xs">
-                                            <span className="text-muted-foreground">Minimum required</span>
-                                            <span>{priceInfo.minDevices} devices</span>
-                                        </div>
-                                    )}
                                 </div>
                             </CardContent>
                         </Card>

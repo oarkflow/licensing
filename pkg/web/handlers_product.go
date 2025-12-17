@@ -205,21 +205,19 @@ func (ws *WebServer) handleAPIProductPlans(w http.ResponseWriter, r *http.Reques
 
 func (ws *WebServer) createPlan(w http.ResponseWriter, r *http.Request, ctx context.Context, productID string) {
 	var req struct {
-		Name           string            `json:"name"`
-		Slug           string            `json:"slug"`
-		Description    string            `json:"description"`
-		Price          int64             `json:"price"`
-		MinDevices     int               `json:"min_devices"`
-		MaxDevices     int               `json:"max_devices"`
-		DurationDays   int               `json:"duration_days"`
-		PricePerDevice int64             `json:"price_per_device"`
-		Currency       string            `json:"currency"`
-		BillingCycle   string            `json:"billing_cycle"`
-		TrialDays      int               `json:"trial_days"`
-		IsTrial        bool              `json:"is_trial"`
-		IsActive       bool              `json:"is_active"`
-		DisplayOrder   int               `json:"display_order"`
-		Metadata       map[string]string `json:"metadata"`
+		Name         string            `json:"name"`
+		Slug         string            `json:"slug"`
+		Description  string            `json:"description"`
+		Price        int64             `json:"price"`
+		PriceUnit    string            `json:"price_unit"`
+		DurationDays int               `json:"duration_days"`
+		Currency     string            `json:"currency"`
+		BillingCycle string            `json:"billing_cycle"`
+		TrialDays    int               `json:"trial_days"`
+		IsTrial      bool              `json:"is_trial"`
+		IsActive     bool              `json:"is_active"`
+		DisplayOrder int               `json:"display_order"`
+		Metadata     map[string]string `json:"metadata"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		ws.respondAPIError(w, http.StatusBadRequest, "Invalid request body", map[string]interface{}{
@@ -248,12 +246,6 @@ func (ws *WebServer) createPlan(w http.ResponseWriter, r *http.Request, ctx cont
 	if req.BillingCycle == "" {
 		req.BillingCycle = "monthly"
 	}
-	if req.MinDevices < 0 {
-		req.MinDevices = 0
-	}
-	if req.MaxDevices < 0 {
-		req.MaxDevices = 0
-	}
 	if req.IsTrial {
 		if existing, _ := ws.lm.Storage().GetTrialPlanForProduct(ctx, productID); existing != nil {
 			ws.respondAPIError(w, http.StatusBadRequest, "Cannot create trial plan: another trial plan already exists for this product", map[string]interface{}{
@@ -281,25 +273,23 @@ func (ws *WebServer) createPlan(w http.ResponseWriter, r *http.Request, ctx cont
 	}
 	now := time.Now()
 	plan := &licensing.Plan{
-		ID:             uuid.New().String(),
-		ProductID:      productID,
-		Name:           strings.TrimSpace(req.Name),
-		Slug:           strings.TrimSpace(req.Slug),
-		Description:    strings.TrimSpace(req.Description),
-		Price:          req.Price,
-		MinDevices:     req.MinDevices,
-		MaxDevices:     req.MaxDevices,
-		DurationDays:   req.DurationDays,
-		PricePerDevice: req.PricePerDevice,
-		Currency:       strings.ToUpper(req.Currency),
-		BillingCycle:   strings.TrimSpace(req.BillingCycle),
-		TrialDays:      req.TrialDays,
-		IsTrial:        req.IsTrial,
-		IsActive:       req.IsActive,
-		DisplayOrder:   req.DisplayOrder,
-		Metadata:       req.Metadata,
-		CreatedAt:      now,
-		UpdatedAt:      now,
+		ID:           uuid.New().String(),
+		ProductID:    productID,
+		Name:         strings.TrimSpace(req.Name),
+		Slug:         strings.TrimSpace(req.Slug),
+		Description:  strings.TrimSpace(req.Description),
+		Price:        req.Price,
+		PriceUnit:    strings.TrimSpace(req.PriceUnit),
+		DurationDays: req.DurationDays,
+		Currency:     strings.ToUpper(req.Currency),
+		BillingCycle: strings.TrimSpace(req.BillingCycle),
+		TrialDays:    req.TrialDays,
+		IsTrial:      req.IsTrial,
+		IsActive:     req.IsActive,
+		DisplayOrder: req.DisplayOrder,
+		Metadata:     req.Metadata,
+		CreatedAt:    now,
+		UpdatedAt:    now,
 	}
 	if err := ws.lm.Storage().SavePlan(ctx, plan); err != nil {
 		ws.respondAPIError(w, http.StatusBadRequest, err.Error())
@@ -332,21 +322,19 @@ func (ws *WebServer) handleAPIPlanDetail(w http.ResponseWriter, r *http.Request,
 		ws.respondJSON(w, http.StatusOK, plan)
 	case http.MethodPut:
 		var req struct {
-			Name           string            `json:"name"`
-			Slug           string            `json:"slug"`
-			Description    string            `json:"description"`
-			Price          *int64            `json:"price"`
-			MinDevices     *int              `json:"min_devices"`
-			MaxDevices     *int              `json:"max_devices"`
-			DurationDays   *int              `json:"duration_days"`
-			PricePerDevice *int64            `json:"price_per_device"`
-			Currency       string            `json:"currency"`
-			BillingCycle   string            `json:"billing_cycle"`
-			TrialDays      *int              `json:"trial_days"`
-			IsTrial        *bool             `json:"is_trial"`
-			IsActive       *bool             `json:"is_active"`
-			DisplayOrder   *int              `json:"display_order"`
-			Metadata       map[string]string `json:"metadata"`
+			Name         string            `json:"name"`
+			Slug         string            `json:"slug"`
+			Description  string            `json:"description"`
+			Price        *int64            `json:"price"`
+			PriceUnit    *string           `json:"price_unit"`
+			DurationDays *int              `json:"duration_days"`
+			Currency     string            `json:"currency"`
+			BillingCycle string            `json:"billing_cycle"`
+			TrialDays    *int              `json:"trial_days"`
+			IsTrial      *bool             `json:"is_trial"`
+			IsActive     *bool             `json:"is_active"`
+			DisplayOrder *int              `json:"display_order"`
+			Metadata     map[string]string `json:"metadata"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			ws.respondAPIError(w, http.StatusBadRequest, "Invalid request body", map[string]interface{}{
@@ -406,17 +394,11 @@ func (ws *WebServer) handleAPIPlanDetail(w http.ResponseWriter, r *http.Request,
 		if req.Price != nil {
 			plan.Price = *req.Price
 		}
-		if req.MinDevices != nil {
-			plan.MinDevices = *req.MinDevices
-		}
-		if req.MaxDevices != nil {
-			plan.MaxDevices = *req.MaxDevices
+		if req.PriceUnit != nil {
+			plan.PriceUnit = *req.PriceUnit
 		}
 		if req.DurationDays != nil {
 			plan.DurationDays = *req.DurationDays
-		}
-		if req.PricePerDevice != nil {
-			plan.PricePerDevice = *req.PricePerDevice
 		}
 		if strings.TrimSpace(req.Currency) != "" {
 			plan.Currency = strings.ToUpper(strings.TrimSpace(req.Currency))

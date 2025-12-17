@@ -53,12 +53,16 @@ export function slugify(
         .replace(/([a-z0-9])([A-Z])/g, '$1 $2')
         .replace(/([A-Z]+)([A-Z][a-z])/g, '$1 $2')
 
-        // Replace underscores & non-word chars with spaces
-        .replace(/[_\W]+/g, ' ')
+        // Replace underscores & characters other than letters, numbers, and dashes with spaces
+        // This lets users enter dashes (-) which are valid in slugs
+        .replace(/[^A-Za-z0-9-]+/g, ' ')
 
         // Trim & collapse whitespace into separator
         .trim()
         .replace(/\s+/g, separator)
+
+        // Collapse multiple separators (in case input contained dashes)
+        .replace(new RegExp(`${separator}{2,}`, 'g'), separator)
 
         // Remove leading/trailing separators
         .replace(new RegExp(`^${separator}+|${separator}+$`, 'g'), '');

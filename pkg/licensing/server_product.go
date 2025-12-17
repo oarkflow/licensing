@@ -25,33 +25,31 @@ type updateProductRequest struct {
 }
 
 type createPlanRequest struct {
-	Name           string            `json:"name"`
-	Slug           string            `json:"slug"`
-	Description    string            `json:"description,omitempty"`
-	Price          int64             `json:"price"`
-	MinDevices     int               `json:"min_devices"`
-	PricePerDevice int64             `json:"price_per_device"`
-	Currency       string            `json:"currency"`
-	BillingCycle   string            `json:"billing_cycle"`
-	TrialDays      int               `json:"trial_days,omitempty"`
-	IsActive       bool              `json:"is_active"`
-	DisplayOrder   int               `json:"display_order,omitempty"`
-	Metadata       map[string]string `json:"metadata,omitempty"`
+	Name         string            `json:"name"`
+	Slug         string            `json:"slug"`
+	Description  string            `json:"description,omitempty"`
+	Price        int64             `json:"price"`
+	PriceUnit    string            `json:"price_unit,omitempty"`
+	Currency     string            `json:"currency"`
+	BillingCycle string            `json:"billing_cycle"`
+	TrialDays    int               `json:"trial_days,omitempty"`
+	IsActive     bool              `json:"is_active"`
+	DisplayOrder int               `json:"display_order,omitempty"`
+	Metadata     map[string]string `json:"metadata,omitempty"`
 }
 
 type updatePlanRequest struct {
-	Name           string            `json:"name,omitempty"`
-	Slug           string            `json:"slug,omitempty"`
-	Description    string            `json:"description,omitempty"`
-	Price          *int64            `json:"price,omitempty"`
-	MinDevices     *int              `json:"min_devices,omitempty"`
-	PricePerDevice *int64            `json:"price_per_device,omitempty"`
-	Currency       string            `json:"currency,omitempty"`
-	BillingCycle   string            `json:"billing_cycle,omitempty"`
-	TrialDays      *int              `json:"trial_days,omitempty"`
-	IsActive       *bool             `json:"is_active,omitempty"`
-	DisplayOrder   *int              `json:"display_order,omitempty"`
-	Metadata       map[string]string `json:"metadata,omitempty"`
+	Name         string            `json:"name,omitempty"`
+	Slug         string            `json:"slug,omitempty"`
+	Description  string            `json:"description,omitempty"`
+	Price        *int64            `json:"price,omitempty"`
+	PriceUnit    *string           `json:"price_unit,omitempty"`
+	Currency     string            `json:"currency,omitempty"`
+	BillingCycle string            `json:"billing_cycle,omitempty"`
+	TrialDays    *int              `json:"trial_days,omitempty"`
+	IsActive     *bool             `json:"is_active,omitempty"`
+	DisplayOrder *int              `json:"display_order,omitempty"`
+	Metadata     map[string]string `json:"metadata,omitempty"`
 }
 
 type createFeatureRequest struct {
@@ -59,6 +57,7 @@ type createFeatureRequest struct {
 	Slug        string `json:"slug"`
 	Description string `json:"description,omitempty"`
 	Category    string `json:"category,omitempty"`
+	Type        string `json:"type,omitempty"`
 }
 
 type updateFeatureRequest struct {
@@ -66,6 +65,7 @@ type updateFeatureRequest struct {
 	Slug        string `json:"slug,omitempty"`
 	Description string `json:"description,omitempty"`
 	Category    string `json:"category,omitempty"`
+	Type        string `json:"type,omitempty"`
 }
 
 type createFeatureScopeRequest struct {
@@ -288,35 +288,39 @@ func (s *Server) handleProductPlans(w http.ResponseWriter, r *http.Request, prod
 			if billingCycle == "" {
 				billingCycle = "monthly"
 			}
-			// Default min_devices to 1 if not specified
-			minDevices := req.MinDevices
-			if minDevices < 1 {
-				minDevices = 1
-			}
-			// If price_per_device is not set, use price as price_per_device
-			pricePerDevice := req.PricePerDevice
-			if pricePerDevice == 0 && req.Price > 0 {
-				pricePerDevice = req.Price
-			}
+
 			now := time.Now()
 			plan := &Plan{
-				ID:             uuid.New().String(),
-				ProductID:      productID,
-				Name:           name,
-				Slug:           slug,
-				Description:    strings.TrimSpace(req.Description),
-				Price:          req.Price,
-				MinDevices:     minDevices,
-				PricePerDevice: pricePerDevice,
-				Currency:       currency,
-				BillingCycle:   billingCycle,
-				TrialDays:      req.TrialDays,
-				IsActive:       req.IsActive,
-				DisplayOrder:   req.DisplayOrder,
-				Metadata:       req.Metadata,
-				CreatedAt:      now,
-				UpdatedAt:      now,
+				ID:           uuid.New().String(),
+				ProductID:    productID,
+				Name:         name,
+				Slug:         slug,
+				Description:  strings.TrimSpace(req.Description),
+				Price:        req.Price,
+				PriceUnit:    strings.TrimSpace(req.PriceUnit),
+				Currency:     currency,
+				BillingCycle: billingCycle,
+				TrialDays:    req.TrialDays,
+				IsActive:     req.IsActive,
+				DisplayOrder: req.DisplayOrder,
+				Metadata:     req.Metadata,
+				CreatedAt:    now,
+				UpdatedAt:    now,
 			}
+			// Validate price unit if it's feature-based
+			if strings.HasPrefix(plan.PriceUnit, "feature:") {
+				featureID := strings.TrimPrefix(plan.PriceUnit, "feature:")
+				feature, err := s.lm.storage.GetFeature(r.Context(), featureID)
+				if err != nil {
+					s.respondError(w, http.StatusBadRequest, "invalid feature for price unit")
+					return
+				}
+				if feature.ProductID != productID {
+					s.respondError(w, http.StatusBadRequest, "feature does not belong to product")
+					return
+				}
+			}
+
 			if err := s.lm.storage.SavePlan(r.Context(), plan); err != nil {
 				if strings.Contains(err.Error(), "already exists") {
 					s.respondError(w, http.StatusConflict, "plan already exists")
@@ -335,7 +339,7 @@ func (s *Server) handleProductPlans(w http.ResponseWriter, r *http.Request, prod
 
 	// Check for plan features sub-resource
 	if len(parts) > 1 && strings.HasPrefix(parts[1], "features") {
-		s.handlePlanFeatures(w, r, planID, strings.TrimPrefix(parts[1], "features"))
+		s.handlePlanFeatures(w, r, productID, planID, strings.TrimPrefix(parts[1], "features"))
 		return
 	}
 
@@ -379,12 +383,6 @@ func (s *Server) handleProductPlans(w http.ResponseWriter, r *http.Request, prod
 		if req.Price != nil {
 			plan.Price = *req.Price
 		}
-		if req.MinDevices != nil {
-			plan.MinDevices = *req.MinDevices
-		}
-		if req.PricePerDevice != nil {
-			plan.PricePerDevice = *req.PricePerDevice
-		}
 		if currency := strings.TrimSpace(req.Currency); currency != "" {
 			plan.Currency = currency
 		}
@@ -402,6 +400,23 @@ func (s *Server) handleProductPlans(w http.ResponseWriter, r *http.Request, prod
 		}
 		if req.Metadata != nil {
 			plan.Metadata = req.Metadata
+		}
+		if req.PriceUnit != nil {
+			// Validate feature-based price unit
+			pu := strings.TrimSpace(*req.PriceUnit)
+			if strings.HasPrefix(pu, "feature:") {
+				featureID := strings.TrimPrefix(pu, "feature:")
+				feature, err := s.lm.storage.GetFeature(r.Context(), featureID)
+				if err != nil {
+					s.respondError(w, http.StatusBadRequest, "invalid feature for price unit")
+					return
+				}
+				if feature.ProductID != plan.ProductID {
+					s.respondError(w, http.StatusBadRequest, "feature does not belong to product")
+					return
+				}
+			}
+			plan.PriceUnit = pu
 		}
 		plan.UpdatedAt = time.Now()
 		if err := s.lm.storage.UpdatePlan(r.Context(), plan); err != nil {
@@ -466,6 +481,7 @@ func (s *Server) handleProductFeatures(w http.ResponseWriter, r *http.Request, p
 				Slug:        slug,
 				Description: strings.TrimSpace(req.Description),
 				Category:    strings.TrimSpace(req.Category),
+				Type:        strings.TrimSpace(req.Type),
 				CreatedAt:   now,
 				UpdatedAt:   now,
 			}
@@ -487,7 +503,7 @@ func (s *Server) handleProductFeatures(w http.ResponseWriter, r *http.Request, p
 
 	// Check for scopes sub-resource
 	if len(parts) > 1 && strings.HasPrefix(parts[1], "scopes") {
-		s.handleFeatureScopes(w, r, featureID, strings.TrimPrefix(parts[1], "scopes"))
+		s.handleFeatureScopes(w, r, productID, featureID, strings.TrimPrefix(parts[1], "scopes"))
 		return
 	}
 
@@ -501,6 +517,11 @@ func (s *Server) handleProductFeatures(w http.ResponseWriter, r *http.Request, p
 				return
 			}
 			s.respondError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		// Ensure feature belongs to requested product
+		if feature.ProductID != productID {
+			s.respondError(w, http.StatusNotFound, "feature not found")
 			return
 		}
 		s.respondJSON(w, http.StatusOK, feature)
@@ -519,6 +540,11 @@ func (s *Server) handleProductFeatures(w http.ResponseWriter, r *http.Request, p
 			s.respondError(w, http.StatusInternalServerError, err.Error())
 			return
 		}
+		// Ensure the feature belongs to the product
+		if feature.ProductID != productID {
+			s.respondError(w, http.StatusNotFound, "feature not found")
+			return
+		}
 		if name := strings.TrimSpace(req.Name); name != "" {
 			feature.Name = name
 		}
@@ -531,6 +557,9 @@ func (s *Server) handleProductFeatures(w http.ResponseWriter, r *http.Request, p
 		if req.Category != "" {
 			feature.Category = strings.TrimSpace(req.Category)
 		}
+		if req.Type != "" {
+			feature.Type = strings.TrimSpace(req.Type)
+		}
 		feature.UpdatedAt = time.Now()
 		if err := s.lm.storage.UpdateFeature(r.Context(), feature); err != nil {
 			s.respondError(w, http.StatusInternalServerError, err.Error())
@@ -539,6 +568,20 @@ func (s *Server) handleProductFeatures(w http.ResponseWriter, r *http.Request, p
 		s.respondJSON(w, http.StatusOK, feature)
 
 	case http.MethodDelete:
+		// Ensure feature belongs to the product before deleting
+		feature, err := s.lm.storage.GetFeature(r.Context(), featureID)
+		if err != nil {
+			if strings.Contains(err.Error(), "not found") {
+				s.respondError(w, http.StatusNotFound, "feature not found")
+				return
+			}
+			s.respondError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		if feature.ProductID != productID {
+			s.respondError(w, http.StatusNotFound, "feature not found")
+			return
+		}
 		if err := s.lm.storage.DeleteFeature(r.Context(), featureID); err != nil {
 			if strings.Contains(err.Error(), "not found") {
 				s.respondError(w, http.StatusNotFound, "feature not found")
@@ -556,9 +599,24 @@ func (s *Server) handleProductFeatures(w http.ResponseWriter, r *http.Request, p
 
 // ==================== Feature Scope Handlers ====================
 
-func (s *Server) handleFeatureScopes(w http.ResponseWriter, r *http.Request, featureID, subPath string) {
+func (s *Server) handleFeatureScopes(w http.ResponseWriter, r *http.Request, productID, featureID, subPath string) {
 	subPath = strings.TrimPrefix(subPath, "/")
 	scopeID := subPath
+
+	// Ensure feature belongs to the given product
+	feature, err := s.lm.storage.GetFeature(r.Context(), featureID)
+	if err != nil {
+		if strings.Contains(err.Error(), "not found") {
+			s.respondError(w, http.StatusNotFound, "feature not found")
+			return
+		}
+		s.respondError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if feature.ProductID != productID {
+		s.respondError(w, http.StatusNotFound, "feature not found")
+		return
+	}
 
 	if scopeID == "" {
 		// /api/products/{productID}/features/{featureID}/scopes
@@ -685,9 +743,24 @@ func (s *Server) handleFeatureScopes(w http.ResponseWriter, r *http.Request, fea
 
 // ==================== Plan Feature Handlers ====================
 
-func (s *Server) handlePlanFeatures(w http.ResponseWriter, r *http.Request, planID, subPath string) {
+func (s *Server) handlePlanFeatures(w http.ResponseWriter, r *http.Request, productID, planID, subPath string) {
 	subPath = strings.TrimPrefix(subPath, "/")
 	featureID := subPath
+
+	// Validate that the plan belongs to the product
+	plan, err := s.lm.storage.GetPlan(r.Context(), planID)
+	if err != nil {
+		if strings.Contains(err.Error(), "not found") {
+			s.respondError(w, http.StatusNotFound, "plan not found")
+			return
+		}
+		s.respondError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if plan.ProductID != productID {
+		s.respondError(w, http.StatusNotFound, "plan not found")
+		return
+	}
 
 	if featureID == "" {
 		// /api/products/{productID}/plans/{planID}/features
@@ -728,6 +801,10 @@ func (s *Server) handlePlanFeatures(w http.ResponseWriter, r *http.Request, plan
 				// Fetch feature details
 				feature, err := s.lm.storage.GetFeature(r.Context(), pf.FeatureID)
 				if err == nil {
+					// Ensure the feature belongs to this product
+					if feature.ProductID != productID {
+						continue
+					}
 					epf.Feature = feature
 					// Fetch scopes for the feature
 					scopes, err := s.lm.storage.ListFeatureScopes(r.Context(), pf.FeatureID)
@@ -747,6 +824,20 @@ func (s *Server) handlePlanFeatures(w http.ResponseWriter, r *http.Request, plan
 			featureID := strings.TrimSpace(req.FeatureID)
 			if featureID == "" {
 				s.respondError(w, http.StatusBadRequest, "feature_id is required")
+				return
+			}
+			// Ensure the feature exists and belongs to this product
+			feature, err := s.lm.storage.GetFeature(r.Context(), featureID)
+			if err != nil {
+				if strings.Contains(err.Error(), "not found") {
+					s.respondError(w, http.StatusBadRequest, "feature not found")
+					return
+				}
+				s.respondError(w, http.StatusInternalServerError, err.Error())
+				return
+			}
+			if feature.ProductID != productID {
+				s.respondError(w, http.StatusBadRequest, "feature does not belong to this product")
 				return
 			}
 			now := time.Now()
@@ -787,6 +878,20 @@ func (s *Server) handlePlanFeatures(w http.ResponseWriter, r *http.Request, plan
 			s.respondError(w, http.StatusInternalServerError, err.Error())
 			return
 		}
+		// Ensure the referenced feature belongs to the product
+		feature, err := s.lm.storage.GetFeature(r.Context(), planFeature.FeatureID)
+		if err != nil {
+			if strings.Contains(err.Error(), "not found") {
+				s.respondError(w, http.StatusNotFound, "plan feature not found")
+				return
+			}
+			s.respondError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		if feature.ProductID != productID {
+			s.respondError(w, http.StatusNotFound, "plan feature not found")
+			return
+		}
 		s.respondJSON(w, http.StatusOK, planFeature)
 
 	case http.MethodPut:
@@ -803,6 +908,20 @@ func (s *Server) handlePlanFeatures(w http.ResponseWriter, r *http.Request, plan
 			s.respondError(w, http.StatusInternalServerError, err.Error())
 			return
 		}
+		// Ensure the referenced feature belongs to the product
+		feature, err := s.lm.storage.GetFeature(r.Context(), planFeature.FeatureID)
+		if err != nil {
+			if strings.Contains(err.Error(), "not found") {
+				s.respondError(w, http.StatusNotFound, "plan feature not found")
+				return
+			}
+			s.respondError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		if feature.ProductID != productID {
+			s.respondError(w, http.StatusNotFound, "plan feature not found")
+			return
+		}
 		if req.Enabled != nil {
 			planFeature.Enabled = *req.Enabled
 		}
@@ -817,6 +936,28 @@ func (s *Server) handlePlanFeatures(w http.ResponseWriter, r *http.Request, plan
 		s.respondJSON(w, http.StatusOK, planFeature)
 
 	case http.MethodDelete:
+		planFeature, err := s.lm.storage.GetPlanFeature(r.Context(), planID, featureID)
+		if err != nil {
+			if strings.Contains(err.Error(), "not found") {
+				s.respondError(w, http.StatusNotFound, "plan feature not found")
+				return
+			}
+			s.respondError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		feature, err := s.lm.storage.GetFeature(r.Context(), planFeature.FeatureID)
+		if err != nil {
+			if strings.Contains(err.Error(), "not found") {
+				s.respondError(w, http.StatusNotFound, "plan feature not found")
+				return
+			}
+			s.respondError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		if feature.ProductID != productID {
+			s.respondError(w, http.StatusNotFound, "plan feature not found")
+			return
+		}
 		if err := s.lm.storage.DeletePlanFeature(r.Context(), planID, featureID); err != nil {
 			if strings.Contains(err.Error(), "not found") {
 				s.respondError(w, http.StatusNotFound, "plan feature not found")

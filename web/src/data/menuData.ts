@@ -6,8 +6,8 @@ export interface PlanDefinition {
     name: string;
     slug: string;
     description: string;
-    pricePerDevice: number; // cents per device per year
-    minDevices: number;
+    price: number; // cents
+    priceUnit: string; // e.g., "none", "device"
     storageLimit: string;
     billingCycle: string;
     trialDays: number;
@@ -43,8 +43,8 @@ export const planDefinitions: PlanDefinition[] = [
         name: "Free Trial",
         slug: "trial",
         description: "Try everything before you buy. Full access to all features for 14 days. No credit card required.",
-        pricePerDevice: 0,
-        minDevices: 1,
+        price: 0,
+        priceUnit: "none",
         storageLimit: "Unlimited",
         billingCycle: "trial",
         trialDays: 14,
@@ -57,8 +57,8 @@ export const planDefinitions: PlanDefinition[] = [
         name: "Personal",
         slug: "personal",
         description: "Best for: Individual developers managing personal secrets",
-        pricePerDevice: 1500, // $15/device/year
-        minDevices: 1,
+        price: 1500, // $15/device/year
+        priceUnit: "device",
         storageLimit: "1 GB",
         billingCycle: "yearly",
         trialDays: 0,
@@ -71,8 +71,8 @@ export const planDefinitions: PlanDefinition[] = [
         name: "Solo",
         slug: "solo",
         description: "Best for: Power users and freelancers with multiple workstations",
-        pricePerDevice: 4000, // $40/device/year
-        minDevices: 2,
+        price: 4000, // $40/device/year
+        priceUnit: "device",
         storageLimit: "5 GB",
         billingCycle: "yearly",
         trialDays: 0,
@@ -85,8 +85,8 @@ export const planDefinitions: PlanDefinition[] = [
         name: "Team",
         slug: "team",
         description: "Best for: Small teams collaborating on projects",
-        pricePerDevice: 7800, // $78/device/year
-        minDevices: 5,
+        price: 7800, // $78/device/year
+        priceUnit: "device",
         storageLimit: "25 GB",
         billingCycle: "yearly",
         trialDays: 0,
@@ -99,8 +99,8 @@ export const planDefinitions: PlanDefinition[] = [
         name: "Business",
         slug: "business",
         description: "Best for: Growing organizations with centralized secret management needs",
-        pricePerDevice: 13500, // $135/device/year
-        minDevices: 15,
+        price: 13500, // $135/device/year
+        priceUnit: "device",
         storageLimit: "Unlimited",
         billingCycle: "yearly",
         trialDays: 0,
@@ -113,8 +113,8 @@ export const planDefinitions: PlanDefinition[] = [
         name: "Enterprise",
         slug: "enterprise",
         description: "Best for: Organizations with strict compliance and governance requirements. Custom SLAs, dedicated support, on-premises deployment assistance.",
-        pricePerDevice: 0, // Custom pricing
-        minDevices: 50,
+        price: 0, // Custom pricing
+        priceUnit: "none",
         storageLimit: "Unlimited",
         billingCycle: "yearly",
         trialDays: 0,
@@ -538,6 +538,6 @@ export const getStorageLimitBytes = (planSlug: string): number => {
 
 export const getMinACV = (planSlug: string): number => {
     const plan = getPlanBySlug(planSlug);
-    if (!plan || plan.pricePerDevice === 0) return 0;
-    return plan.pricePerDevice * plan.minDevices;
+    if (!plan || plan.price === 0) return 0;
+    return plan.price;
 };

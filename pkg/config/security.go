@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/oarkflow/licensing/pkg/crypto"
@@ -63,11 +64,21 @@ type SecurityConfig struct {
 	ShutdownTimeout time.Duration
 }
 
+type LoadOptions struct {
+	FilePath      string
+	MigrtionTable string
+	MigrationDir  string
+}
+
 // LoadFromEnv loads configuration from environment variables
-func LoadFromEnv() (*SecurityConfig, error) {
+func LoadFromEnv(opts LoadOptions) (*SecurityConfig, error) {
+	filePath := strings.TrimSpace(opts.FilePath)
+	if filePath == "" {
+		filePath = strings.TrimSpace(getEnv("DB_PATH", "./licensing.db"))
+	}
 	config := &SecurityConfig{
 		// Defaults
-		DatabasePath:           getEnv("DB_PATH", "./licensing.db"),
+		DatabasePath:           filePath,
 		SigningAlgorithm:       crypto.SigningAlgorithm(getEnv("SIGNING_ALGORITHM", string(crypto.AlgorithmEd25519))),
 		EncryptionKeyPath:      getEnv("ENCRYPTION_KEY_PATH", "./keys/encryption.key"),
 		KeyRotationEnabled:     getEnvBool("KEY_ROTATION_ENABLED", true),

@@ -117,13 +117,12 @@ export interface Plan {
     slug: string;
     description?: string;
     price: number;
-    min_devices: number;
-    price_per_device: number;
     currency: string;
     billing_cycle: 'monthly' | 'yearly' | 'weekly' | 'lifetime';
     is_trial: boolean;
     trial_days: number;
     is_active: boolean;
+    price_unit?: string;
     created_at: string;
     updated_at: string;
 }
@@ -135,6 +134,7 @@ export interface Feature {
     slug: string;
     description?: string;
     category?: string;
+    type?: 'boolean' | 'metered' | 'scoped';
     created_at: string;
     updated_at: string;
 }
@@ -271,9 +271,9 @@ export interface CreatePlanRequest {
     name: string;
     slug?: string;
     description?: string;
-    price?: number;
-    min_devices?: number;
-    price_per_device?: number;
+    price?: number; // dollars (frontend)
+    price_unit?: string; // none|feature|user|device|storage|<custom>
+    custom_price_unit?: string; // none|feature|user|device|storage|<custom>
     currency?: string;
     billing_cycle?: string;
     is_trial?: boolean;
@@ -287,6 +287,7 @@ export interface CreateFeatureRequest {
     slug: string;
     description?: string;
     category?: string;
+    type?: 'boolean' | 'metered' | 'scoped';
 }
 
 export interface CreateScopeRequest {

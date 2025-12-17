@@ -214,9 +214,12 @@ export function ProductDetailPage() {
                     ) : (
                         <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
                             {plans.map((plan) => {
-                                const priceCents = plan.price_per_device ?? plan.price ?? 0;
+                                const priceCents = plan.price ?? 0;
+                                const unitLabel = plan.price_unit && plan.price_unit.startsWith('feature:')
+                                    ? `Feature: ${features.find(f => f.id === plan.price_unit.split(':')[1])?.name || plan.price_unit}`
+                                    : plan.price_unit;
                                 const priceBadge = priceCents > 0
-                                    ? `${formatCurrencyFromCents(priceCents, plan.currency || 'USD')}/device`
+                                    ? `${formatCurrencyFromCents(priceCents, plan.currency || 'USD')}${unitLabel && unitLabel !== 'none' ? ` / ${unitLabel}` : ''}`
                                     : null;
 
                                 return (

@@ -1,0 +1,25 @@
+Migration "1765980217_create_clients_table" {
+	Version = "1.0.0"
+	Description = "Create table clients."
+	Connection = "default"
+	Up {
+		CreateTable "clients" {
+			Field "id" { type = "text" primary_key = true }
+				Field "email" { type = "string" not_null = true }
+					Field "email_lower" { type = "string" not_null = true unique = true }
+					Field "username" { type = "string" nullable = true unique = true index = true expression = "LOWER(username)" }
+						Field "password_hash" { type = "blob" nullable = true }
+							Field "name" { type = "string" nullable = true }
+								Field "company_name" { type = "string" nullable = true }
+									Field "status" { type = "string" size = 20 default = "active" }
+										Field "created_at" { type = "datetime" default = "now()" }
+											Field "updated_at" { type = "datetime" default = "now()" }
+												Field "deleted_at" { type = "datetime" nullable = true }
+													Field "banned_at" { type = "datetime" nullable = true }
+														Field "ban_reason" { type = "string" nullable = true }
+													}
+																}
+																Down {
+																	DropTable "clients" { Cascade = true }
+																	}
+																}

@@ -1,0 +1,28 @@
+Migration "1765980231_create_offline_validation_tokens_table" {
+	Version = "1.0.0"
+	Description = "Create table offline_validation_tokens."
+	Connection = "default"
+	Up {
+		CreateTable "offline_validation_tokens" {
+			Field "token" { type = "text" primary_key = true }
+				Field "license_key" { type = "text" not_null = true index = true }
+						Field "client_id" { type = "text" not_null = true index = true }
+							Field "device_fingerprint" { type = "text" not_null = true index = true }
+							Field "valid_until" { type = "datetime" not_null = true }
+								Field "usage_count" { type = "integer" not_null = true default = 0 }
+									Field "max_uses" { type = "integer" not_null = true }
+										Field "is_revoked" { type = "boolean" not_null = true default = false }
+											Field "created_at" { type = "datetime" not_null = true }
+												Field "revoked_at" { type = "datetime" nullable = true }
+													Field "revoked_by" { type = "text" nullable = true }
+														Field "revoked_reason" { type = "text" nullable = true }
+															Field "signing_key_id" { type = "text" nullable = true }
+															}
+									
+									
+									
+																	}
+																	Down {
+																		DropTable "offline_validation_tokens" { Cascade = true }
+																		}
+																	}

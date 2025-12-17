@@ -44,6 +44,7 @@ export function FeatureEditPage() {
         name: '',
         slug: '',
         description: '',
+        category: '',
         type: 'boolean',
     });
 
@@ -53,7 +54,8 @@ export function FeatureEditPage() {
                 name: featureResponse.data.name,
                 slug: featureResponse.data.slug,
                 description: featureResponse.data.description || '',
-                type: featureResponse.data.type,
+                category: featureResponse.data.category || '',
+                type: featureResponse.data.type || 'boolean',
             });
         }
     }, [featureResponse?.data]);
@@ -138,6 +140,18 @@ export function FeatureEditPage() {
                                 placeholder="advanced-analytics"
                                 className="font-mono"
                                 required
+                            />
+                        </div>
+
+                        <div className="space-y-2">
+                            <Label htmlFor="category">Category</Label>
+                            <Input
+                                id="category"
+                                value={formData.category || ''}
+                                onChange={(e) =>
+                                    setFormData((prev) => ({ ...prev, category: e.target.value }))
+                                }
+                                placeholder="e.g., billing, sync, integrations"
                             />
                         </div>
 

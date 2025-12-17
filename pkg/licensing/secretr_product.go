@@ -804,20 +804,19 @@ func seedSecretrPlans(ctx context.Context, storage Storage, product *Product, fe
 
 	for _, def := range secretrPlanDefinitions {
 		plan := &Plan{
-			ID:             def.ID,
-			ProductID:      product.ID,
-			Name:           def.Name,
-			Slug:           def.Slug,
-			Description:    def.Description,
-			Price:          def.PricePerDevice, // Legacy field
-			MinDevices:     def.MinDevices,
-			PricePerDevice: def.PricePerDevice,
-			Currency:       "USD",
-			BillingCycle:   def.BillingCycle,
-			TrialDays:      def.TrialDays,
-			IsTrial:        def.IsTrial,
-			IsActive:       def.IsActive,
-			DisplayOrder:   def.DisplayOrder,
+			ID:           def.ID,
+			ProductID:    product.ID,
+			Name:         def.Name,
+			Slug:         def.Slug,
+			Description:  def.Description,
+			Price:        def.PricePerDevice,
+			PriceUnit:    "device",
+			Currency:     "USD",
+			BillingCycle: def.BillingCycle,
+			TrialDays:    def.TrialDays,
+			IsTrial:      def.IsTrial,
+			IsActive:     def.IsActive,
+			DisplayOrder: def.DisplayOrder,
 			Metadata: map[string]string{
 				"storage_limit": def.StorageLimit,
 			},
@@ -825,12 +824,16 @@ func seedSecretrPlans(ctx context.Context, storage Storage, product *Product, fe
 			UpdatedAt: ts,
 		}
 
-		// Enterprise has custom pricing
+		// Set price unit and model
 		if def.Slug == "enterprise" {
+			plan.PriceUnit = "none"
 			plan.Metadata["price_model"] = "custom"
 			plan.Metadata["price_notes"] = "Contact sales"
 		} else if def.PricePerDevice > 0 {
+			plan.PriceUnit = "device"
 			plan.Metadata["price_model"] = "per_device"
+		} else {
+			plan.PriceUnit = "none"
 		}
 
 		persistedPlan, err := upsertPlan(ctx, storage, plan)
@@ -1103,7 +1106,7 @@ func GetMinACV(planSlug string) int64 {
 			if def.PricePerDevice == 0 {
 				return 0
 			}
-			return def.PricePerDevice * int64(def.MinDevices)
+			return def.PricePerDevice
 		}
 	}
 	return 0

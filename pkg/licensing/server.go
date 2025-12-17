@@ -2081,16 +2081,8 @@ func (s *Server) handleProvisionLicense(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	// Derive max_devices from plan
-	maxDevices := plan.MaxDevices
-	if maxDevices <= 0 {
-		// Fallback to min_devices if max_devices is not set
-		if plan.MinDevices > 0 {
-			maxDevices = plan.MinDevices
-		} else {
-			maxDevices = 1
-		}
-	}
+	// Plan-level min/max devices fields were removed; default to 1 device
+	maxDevices := 1
 
 	// Derive duration from plan
 	var duration time.Duration

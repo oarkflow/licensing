@@ -1,0 +1,32 @@
+Migration "1765980235_create_plans_table" {
+	Version = "1.0.0"
+	Description = "Create table plans."
+	Connection = "default"
+	Up {
+		CreateTable "plans" {
+			Field "id" { type = "text" primary_key = true }
+				Field "product_id" { type = "text" not_null = true foreign_key = { reference_table = "products" reference_field = "id" on_delete = "CASCADE" } index = true }
+					Field "name" { type = "text" not_null = true }
+						Field "slug" { type = "text" not_null = true }
+							Field "slug_key" { type = "text" not_null = true unique = true }
+								Field "description" { type = "text" nullable = true }
+									Field "price" { type = "integer" not_null = true default = 0 }
+										Field "duration_days" { type = "integer" not_null = true default = 0 }
+											Field "currency" { type = "text" not_null = true default = "USD" }
+												Field "billing_cycle" { type = "text" not_null = true default = "monthly" }
+													Field "price_unit" { type = "text" nullable = true }
+														Field "trial_days" { type = "integer" not_null = true default = 0 }
+															Field "is_trial" { type = "boolean" not_null = true default = false }
+																Field "is_active" { type = "boolean" not_null = true default = true }
+																	Field "display_order" { type = "integer" not_null = true default = 0 }
+																		Field "metadata" { type = "text" nullable = true }
+																			Field "created_at" { type = "datetime" not_null = true }
+																				Field "updated_at" { type = "datetime" not_null = true }
+
+																					}
+															
+																					}
+																					Down {
+																						DropTable "plans" { Cascade = true }
+																						}
+																					}

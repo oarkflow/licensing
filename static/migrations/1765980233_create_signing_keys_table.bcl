@@ -1,0 +1,19 @@
+Migration "1765980233_create_signing_keys_table" {
+	Version = "1.0.0"
+	Description = "Create table signing_keys."
+	Connection = "default"
+	Up {
+		CreateTable "signing_keys" {
+			Field "id" { type = "text" primary_key = true }
+				Field "name" { type = "text" nullable = true }
+					Field "public_key" { type = "blob" not_null = true }
+						Field "private_key" { type = "blob" nullable = true }
+							Field "is_active" { type = "boolean" not_null = true default = false index = true }
+								Field "created_at" { type = "datetime" not_null = true }
+								}
+		
+								}
+								Down {
+									DropTable "signing_keys" { Cascade = true }
+									}
+								}

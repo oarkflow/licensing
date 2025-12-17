@@ -1,0 +1,19 @@
+Migration "1765980223_create_api_keys_table" {
+	Version = "1.0.0"
+	Description = "Create table api_keys."
+	Connection = "default"
+	Up {
+		CreateTable "api_keys" {
+			Field "id" { type = "text" primary_key = true }
+				Field "user_id" { type = "text" nullable = true foreign_key = { reference_table = "admin_users" reference_field = "id" on_delete = "CASCADE" } }
+						Field "client_id" { type = "text" nullable = true foreign_key = { reference_table = "clients" reference_field = "id" on_delete = "CASCADE" } index = true }
+							Field "hash" { type = "text" not_null = true unique = true }
+								Field "prefix" { type = "text" not_null = true }
+									Field "created_at" { type = "datetime" not_null = true }
+										Field "last_used_at" { type = "datetime" nullable = true }
+										
+											}
+											Down {
+												DropTable "api_keys" { Cascade = true }
+												}
+											}

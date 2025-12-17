@@ -1,0 +1,18 @@
+Migration "1765980222_create_admin_users_table" {
+	Version = "1.0.0"
+	Description = "Create table admin_users."
+	Connection = "default"
+	Up {
+		CreateTable "admin_users" {
+			Field "id" { type = "text" primary_key = true }
+				Field "username" { type = "text" not_null = true unique = true index = true expression = "LOWER(username)" }
+					Field "password_hash" { type = "blob" not_null = true }
+						Field "created_at" { type = "datetime" not_null = true }
+							Field "updated_at" { type = "datetime" not_null = true }
+							}
+		
+							}
+							Down {
+								DropTable "admin_users" { Cascade = true }
+								}
+							}

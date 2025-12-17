@@ -407,6 +407,13 @@ export function PlanDetailPage() {
         staleTime: 30000, // Cache for 30 seconds
     });
 
+    const { data: productFeaturesResponse } = useQuery({
+        queryKey: ['features', productId],
+        queryFn: () => api.listFeatures(productId!),
+        enabled: !!productId,
+        staleTime: 1000 * 60,
+    });
+
     const { data: featuresResponse } = useQuery({
         queryKey: ['plan-features', productId, planId],
         queryFn: () => api.getPlanFeatures(productId!, planId!),
@@ -426,8 +433,9 @@ export function PlanDetailPage() {
         name: '',
         slug: '',
         description: '',
-        price_per_device: undefined,
-        min_devices: 1,
+        price: undefined,
+        price_unit: 'none',
+        custom_price_unit: undefined as string | undefined,
         currency: 'USD',
         billing_cycle: 'yearly',
         is_trial: false,
@@ -442,8 +450,8 @@ export function PlanDetailPage() {
                 name: planResponse.data.name,
                 slug: planResponse.data.slug,
                 description: planResponse.data.description || '',
-                price_per_device: planResponse.data.price_per_device ? planResponse.data.price_per_device / 100 : undefined,
-                min_devices: planResponse.data.min_devices || 1,
+                price: planResponse.data.price ? planResponse.data.price / 100 : undefined,
+                price_unit: planResponse.data.price_unit || 'none',
                 currency: planResponse.data.currency || 'USD',
                 billing_cycle: planResponse.data.billing_cycle || 'yearly',
                 is_trial: planResponse.data.is_trial || false,
@@ -523,16 +531,18 @@ export function PlanDetailPage() {
                 is_active: formData.is_active,
             });
         } else {
-            // Calculate total price from price_per_device * min_devices
-            const pricePerDevice = formData.price_per_device || 0;
-            const minDevices = formData.min_devices || 1;
-            const price = Math.round(pricePerDevice * minDevices * 100);
-
+            const priceDollars = formData.price || 0;
+            const price = Math.round(priceDollars * 100);
+            let priceUnit = formData.price_unit || 'none';
+            if (priceUnit === 'feature' && formData.custom_price_unit) {
+                priceUnit = `feature:${formData.custom_price_unit}`;
+            } else if (priceUnit === 'other' && formData.custom_price_unit) {
+                priceUnit = formData.custom_price_unit;
+            }
             updatePlanMutation.mutate({
                 ...formData,
                 price,
-                price_per_device: Math.round(pricePerDevice * 100),
-                min_devices: minDevices,
+                price_unit: priceUnit,
                 trial_days: undefined, // Clear trial_days for non-trial plans
             });
         }
@@ -564,27 +574,20 @@ export function PlanDetailPage() {
         );
     }
 
-    const priceCents = (plan.price_per_device ?? plan.price ?? 0);
+    const priceCents = (plan.price ?? 0);
     const currencyCode = plan.currency || 'USD';
     const hasPaidPrice = priceCents > 0;
     const formattedPrice = hasPaidPrice ? formatCurrencyFromCents(priceCents, currencyCode) : 'Free';
 
-    // Calculate displayed total price for form (only for non-trial plans)
-    const pricePerDevice = formData.price_per_device || 0;
-    const minDevices = formData.min_devices || 1;
-    const totalPrice = formData.is_trial ? 0 : pricePerDevice * minDevices;
+    const priceUnit = plan.price_unit && plan.price_unit !== 'none' ? plan.price_unit : undefined;
 
     const highlightStats = [
         {
-            label: 'Price per Device',
+            label: 'Price',
             value: hasPaidPrice ? formattedPrice : 'Free',
-            helper: plan.billing_cycle ? `per ${plan.billing_cycle}` : undefined,
+            helper: priceUnit ? `per ${priceUnit}` : (plan.billing_cycle ? `${plan.billing_cycle}` : undefined),
         },
-        {
-            label: 'Minimum Devices',
-            value: plan.min_devices || 1,
-            helper: 'Required seats',
-        },
+
         {
             label: 'Licenses',
             value: planLicenses.length,
@@ -671,12 +674,22 @@ export function PlanDetailPage() {
                                         setIsFormDirty(false);
                                         // Reset form data
                                         if (planResponse?.data) {
+                                            // Parse price_unit for feature:<id> values
+                                            let priceUnit = planResponse.data.price_unit || 'none';
+                                            let customUnit: string | undefined = undefined;
+                                            if (priceUnit && priceUnit.startsWith('feature:')) {
+                                                customUnit = priceUnit.split(':')[1];
+                                                priceUnit = 'feature';
+                                            }
+
                                             setFormData({
                                                 name: planResponse.data.name,
                                                 slug: planResponse.data.slug,
                                                 description: planResponse.data.description || '',
-                                                price_per_device: planResponse.data.price_per_device ? planResponse.data.price_per_device / 100 : undefined,
-                                                min_devices: planResponse.data.min_devices || 1,
+                                                // Convert cents to dollars for display
+                                                price: planResponse.data.price ? planResponse.data.price / 100 : undefined,
+                                                price_unit: priceUnit,
+                                                custom_price_unit: customUnit,
                                                 currency: planResponse.data.currency || 'USD',
                                                 billing_cycle: planResponse.data.billing_cycle || 'yearly',
                                                 is_trial: planResponse.data.is_trial || false,
@@ -779,28 +792,66 @@ export function PlanDetailPage() {
                                     <>
                                         <div className="grid gap-4 sm:grid-cols-2">
                                             <div className="space-y-2">
-                                                <Label htmlFor="price_per_device">Price per Device</Label>
+                                                <Label htmlFor="price">Price</Label>
                                                 <Input
-                                                    id="price_per_device"
+                                                    id="price"
                                                     type="number"
                                                     step="0.01"
                                                     min="0"
-                                                    value={formData.price_per_device || ''}
-                                                    onChange={(e) => handleFormChange('price_per_device', parseFloat(e.target.value) || undefined)}
+                                                    value={formData.price || ''}
+                                                    onChange={(e) => handleFormChange('price', parseFloat(e.target.value) || undefined)}
                                                     placeholder="49.00"
                                                 />
+                                                <p className="text-xs text-muted-foreground">
+                                                    Amount in dollars for the plan
+                                                </p>
                                             </div>
 
                                             <div className="space-y-2">
-                                                <Label htmlFor="min_devices">Min Devices</Label>
-                                                <Input
-                                                    id="min_devices"
-                                                    type="number"
-                                                    min="1"
-                                                    value={formData.min_devices || 1}
-                                                    onChange={(e) => handleFormChange('min_devices', parseInt(e.target.value) || 1)}
-                                                    placeholder="1"
-                                                />
+                                                <Label htmlFor="price_unit">Per</Label>
+                                                <Select
+                                                    value={formData.price_unit || 'none'}
+                                                    onValueChange={(value) => handleFormChange('price_unit', value)}
+                                                >
+                                                    <SelectTrigger id="price_unit">
+                                                        <SelectValue placeholder="Select unit" />
+                                                    </SelectTrigger>
+                                                    <SelectContent>
+                                                        <SelectItem value="none">None</SelectItem>
+                                                        <SelectItem value="feature">Feature</SelectItem>
+                                                        <SelectItem value="user">User</SelectItem>
+                                                        <SelectItem value="device">Device</SelectItem>
+                                                        <SelectItem value="storage">Storage</SelectItem>
+                                                        <SelectItem value="other">Other</SelectItem>
+                                                    </SelectContent>
+                                                </Select>
+                                                {formData.price_unit === 'feature' && (
+                                                    <Select
+                                                        value={formData.custom_price_unit || ''}
+                                                        onValueChange={(value) => handleFormChange('custom_price_unit', value)}
+                                                    >
+                                                        <SelectTrigger id="price_feature">
+                                                            <SelectValue placeholder="Select feature" />
+                                                        </SelectTrigger>
+                                                        <SelectContent>
+                                                            {(productFeaturesResponse?.data || []).reduce((acc: any[], f) => {
+                                                                if (!acc.find((x) => x.id === f.id)) acc.push(f);
+                                                                return acc;
+                                                            }, []).map((f) => (
+                                                                <SelectItem key={f.id} value={f.id}>{f.name}</SelectItem>
+                                                            ))}
+                                                        </SelectContent>
+                                                    </Select>
+                                                )}
+
+                                                {formData.price_unit === 'other' && (
+                                                    <Input
+                                                        id="custom_price_unit"
+                                                        value={formData.custom_price_unit || ''}
+                                                        onChange={(e) => handleFormChange('custom_price_unit', e.target.value)}
+                                                        placeholder="e.g. seats"
+                                                    />
+                                                )}
                                             </div>
                                         </div>
 
@@ -842,12 +893,12 @@ export function PlanDetailPage() {
                                     </>
                                 )}
 
-                                {totalPrice > 0 && (
+                                {plan.price > 0 && (
                                     <div className="rounded-lg border bg-muted/50 p-3">
                                         <div className="flex items-center justify-between">
-                                            <span className="text-sm font-medium">Minimum Cost</span>
+                                            <span className="text-sm font-medium">Price</span>
                                             <span className="font-bold">
-                                                ${totalPrice.toFixed(2)} / {formData.billing_cycle}
+                                                ${formatCurrencyFromCents(plan.price, plan.currency || 'USD')}{(plan.price_unit && plan.price_unit !== 'none') ? ` / ${plan.price_unit.startsWith('feature:') ? `Feature: ${productFeaturesResponse?.data?.find(f => f.id === plan.price_unit.split(':')[1])?.name || plan.price_unit}` : plan.price_unit}` : ''}
                                             </span>
                                         </div>
                                     </div>

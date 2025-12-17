@@ -1,0 +1,22 @@
+Migration "1765980236_create_features_table" {
+	Version = "1.0.0"
+	Description = "Create table features."
+	Connection = "default"
+	Up {
+		CreateTable "features" {
+			Field "id" { type = "text" primary_key = true }
+				Field "product_id" { type = "text" not_null = true foreign_key = { reference_table = "products" reference_field = "id" on_delete = "CASCADE" } index = true }
+						Field "name" { type = "text" not_null = true }
+							Field "slug" { type = "text" not_null = true }
+								Field "slug_key" { type = "text" not_null = true unique = true }
+									Field "description" { type = "text" nullable = true }
+										Field "category" { type = "text" nullable = true }
+											Field "type" { type = "text" nullable = true }
+												Field "created_at" { type = "datetime" not_null = true }
+													Field "updated_at" { type = "datetime" not_null = true }
+													
+													}
+													Down {
+														DropTable "features" { Cascade = true }
+														}
+													}

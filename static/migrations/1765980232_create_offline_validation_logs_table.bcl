@@ -1,0 +1,27 @@
+Migration "1765980232_create_offline_validation_logs_table" {
+	Version = "1.0.0"
+	Description = "Create table offline_validation_logs."
+	Connection = "default"
+	Up {
+		CreateTable "offline_validation_logs" {
+			Field "id" { type = "text" primary_key = true }
+				Field "token" { type = "text" not_null = true index = true }
+						Field "license_key" { type = "text" not_null = true index = true }
+							Field "client_id" { type = "text" not_null = true index = true }
+							Field "device_fingerprint" { type = "text" not_null = true }
+								Field "validation_time" { type = "datetime" not_null = true }
+									Field "success" { type = "boolean" not_null = true }
+										Field "error_message" { type = "text" nullable = true }
+											Field "ip_address" { type = "text" nullable = true }
+												Field "user_agent" { type = "text" nullable = true }
+													Field "app_version" { type = "text" nullable = true }
+														Field "metadata" { type = "text" nullable = true }
+														}
+								
+								
+								
+																}
+																Down {
+																	DropTable "offline_validation_logs" { Cascade = true }
+																	}
+																}

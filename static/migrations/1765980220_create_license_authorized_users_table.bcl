@@ -1,0 +1,19 @@
+Migration "1765980220_create_license_authorized_users_table" {
+	Version = "1.0.0"
+	Description = "Create table license_authorized_users."
+	Connection = "default"
+	Up {
+		CreateTable "license_authorized_users" {
+				Field "license_id" { type = "text" not_null = true foreign_key = { reference_table = "licenses" reference_field = "id" on_delete = "CASCADE" } index = true }
+						Field "email" { type = "text" not_null = true }
+							Field "email_lower" { type = "text" not_null = true }
+								Field "subject_client_id" { type = "text" not_null = true }
+									Field "provider_client_id" { type = "text" not_null = true }
+										Field "granted_at" { type = "datetime" not_null = true }
+										PrimaryKey ["license_id", "email_lower"]
+										
+									}
+									Down {
+										DropTable "license_authorized_users" { Cascade = true }
+										}
+									}

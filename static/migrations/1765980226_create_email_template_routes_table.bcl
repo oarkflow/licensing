@@ -1,0 +1,22 @@
+Migration "1765980226_create_email_template_routes_table" {
+	Version = "1.0.0"
+	Description = "Create table email_template_routes."
+	Connection = "default"
+	Up {
+		CreateTable "email_template_routes" {
+			Field "id" { type = "text" primary_key = true }
+				Field "template_id" { type = "text" nullable = true foreign_key = { reference_table = "email_templates" reference_field = "id" } index = true }
+						Field "category" { type = "text" nullable = true index = true }
+							Field "provider_id" { type = "text" not_null = true foreign_key = { reference_table = "email_providers" reference_field = "id" } }
+								Field "priority" { type = "integer" not_null = true }
+									Field "retry_limit_override" { type = "integer" nullable = true }
+										Field "enabled" { type = "boolean" not_null = true default = true }
+											Field "created_at" { type = "datetime" not_null = true }
+												Field "updated_at" { type = "datetime" not_null = true }
+													Check "template_or_category_not_null" { Expr = "(template_id IS NOT NULL OR category IS NOT NULL)" }
+												
+													}
+													Down {
+														DropTable "email_template_routes" { Cascade = true }
+														}
+													}

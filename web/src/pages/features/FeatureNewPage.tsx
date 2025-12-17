@@ -34,6 +34,7 @@ export function FeatureNewPage() {
         name: '',
         slug: '',
         description: '',
+        category: '',
         type: 'boolean',
     });
 
@@ -128,6 +129,18 @@ export function FeatureNewPage() {
                             <p className="text-xs text-muted-foreground">
                                 URL-friendly identifier shared with clients (CLI/GUI/API)
                             </p>
+                        </div>
+
+                        <div className="space-y-2">
+                            <Label htmlFor="category">Category</Label>
+                            <Input
+                                id="category"
+                                value={formData.category || ''}
+                                onChange={(e) =>
+                                    setFormData((prev) => ({ ...prev, category: e.target.value }))
+                                }
+                                placeholder="e.g., billing, sync, integrations"
+                            />
                         </div>
 
                         <div className="space-y-2">

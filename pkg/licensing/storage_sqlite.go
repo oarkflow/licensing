@@ -1262,8 +1262,8 @@ func (s *SQLiteStorage) SaveAPIKey(ctx context.Context, key *APIKeyRecord) error
 			  VALUES (?, ?, ?, ?, ?, ?, ?)`
 	_, err := s.db.ExecContext(ctx, query,
 		key.ID,
-		key.UserID,
-		key.ClientID,
+		nullString(key.UserID),
+		nullString(key.ClientID),
 		key.Hash,
 		key.Prefix,
 		key.CreatedAt,
@@ -1284,8 +1284,8 @@ func (s *SQLiteStorage) UpdateAPIKey(ctx context.Context, key *APIKeyRecord) err
 	}
 	query := `UPDATE api_keys SET user_id = ?, client_id = ?, hash = ?, prefix = ?, created_at = ?, last_used_at = ? WHERE id = ?`
 	res, err := s.db.ExecContext(ctx, query,
-		key.UserID,
-		key.ClientID,
+		nullString(key.UserID),
+		nullString(key.ClientID),
 		key.Hash,
 		key.Prefix,
 		key.CreatedAt,
@@ -1321,11 +1321,19 @@ func (s *SQLiteStorage) GetAPIKeyByHash(ctx context.Context, hash string) (*APIK
 	var key APIKeyRecord
 	var createdAt sqliteTimeValue
 	var lastUsed sqliteNullTime
-	if err := row.Scan(&key.ID, &key.UserID, &key.ClientID, &key.Hash, &key.Prefix, &createdAt, &lastUsed); err != nil {
+	var userID sql.NullString
+	var clientID sql.NullString
+	if err := row.Scan(&key.ID, &userID, &clientID, &key.Hash, &key.Prefix, &createdAt, &lastUsed); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, errAPIKeyMissing
 		}
 		return nil, err
+	}
+	if userID.Valid {
+		key.UserID = userID.String
+	}
+	if clientID.Valid {
+		key.ClientID = clientID.String
 	}
 	key.CreatedAt = createdAt.Time
 	if lastUsed.Valid {
@@ -1346,8 +1354,16 @@ func (s *SQLiteStorage) ListAPIKeysByUser(ctx context.Context, userID string) ([
 		var key APIKeyRecord
 		var createdAt sqliteTimeValue
 		var lastUsed sqliteNullTime
-		if err := rows.Scan(&key.ID, &key.UserID, &key.ClientID, &key.Hash, &key.Prefix, &createdAt, &lastUsed); err != nil {
+		var userIDNull sql.NullString
+		var clientIDNull sql.NullString
+		if err := rows.Scan(&key.ID, &userIDNull, &clientIDNull, &key.Hash, &key.Prefix, &createdAt, &lastUsed); err != nil {
 			return nil, err
+		}
+		if userIDNull.Valid {
+			key.UserID = userIDNull.String
+		}
+		if clientIDNull.Valid {
+			key.ClientID = clientIDNull.String
 		}
 		key.CreatedAt = createdAt.Time
 		if lastUsed.Valid {
@@ -1389,8 +1405,16 @@ func (s *SQLiteStorage) ListAPIKeysByClient(ctx context.Context, clientID string
 		var key APIKeyRecord
 		var createdAt sqliteTimeValue
 		var lastUsed sqliteNullTime
-		if err := rows.Scan(&key.ID, &key.UserID, &key.ClientID, &key.Hash, &key.Prefix, &createdAt, &lastUsed); err != nil {
+		var userIDNull sql.NullString
+		var clientIDNull sql.NullString
+		if err := rows.Scan(&key.ID, &userIDNull, &clientIDNull, &key.Hash, &key.Prefix, &createdAt, &lastUsed); err != nil {
 			return nil, err
+		}
+		if userIDNull.Valid {
+			key.UserID = userIDNull.String
+		}
+		if clientIDNull.Valid {
+			key.ClientID = clientIDNull.String
 		}
 		key.CreatedAt = createdAt.Time
 		if lastUsed.Valid {
@@ -1604,6 +1628,7 @@ func (s *SQLiteStorage) ResetTables(ctx context.Context) error {
 		"plans",
 		"feature_scopes",
 		"features",
+		"categories",
 		"products",
 	}
 

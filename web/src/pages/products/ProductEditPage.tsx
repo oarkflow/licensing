@@ -3,6 +3,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useParams, useNavigate } from 'react-router-dom';
 import { ArrowLeft, Package } from 'lucide-react';
 import api from '@/services/api';
+import { normalizeSlug } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import {
     Card,
@@ -35,11 +36,13 @@ export function ProductEditPage() {
         slug: '',
         description: '',
     });
+    const [slugTouched, setSlugTouched] = useState(false);
 
     useEffect(() => {
         if (productResponse?.data) {
             setFormData({
                 name: productResponse.data.name,
+                slug: productResponse.data.slug,
                 description: productResponse.data.description || '',
             });
         }
@@ -106,9 +109,15 @@ export function ProductEditPage() {
                             <Input
                                 id="name"
                                 value={formData.name}
-                                onChange={(e) =>
-                                    setFormData((prev) => ({ ...prev, name: e.target.value }))
-                                }
+                                onChange={(e) => {
+                                    const newName = e.target.value;
+                                    setFormData((prev) => ({ ...prev, name: newName }));
+                                    // Auto-update slug while user hasn't manually edited it
+                                    setFormData((prev) => ({
+                                        ...prev,
+                                        slug: slugTouched ? prev.slug : normalizeSlug(newName),
+                                    }));
+                                }}
                                 placeholder="My Awesome App"
                                 required
                             />
@@ -128,6 +137,22 @@ export function ProductEditPage() {
                                 placeholder="A brief description of your product..."
                                 rows={4}
                             />
+                        </div>
+
+                        <div className="space-y-2">
+                            <Label htmlFor="slug">Slug *</Label>
+                            <Input
+                                id="slug"
+                                value={formData.slug}
+                                onChange={(e) => {
+                                    const normalized = normalizeSlug(e.target.value);
+                                    setSlugTouched(true);
+                                    setFormData((prev) => ({ ...prev, slug: normalized }));
+                                }}
+                                placeholder="product-slug"
+                                required
+                            />
+                            <p className="text-sm text-muted-foreground">URL-friendly identifier (lowercase, dashes). Auto-generated from name unless edited.</p>
                         </div>
 
                         <div className="flex gap-4">

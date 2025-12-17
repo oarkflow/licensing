@@ -1,0 +1,21 @@
+Migration "1765980221_create_activation_records_table" {
+	Version = "1.0.0"
+	Description = "Create table activation_records."
+	Connection = "default"
+	Up {
+		CreateTable "activation_records" {
+			Field "id" { type = "text" primary_key = true }
+				Field "license_id" { type = "text" not_null = true foreign_key = { reference_table = "licenses" reference_field = "id" on_delete = "CASCADE" } index = true }
+						Field "client_id" { type = "text" not_null = true foreign_key = { reference_table = "clients" reference_field = "id" on_delete = "CASCADE" } index = true }
+							Field "device_fingerprint" { type = "text" not_null = true }
+								Field "ip_address" { type = "text" nullable = true }
+									Field "user_agent" { type = "text" nullable = true }
+										Field "success" { type = "boolean" not_null = true }
+											Field "message" { type = "text" nullable = true }
+												Field "timestamp" { type = "datetime" not_null = true }
+													
+														}
+														Down {
+															DropTable "activation_records" { Cascade = true }
+															}
+														}

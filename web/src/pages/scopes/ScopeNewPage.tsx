@@ -39,7 +39,7 @@ export function ScopeNewPage() {
         permission: 'allow',
         limit: '',
         description: '',
-        restrictionType: '',
+        restrictionType: 'none',
         restrictionLimit: '',
         restrictionWindow: '',
     });
@@ -59,7 +59,7 @@ export function ScopeNewPage() {
             if (trimmedDescription) {
                 metadata.description = trimmedDescription;
             }
-            if (formData.restrictionType) {
+            if (formData.restrictionType && formData.restrictionType !== 'none') {
                 metadata.restriction_type = formData.restrictionType;
             }
             if (formData.restrictionLimit !== '' && formData.restrictionLimit !== undefined) {
@@ -124,8 +124,8 @@ export function ScopeNewPage() {
                     <CardDescription>Configure the scope settings</CardDescription>
                 </CardHeader>
                 <CardContent>
-                    <form onSubmit={handleSubmit} className="space-y-6">
-                        <div className="space-y-2">
+                    <form onSubmit={handleSubmit} className="flex flex-wrap space-y-6">
+                        <div className="space-y-2 ">
                             <Label htmlFor="name">Name *</Label>
                             <Input
                                 id="name"
@@ -161,56 +161,54 @@ export function ScopeNewPage() {
                             </p>
                         </div>
 
-                        <div className="grid gap-4 sm:grid-cols-2">
-                            <div className="space-y-2">
-                                <Label htmlFor="permission">Permission</Label>
-                                <Select
-                                    value={formData.permission}
-                                    onValueChange={(value) =>
-                                        setFormData((prev) => ({ ...prev, permission: value }))
-                                    }
-                                >
-                                    <SelectTrigger id="permission">
-                                        <SelectValue />
-                                    </SelectTrigger>
-                                    <SelectContent>
-                                        <SelectItem value="allow">Allow</SelectItem>
-                                        <SelectItem value="deny">Deny</SelectItem>
-                                        <SelectItem value="limit">Limit</SelectItem>
-                                    </SelectContent>
-                                </Select>
-                            </div>
-                            <div className="space-y-2">
-                                <Label htmlFor="limit">Limit</Label>
-                                <Input
-                                    id="limit"
-                                    type="number"
-                                    min="0"
-                                    value={formData.limit || ''}
-                                    disabled={formData.permission !== 'limit'}
-                                    onChange={(e) => {
-                                        const value = e.target.value;
+                        <div className="space-y-2">
+                            <Label htmlFor="permission">Permission</Label>
+                            <Select
+                                value={formData.permission}
+                                onValueChange={(value) =>
+                                    setFormData((prev) => ({ ...prev, permission: value }))
+                                }
+                            >
+                                <SelectTrigger id="permission">
+                                    <SelectValue />
+                                </SelectTrigger>
+                                <SelectContent>
+                                    <SelectItem value="allow">Allow</SelectItem>
+                                    <SelectItem value="deny">Deny</SelectItem>
+                                    <SelectItem value="limit">Limit</SelectItem>
+                                </SelectContent>
+                            </Select>
+                        </div>
+                        <div className="space-y-2">
+                            <Label htmlFor="limit">Limit</Label>
+                            <Input
+                                id="limit"
+                                type="number"
+                                min="0"
+                                value={formData.limit || ''}
+                                disabled={formData.permission !== 'limit'}
+                                onChange={(e) => {
+                                    const value = e.target.value;
+                                    setFormData((prev) => ({
+                                        ...prev,
+                                        limit: value === '' ? undefined : parseInt(value, 10),
+                                    }));
+                                }}
+                                onBlur={(e) => {
+                                    const value = e.target.value;
+                                    if (formData.permission === 'limit' && (value === '' || isNaN(parseInt(value, 10)))) {
                                         setFormData((prev) => ({
                                             ...prev,
-                                            limit: value === '' ? undefined : parseInt(value, 10),
+                                            limit: 0,
                                         }));
-                                    }}
-                                    onBlur={(e) => {
-                                        const value = e.target.value;
-                                        if (formData.permission === 'limit' && (value === '' || isNaN(parseInt(value, 10)))) {
-                                            setFormData((prev) => ({
-                                                ...prev,
-                                                limit: 0,
-                                            }));
-                                        }
-                                    }}
-                                    placeholder={
-                                        formData.permission === 'limit'
-                                            ? 'Maximum allowed operations'
-                                            : 'Set permission to "limit"'
                                     }
-                                />
-                            </div>
+                                }}
+                                placeholder={
+                                    formData.permission === 'limit'
+                                        ? 'Maximum allowed operations'
+                                        : 'Set permission to "limit"'
+                                }
+                            />
                         </div>
 
                         <div className="space-y-2">
@@ -226,50 +224,48 @@ export function ScopeNewPage() {
                             />
                         </div>
 
-                        <div className="grid gap-4 sm:grid-cols-3">
-                            <div className="space-y-2">
-                                <Label htmlFor="restriction_type">Restriction Type</Label>
-                                <Select
-                                    value={formData.restrictionType}
-                                    onValueChange={(value) =>
-                                        setFormData((prev) => ({ ...prev, restrictionType: value }))
-                                    }
-                                >
-                                    <SelectTrigger id="restriction_type">
-                                        <SelectValue />
-                                    </SelectTrigger>
-                                    <SelectContent>
-                                        <SelectItem value="">None</SelectItem>
-                                        <SelectItem value="storage">Storage</SelectItem>
-                                        <SelectItem value="user">User</SelectItem>
-                                        <SelectItem value="device">Device</SelectItem>
-                                    </SelectContent>
-                                </Select>
-                            </div>
-                            <div className="space-y-2">
-                                <Label htmlFor="restriction_limit">Restriction Limit</Label>
-                                <Input
-                                    id="restriction_limit"
-                                    type="number"
-                                    min={0}
-                                    value={formData.restrictionLimit}
-                                    onChange={(e) =>
-                                        setFormData((prev) => ({ ...prev, restrictionLimit: e.target.value }))
-                                    }
-                                />
-                            </div>
-                            <div className="space-y-2">
-                                <Label htmlFor="restriction_window">Window (seconds)</Label>
-                                <Input
-                                    id="restriction_window"
-                                    type="number"
-                                    min={0}
-                                    value={formData.restrictionWindow}
-                                    onChange={(e) =>
-                                        setFormData((prev) => ({ ...prev, restrictionWindow: e.target.value }))
-                                    }
-                                />
-                            </div>
+                        <div className="space-y-2">
+                            <Label htmlFor="restriction_type">Restriction Type</Label>
+                            <Select
+                                value={formData.restrictionType}
+                                onValueChange={(value) =>
+                                    setFormData((prev) => ({ ...prev, restrictionType: value }))
+                                }
+                            >
+                                <SelectTrigger id="restriction_type">
+                                    <SelectValue />
+                                </SelectTrigger>
+                                <SelectContent>
+                                    <SelectItem value="none">None</SelectItem>
+                                    <SelectItem value="storage">Storage</SelectItem>
+                                    <SelectItem value="user">User</SelectItem>
+                                    <SelectItem value="device">Device</SelectItem>
+                                </SelectContent>
+                            </Select>
+                        </div>
+                        <div className="space-y-2">
+                            <Label htmlFor="restriction_limit">Restriction Limit</Label>
+                            <Input
+                                id="restriction_limit"
+                                type="number"
+                                min={0}
+                                value={formData.restrictionLimit}
+                                onChange={(e) =>
+                                    setFormData((prev) => ({ ...prev, restrictionLimit: e.target.value }))
+                                }
+                            />
+                        </div>
+                        <div className="space-y-2">
+                            <Label htmlFor="restriction_window">Window (seconds)</Label>
+                            <Input
+                                id="restriction_window"
+                                type="number"
+                                min={0}
+                                value={formData.restrictionWindow}
+                                onChange={(e) =>
+                                    setFormData((prev) => ({ ...prev, restrictionWindow: e.target.value }))
+                                }
+                            />
                         </div>
 
                         <div className="flex gap-4">

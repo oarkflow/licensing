@@ -1,0 +1,43 @@
+Migration "1765980241_create_audit_logs_table" {
+	Version = "1.0.0"
+	Description = "Create table audit_logs and supporting triggers/indexes."
+	Connection = "default"
+	Up {
+		CreateTable "audit_logs" {
+			Field "id" { type = "text" primary_key = true }
+						Field "type" { type = "text" not_null = true index = true }
+							Field "severity" { type = "text" not_null = true index = true }
+								Field "timestamp" { type = "datetime" not_null = true index = true }
+							Field "actor_id" { type = "text" nullable = true }
+								Field "actor_type" { type = "text" nullable = true }
+									Field "actor_id" { type = "text" nullable = true index = true }
+											Field "resource_id" { type = "text" nullable = true index = true }
+											Field "resource_type" { type = "text" nullable = true }
+												Field "action" { type = "text" not_null = true }
+														Field "result" { type = "text" not_null = true index = true }
+														Field "message" { type = "text" not_null = true }
+															Field "metadata" { type = "text" nullable = true }
+																Field "error_code" { type = "text" nullable = true }
+																	Field "error_message" { type = "text" nullable = true }
+																		Field "session_id" { type = "text" nullable = true }
+																			Field "request_id" { type = "text" nullable = true }
+																				Field "user_agent" { type = "text" nullable = true }
+																					Field "location" { type = "text" nullable = true }
+																						Field "hash" { type = "text" nullable = true index = true }
+																							Field "signature" { type = "text" nullable = true }
+																								Field "prev_hash" { type = "text" nullable = true }
+																									Field "created_at" { type = "datetime" nullable = true }
+																									}
+																			
+																			
+																			
+																			
+																			
+																			
+																			
+																																-- Triggers to make audit logs immutable are DDL-level; include as raw SQL in migrations if supported by runtime.
+																															}
+																															Down {
+																																DropTable "audit_logs" { Cascade = true }
+																																}
+																															}

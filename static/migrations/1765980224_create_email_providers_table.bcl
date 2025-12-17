@@ -1,0 +1,31 @@
+Migration "1765980224_create_email_providers_table" {
+	Version = "1.0.0"
+	Description = "Create table email_providers."
+	Connection = "default"
+	Up {
+		CreateTable "email_providers" {
+			Field "id" { type = "text" primary_key = true }
+				Field "name" { type = "text" not_null = true }
+					Field "slug" { type = "text" not_null = true }
+						Field "slug_lower" { type = "text" not_null = true unique = true }
+							Field "type" { type = "text" not_null = true }
+								Field "config" { type = "text" not_null = true }
+									Field "priority" { type = "integer" not_null = true default = 100 }
+										Field "max_retries" { type = "integer" not_null = true default = 3 }
+											Field "retry_base_ms" { type = "integer" not_null = true default = 1000 }
+												Field "retry_max_ms" { type = "integer" not_null = true default = 60000 }
+													Field "retry_jitter_pct" { type = "real" not_null = true default = 0.25 }
+														Field "is_default" { type = "boolean" not_null = true default = false }
+															Field "enabled" { type = "boolean" not_null = true default = true }
+																Field "success_count" { type = "integer" not_null = true default = 0 }
+																	Field "failure_count" { type = "integer" not_null = true default = 0 }
+																		Field "metadata" { type = "text" nullable = true }
+																			Field "created_at" { type = "datetime" not_null = true }
+																				Field "updated_at" { type = "datetime" not_null = true }
+																				}
+
+																				}
+																				Down {
+																					DropTable "email_providers" { Cascade = true }
+																					}
+																				}

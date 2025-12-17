@@ -1,0 +1,33 @@
+Migration "1765980239_create_subscriptions_table" {
+	Version = "1.0.0"
+	Description = "Create table subscriptions."
+	Connection = "default"
+	Up {
+		CreateTable "subscriptions" {
+			Field "id" { type = "text" primary_key = true }
+				Field "client_id" { type = "text" not_null = true foreign_key = { reference_table = "clients" reference_field = "id" on_delete = "CASCADE" } index = true }
+						Field "product_id" { type = "text" not_null = true foreign_key = { reference_table = "products" reference_field = "id" on_delete = "CASCADE" } index = true }
+							Field "plan_id" { type = "text" not_null = true foreign_key = { reference_table = "plans" reference_field = "id" on_delete = "CASCADE" } index = true }
+								Field "license_id" { type = "text" nullable = true foreign_key = { reference_table = "licenses" reference_field = "id" on_delete = "SET NULL" } }
+								Field "status" { type = "text" not_null = true default = "pending" }
+									Field "start_date" { type = "datetime" not_null = true }
+										Field "end_date" { type = "datetime" not_null = true }
+											Field "billing_cycle" { type = "text" not_null = true default = "monthly" }
+												Field "next_billing_date" { type = "datetime" nullable = true }
+													Field "cancelled_at" { type = "datetime" nullable = true }
+														Field "cancel_reason" { type = "text" nullable = true }
+															Field "created_at" { type = "datetime" not_null = true }
+																Field "updated_at" { type = "datetime" not_null = true }
+
+
+
+
+																				}
+														
+														
+														
+																						}
+																						Down {
+																							DropTable "subscriptions" { Cascade = true }
+																							}
+																						}

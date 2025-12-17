@@ -1,0 +1,20 @@
+Migration "1765980238_create_plan_features_table" {
+	Version = "1.0.0"
+	Description = "Create table plan_features."
+	Connection = "default"
+	Up {
+		CreateTable "plan_features" {
+			Field "id" { type = "text" primary_key = true }
+				Field "plan_id" { type = "text" not_null = true foreign_key = { reference_table = "plans" reference_field = "id" on_delete = "CASCADE" } index = true }
+						Field "feature_id" { type = "text" not_null = true foreign_key = { reference_table = "features" reference_field = "id" on_delete = "CASCADE" } index = true }
+							Field "enabled" { type = "boolean" not_null = true default = true }
+								Field "scope_overrides" { type = "text" nullable = true }
+									Field "created_at" { type = "datetime" not_null = true }
+										Field "updated_at" { type = "datetime" not_null = true }
+										Unique ["plan_id", "feature_id"]
+										
+												}
+												Down {
+													DropTable "plan_features" { Cascade = true }
+													}
+												}

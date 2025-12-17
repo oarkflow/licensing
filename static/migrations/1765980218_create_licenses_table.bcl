@@ -1,0 +1,33 @@
+Migration "1765980218_create_licenses_table" {
+	Version = "1.0.0"
+	Description = "Create table licenses."
+	Connection = "default"
+	Up {
+		CreateTable "licenses" {
+			Field "id" { type = "text" primary_key = true }
+				Field "client_id" { type = "text" not_null = true foreign_key = { reference_table = "clients" reference_field = "id" on_delete = "CASCADE" } index = true }
+					Field "email" { type = "text" not_null = true }
+						Field "plan_slug" { type = "text" not_null = true }
+							Field "license_key" { type = "text" not_null = true }
+								Field "license_key_norm" { type = "text" not_null = true unique = true }
+									Field "is_revoked" { type = "boolean" default = false }
+										Field "revoked_at" { type = "datetime" nullable = true }
+											Field "revoke_reason" { type = "text" nullable = true }
+												Field "is_activated" { type = "boolean" default = false }
+													Field "issued_at" { type = "datetime" not_null = true }
+														Field "last_activated_at" { type = "datetime" nullable = true }
+															Field "expires_at" { type = "datetime" not_null = true }
+																Field "current_activations" { type = "integer" default = 0 }
+																	Field "max_devices" { type = "integer" default = 0 }
+																		Field "check_mode" { type = "text" default = "yearly" }
+																			Field "check_interval_seconds" { type = "integer" default = 0 }
+																				Field "next_check_at" { type = "datetime" nullable = true }
+																					Field "last_check_at" { type = "datetime" nullable = true }
+							
+																						}
+																
+																						}
+																						Down {
+																							DropTable "licenses" { Cascade = true }
+																							}
+																						}

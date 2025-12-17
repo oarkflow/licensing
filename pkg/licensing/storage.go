@@ -13,6 +13,7 @@ import (
 	"time"
 
 	email "github.com/oarkflow/licensing/pkg/email"
+	"github.com/oarkflow/licensing/pkg/utils"
 )
 
 type Storage interface {
@@ -2016,16 +2017,9 @@ func BuildStorageFromEnv() (Storage, string, error) {
 	mode := strings.ToLower(strings.TrimSpace(os.Getenv("LICENSE_SERVER_STORAGE")))
 	switch mode {
 	case "", "sqlite", "sql", "sqlite3":
-		path := strings.TrimSpace(os.Getenv("LICENSE_SERVER_STORAGE_SQLITE_PATH"))
-		if path == "" {
-			// Default to ~/.licensing/data/licensing.db
-			homeDir, err := os.UserHomeDir()
-			if err != nil {
-				return nil, "", fmt.Errorf("failed to get home directory: %w", err)
-			}
-			path = filepath.Join(homeDir, ".licensing", "data", "licensing.db")
-		} else {
-			path = filepath.Clean(path)
+		path, err := utils.GetDBPath("LICENSE_SERVER_STORAGE_SQLITE_PATH", ".licensing", "data", "licensing.db")
+		if err != nil {
+			return nil, "", fmt.Errorf("failed to get home directory: %w", err)
 		}
 		storage, err := NewSQLiteStorage(path)
 		if err != nil {

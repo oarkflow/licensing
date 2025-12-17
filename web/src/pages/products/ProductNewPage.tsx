@@ -90,9 +90,15 @@ export function ProductNewPage() {
                             <Input
                                 id="name"
                                 value={formData.name}
-                                onChange={(e) =>
-                                    setFormData((prev) => ({ ...prev, name: e.target.value }))
-                                }
+                                onChange={(e) => {
+                                    const newName = e.target.value;
+                                    setFormData((prev) => ({ ...prev, name: newName }));
+                                    // Auto-update slug while user hasn't manually edited it
+                                    setFormData((prev) => ({
+                                        ...prev,
+                                        slug: slugTouched ? prev.slug : normalizeSlug(newName),
+                                    }));
+                                }}
                                 placeholder="My Awesome App"
                                 required
                             />

@@ -1,0 +1,21 @@
+Migration "1765980237_create_feature_scopes_table" {
+	Version = "1.0.0"
+	Description = "Create table feature_scopes."
+	Connection = "default"
+	Up {
+		CreateTable "feature_scopes" {
+			Field "id" { type = "text" primary_key = true }
+				Field "feature_id" { type = "text" not_null = true foreign_key = { reference_table = "features" reference_field = "id" on_delete = "CASCADE" } index = true }
+						Field "name" { type = "text" not_null = true }
+							Field "slug" { type = "text" not_null = true }
+								Field "permission" { type = "text" not_null = true default = "allow" }
+									Field "scope_limit" { type = "integer" not_null = true default = 0 }
+										Field "metadata" { type = "text" nullable = true }
+											Field "created_at" { type = "datetime" not_null = true }
+												Field "updated_at" { type = "datetime" not_null = true }
+						
+												}
+												Down {
+													DropTable "feature_scopes" { Cascade = true }
+													}
+												}

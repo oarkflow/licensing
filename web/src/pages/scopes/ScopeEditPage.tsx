@@ -49,7 +49,7 @@ export function ScopeEditPage() {
         permission: 'allow',
         limit: '',
         description: '',
-        restrictionType: '',
+        restrictionType: 'none',
         restrictionLimit: '',
         restrictionWindow: '',
     });
@@ -65,7 +65,7 @@ export function ScopeEditPage() {
                         ? String(scope.limit)
                         : '',
                 description: scope.metadata?.description || '',
-                restrictionType: scope.metadata?.restriction_type || '',
+                restrictionType: scope.metadata?.restriction_type || 'none',
                 restrictionLimit: scope.metadata?.restriction_limit || '',
                 restrictionWindow: scope.metadata?.restriction_window_seconds || '',
             });
@@ -85,7 +85,7 @@ export function ScopeEditPage() {
             // Determine if metadata has changed (description or restriction fields)
             const trimmedDescription = formData.description.trim();
             const origDescription = scope?.metadata?.description || '';
-            const origRestrictionType = scope?.metadata?.restriction_type || '';
+            const origRestrictionType = scope?.metadata?.restriction_type || 'none';
             const origRestrictionLimit = scope?.metadata?.restriction_limit || '';
             const origRestrictionWindow = scope?.metadata?.restriction_window_seconds || '';
 
@@ -98,7 +98,7 @@ export function ScopeEditPage() {
             if (metadataChanged) {
                 const newMetadata: Record<string, string> = {};
                 if (trimmedDescription) newMetadata.description = trimmedDescription;
-                if (formData.restrictionType) newMetadata.restriction_type = formData.restrictionType;
+                if (formData.restrictionType && formData.restrictionType !== 'none') newMetadata.restriction_type = formData.restrictionType;
                 if (formData.restrictionLimit !== '' && formData.restrictionLimit !== undefined) newMetadata.restriction_limit = String(formData.restrictionLimit);
                 if (formData.restrictionWindow !== '' && formData.restrictionWindow !== undefined) newMetadata.restriction_window_seconds = String(formData.restrictionWindow);
                 // If user cleared all metadata-related fields, newMetadata will be empty which signals clearing metadata
@@ -265,7 +265,7 @@ export function ScopeEditPage() {
                                         <SelectValue />
                                     </SelectTrigger>
                                     <SelectContent>
-                                        <SelectItem value="">None</SelectItem>
+                                        <SelectItem value="none">None</SelectItem>
                                         <SelectItem value="storage">Storage</SelectItem>
                                         <SelectItem value="user">User</SelectItem>
                                         <SelectItem value="device">Device</SelectItem>

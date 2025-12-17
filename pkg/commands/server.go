@@ -1,75 +1,66 @@
-package main
+package commands
 
 import (
 	"context"
 	"flag"
 	"fmt"
+	"io/fs"
 	"log"
 	"os"
 	"sort"
 	"strings"
 	"time"
 
-	email "github.com/oarkflow/licensing/pkg/email"
+	"github.com/oarkflow/cli/contracts"
 	"github.com/oarkflow/licensing/pkg/licensing"
 	"github.com/oarkflow/licensing/pkg/utils"
 	"github.com/oarkflow/licensing/pkg/web"
 )
 
-// ==================== Main ====================
+type Server struct {
+	app      contracts.Cli
+	publicFs fs.FS
+}
 
-func main() {
-	os.Setenv("LICENSE_SERVER_ALLOW_INSECURE_HTTP", "true")
+func NewServer(app contracts.Cli, publicFs fs.FS) *Server {
+	return &Server{app: app, publicFs: publicFs}
+}
 
-	// Check for help flag in any position
-	for _, arg := range os.Args[1:] {
-		if arg == "--help" || arg == "-h" || arg == "help" {
-			printUsage()
-			return
-		}
+func (s *Server) Signature() string {
+	return "serve"
+}
+
+func (s *Server) Description() string {
+	return "Start server"
+}
+
+func (s *Server) Extend() contracts.Extend {
+	return contracts.Extend{}
+}
+
+func (s *Server) Handle(ctx contracts.Context) error {
+	err := s.Serve()
+	if err != nil {
+		log.Fatalf("Failed to start server: %v", err)
 	}
+	return err
+}
 
-	// Find the first non-flag argument as the command
-	var command string
-	for i, arg := range os.Args[1:] {
-		if !strings.HasPrefix(arg, "-") {
-			command = arg
-			// Shift args to remove the command for flag parsing
-			if i > 0 {
-				os.Args = append(os.Args[:1], os.Args[i+1:]...)
-			} else {
-				os.Args = os.Args[1:]
-			}
-			break
-		}
-	}
-
-	// Execute command
-	switch command {
-	case "seed":
-		runSeedCommand()
-	case "reset":
-		runResetCommand()
-	case "server", "":
-		runServerCommand()
-	case "--help", "-h", "help":
-		printUsage()
+func envBool(key string) bool {
+	val := strings.ToLower(strings.TrimSpace(os.Getenv(key)))
+	switch val {
+	case "1", "true", "yes", "on":
+		return true
 	default:
-		runServerCommand()
+		return false
 	}
 }
 
-func printUsage() {
-	fmt.Println("Usage:")
-	fmt.Println("  licensing-server server    - Start the license server")
-	fmt.Println("  licensing-server seed      - Seed the database with plans, features, and scopes")
-	fmt.Println("  licensing-server reset     - Reset and reseed the database")
-	fmt.Println()
-	fmt.Println("Server options:")
-	flag.PrintDefaults()
+func shouldBootstrapDemoData() bool {
+	return envBool("LICENSE_SERVER_BOOTSTRAP_DEMO")
 }
 
-func runServerCommand() {
+func (s *Server) Serve() error {
 	httpServer := flag.String("http-addr", ":6601", "HTTP server address")
 	defaultAllowInsecure := envBool("LICENSE_SERVER_ALLOW_INSECURE_HTTP")
 	allowInsecureHTTP := flag.Bool("allow-insecure-http", defaultAllowInsecure, "Allow HTTP without TLS (development only)")
@@ -160,174 +151,7 @@ func runServerCommand() {
 	server.SetSessionValidator(webServer) // Enable session-based auth for API endpoints
 	log.Printf("🖥️  Web Admin UI available at %s", *httpServer)
 
-	// Start HTTP server
-	if err := server.Start(); err != nil {
-		log.Fatalf("Server error: %v", err)
-	}
-}
-
-func shouldBootstrapDemoData() bool {
-	flag := strings.TrimSpace(os.Getenv("LICENSE_SERVER_BOOTSTRAP_DEMO"))
-	if flag == "" {
-		return false
-	}
-	switch strings.ToLower(flag) {
-	case "1", "true", "yes", "on":
-		return true
-	default:
-		return false
-	}
-}
-
-func runSeedCommand() {
-	fmt.Println("╔═══════════════════════════════════════════╗")
-	fmt.Println("║    License Manager - Seed Database        ║")
-	fmt.Println("╚═══════════════════════════════════════════╝")
-	fmt.Println()
-
-	ctx := context.Background()
-	storage, storageMode, err := licensing.BuildStorageFromEnv()
-	if err != nil {
-		log.Fatalf("Failed to configure storage: %v", err)
-	}
-
-	log.Printf("📦 Storage backend: %s", storageMode)
-
-	if err := seedDatabase(ctx, storage); err != nil {
-		log.Fatalf("Failed to seed database: %v", err)
-	}
-
-	log.Printf("✅ Database seeded successfully")
-}
-
-func runResetCommand() {
-	fmt.Println("╔═══════════════════════════════════════════╗")
-	fmt.Println("║    License Manager - Reset Database       ║")
-	fmt.Println("╚═══════════════════════════════════════════╝")
-	fmt.Println()
-
-	ctx := context.Background()
-	storage, storageMode, err := licensing.BuildStorageFromEnv()
-	if err != nil {
-		log.Fatalf("Failed to configure storage: %v", err)
-	}
-
-	log.Printf("📦 Storage backend: %s", storageMode)
-
-	// Reset database (clear existing data)
-	if err := resetDatabase(ctx, storage); err != nil {
-		log.Fatalf("Failed to reset database: %v", err)
-	}
-
-	// Seed fresh data
-	if err := seedDatabase(ctx, storage); err != nil {
-		log.Fatalf("Failed to seed database after reset: %v", err)
-	}
-
-	log.Printf("✅ Database reset and seeded successfully")
-}
-
-func seedDatabase(ctx context.Context, storage licensing.Storage) error {
-	log.Printf("🧩 Seeding Secretr catalog...")
-
-	catalog, err := licensing.BootstrapSecretrProduct(ctx, storage)
-	if err != nil {
-		return fmt.Errorf("bootstrap Secretr catalog: %w", err)
-	}
-
-	log.Printf("✅ Seeded Secretr catalog (%d features / %d plans)", len(catalog.Features), len(catalog.Plans))
-
-	// Seed default email provider
-	if err := seedDefaultEmailProvider(ctx, storage); err != nil {
-		log.Printf("⚠️ Failed to seed default email provider: %v", err)
-	} else {
-		log.Printf("✅ Seeded default email provider")
-	}
-
-	return nil
-}
-
-func seedDefaultEmailProvider(ctx context.Context, storage licensing.Storage) error {
-	// Check if any email providers already exist
-	providers, err := storage.ListEmailProviders(ctx, true)
-	if err != nil {
-		return fmt.Errorf("check existing email providers: %w", err)
-	}
-
-	if len(providers) > 0 {
-		log.Printf("📧 Email providers already exist, skipping default provider creation")
-		return nil
-	}
-
-	// Create a default SMTP provider for development/testing
-	defaultProvider := &email.EmailProvider{
-		ID:   "default-smtp",
-		Name: "Default SMTP",
-		Slug: "default-smtp",
-		Type: email.ProviderTypeSMTP,
-		Config: map[string]any{
-			"host":            "localhost",
-			"port":            1025,
-			"username":        "your-email@gmail.com",
-			"password":        "your-app-password",
-			"from_email":      "noreply@yourdomain.com",
-			"from_name":       "Licensing System",
-			"use_tls":         false,
-			"start_tls":       false,
-			"skip_tls_verify": true, // For development
-			"timeout_seconds": 30,
-		},
-		Priority:       100,
-		MaxRetries:     3,
-		RetryBaseMS:    1000,
-		RetryMaxMS:     60000,
-		RetryJitterPct: 0.25,
-		IsDefault:      true,
-		Enabled:        false, // Disabled by default for security
-		Metadata: map[string]string{
-			"description": "Default SMTP provider - configure credentials and enable for email functionality",
-		},
-		CreatedAt: time.Now(),
-		UpdatedAt: time.Now(),
-	}
-
-	if err := storage.SaveEmailProvider(ctx, defaultProvider); err != nil {
-		return fmt.Errorf("save default email provider: %w", err)
-	}
-
-	log.Printf("📧 Created default SMTP email provider (disabled by default)")
-	log.Printf("   To enable: Configure SMTP credentials and set enabled=true")
-	log.Printf("   Web UI: /messaging/providers")
-
-	return nil
-}
-
-func resetDatabase(ctx context.Context, storage licensing.Storage) error {
-	log.Printf("🗑️  Resetting database...")
-
-	// For SQLite, we can recreate tables by dropping and recreating
-	// For other storage backends, this might need different implementation
-	if sqliteStorage, ok := storage.(*licensing.SQLiteStorage); ok {
-		if err := sqliteStorage.ResetTables(ctx); err != nil {
-			return fmt.Errorf("reset SQLite tables: %w", err)
-		}
-	} else {
-		log.Printf("⚠️  Reset not implemented for storage type: %T", storage)
-		log.Printf("   Manual reset may be required")
-	}
-
-	log.Printf("✅ Database reset complete")
-	return nil
-}
-
-func envBool(key string) bool {
-	val := strings.ToLower(strings.TrimSpace(os.Getenv(key)))
-	switch val {
-	case "1", "true", "yes", "on":
-		return true
-	default:
-		return false
-	}
+	return server.Start()
 }
 
 func resolveDefaultCheckPolicyFromEnv() (licensing.LicenseCheckMode, time.Duration, error) {
@@ -505,9 +329,10 @@ func createDemoData(ctx context.Context, lm *licensing.LicenseManager) error {
 					}
 
 					permIcon := "✅"
-					if scope.Permission == licensing.ScopePermissionDeny {
+					switch scope.Permission {
+					case licensing.ScopePermissionDeny:
 						permIcon = "❌"
-					} else if scope.Permission == licensing.ScopePermissionLimit {
+					case licensing.ScopePermissionLimit:
 						permIcon = "⚠️"
 					}
 

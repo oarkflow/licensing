@@ -93,7 +93,8 @@ const defaultFeatureForm: FeatureFormState = {
     name: '',
     slug: '',
     description: '',
-    category: 'cli',
+    category: '',
+    type: 'boolean',
 };
 
 const defaultScopeForm: ScopeFormState = {
@@ -102,7 +103,7 @@ const defaultScopeForm: ScopeFormState = {
     permission: 'allow',
     limit: '',
     description: '',
-    restrictionType: '',
+    restrictionType: 'none',
     restrictionLimit: '',
     restrictionWindow: '',
 };
@@ -239,6 +240,7 @@ export function ProductFeaturesManagerPage() {
                 slug: payload.slug.trim(),
                 description: payload.description?.trim(),
                 category: payload.category?.trim(),
+                type: payload.type || 'boolean',
             } as any),
         onSuccess: (response) => {
             if (!response.success) {
@@ -274,7 +276,7 @@ export function ProductFeaturesManagerPage() {
             const description = (payload.description || '').trim();
             const metadata: Record<string, string> = {};
             if (description) metadata.description = description;
-            if (payload.restrictionType) metadata.restriction_type = payload.restrictionType;
+            if (payload.restrictionType && payload.restrictionType !== 'none') metadata.restriction_type = payload.restrictionType;
             if (payload.restrictionLimit !== undefined && payload.restrictionLimit !== '') metadata.restriction_limit = String(payload.restrictionLimit);
             if (payload.restrictionWindow !== undefined && payload.restrictionWindow !== '') metadata.restriction_window_seconds = String(payload.restrictionWindow);
             if (Object.keys(metadata).length > 0) scopePayload.metadata = metadata;
@@ -363,7 +365,7 @@ export function ProductFeaturesManagerPage() {
             const description = (payload.data.description || '').trim();
             const metadata: Record<string, string> = {};
             if (description) metadata.description = description;
-            if (payload.data.restrictionType) metadata.restriction_type = payload.data.restrictionType;
+            if (payload.data.restrictionType && payload.data.restrictionType !== 'none') metadata.restriction_type = payload.data.restrictionType;
             if (payload.data.restrictionLimit !== undefined && payload.data.restrictionLimit !== '') metadata.restriction_limit = String(payload.data.restrictionLimit);
             if (payload.data.restrictionWindow !== undefined && payload.data.restrictionWindow !== '') metadata.restriction_window_seconds = String(payload.data.restrictionWindow);
             if (Object.keys(metadata).length > 0) scopePayload.metadata = metadata;
@@ -484,7 +486,7 @@ export function ProductFeaturesManagerPage() {
                             <DialogHeader>
                                 <DialogTitle>Create Feature</DialogTitle>
                                 <DialogDescription>
-                                    Add a new CLI, GUI, or API capability to this product.
+                                    Add a new feature to this product.
                                 </DialogDescription>
                             </DialogHeader>
                             <form onSubmit={handleCreateFeature} className="space-y-4">
@@ -536,7 +538,7 @@ export function ProductFeaturesManagerPage() {
                                         onChange={(e) =>
                                             setFeatureForm((prev) => ({ ...prev, category: e.target.value }))
                                         }
-                                        placeholder="cli / gui / api"
+                                        placeholder="e.g., billing, sync, integrations"
                                     />
                                     <div className="flex flex-wrap gap-2">
                                         {suggestedCategories.map((category) => (
@@ -557,6 +559,25 @@ export function ProductFeaturesManagerPage() {
                                             </Button>
                                         ))}
                                     </div>
+                                </div>
+
+                                <div className="space-y-2">
+                                    <Label htmlFor="feature-type">Type *</Label>
+                                    <Select
+                                        value={featureForm.type}
+                                        onValueChange={(value: 'boolean' | 'metered' | 'scoped') =>
+                                            setFeatureForm((prev) => ({ ...prev, type: value }))
+                                        }
+                                    >
+                                        <SelectTrigger id="feature-type">
+                                            <SelectValue />
+                                        </SelectTrigger>
+                                        <SelectContent>
+                                            <SelectItem value="boolean">Boolean (On/Off)</SelectItem>
+                                            <SelectItem value="metered">Metered (Usage-based)</SelectItem>
+                                            <SelectItem value="scoped">Scoped (With sub-permissions)</SelectItem>
+                                        </SelectContent>
+                                    </Select>
                                 </div>
                                 <div className="space-y-2">
                                     <Label htmlFor="feature-description">Description</Label>
@@ -874,7 +895,7 @@ export function ProductFeaturesManagerPage() {
                                                     </div>
                                                 </div>
                                                 {/* Row 2: Description and Actions */}
-                                                <div className="flex gap-2 items-end">
+                                                <div className="flex flex-wrap gap-2 items-start">
                                                     <div className="flex-1 space-y-1">
                                                         <Label htmlFor="form-scope-description" className="text-xs">Description</Label>
                                                         <Textarea
@@ -888,46 +909,44 @@ export function ProductFeaturesManagerPage() {
                                                             className="resize-none text-xs"
                                                         />
                                                     </div>
-                                                    <div className="grid gap-4 sm:grid-cols-3">
-                                                        <div className="space-y-1">
-                                                            <Label htmlFor="form-restriction-type" className="text-xs">Restriction Type</Label>
-                                                            <Select
-                                                                value={scopeForm.restrictionType}
-                                                                onValueChange={(value: any) => setScopeForm((prev) => ({ ...prev, restrictionType: value }))}
-                                                            >
-                                                                <SelectTrigger id="form-restriction-type" className="h-8 text-xs">
-                                                                    <SelectValue />
-                                                                </SelectTrigger>
-                                                                <SelectContent>
-                                                                    <SelectItem value="">None</SelectItem>
-                                                                    <SelectItem value="storage">Storage</SelectItem>
-                                                                    <SelectItem value="user">User</SelectItem>
-                                                                    <SelectItem value="device">Device</SelectItem>
-                                                                </SelectContent>
-                                                            </Select>
-                                                        </div>
-                                                        <div className="space-y-1">
-                                                            <Label htmlFor="form-restriction-limit" className="text-xs">Restriction Limit</Label>
-                                                            <Input
-                                                                id="form-restriction-limit"
-                                                                type="number"
-                                                                min={0}
-                                                                value={scopeForm.restrictionLimit ?? ''}
-                                                                onChange={(e) => setScopeForm((prev) => ({ ...prev, restrictionLimit: e.target.value }))}
-                                                                className="h-8 text-sm w-24"
-                                                            />
-                                                        </div>
-                                                        <div className="space-y-1">
-                                                            <Label htmlFor="form-restriction-window" className="text-xs">Window (seconds)</Label>
-                                                            <Input
-                                                                id="form-restriction-window"
-                                                                type="number"
-                                                                min={0}
-                                                                value={scopeForm.restrictionWindow ?? ''}
-                                                                onChange={(e) => setScopeForm((prev) => ({ ...prev, restrictionWindow: e.target.value }))}
-                                                                className="h-8 text-sm w-32"
-                                                            />
-                                                        </div>
+                                                    <div className="space-y-1">
+                                                        <Label htmlFor="form-restriction-type" className="text-xs">Restriction Type</Label>
+                                                        <Select
+                                                            value={scopeForm.restrictionType}
+                                                            onValueChange={(value: any) => setScopeForm((prev) => ({ ...prev, restrictionType: value }))}
+                                                        >
+                                                            <SelectTrigger id="form-restriction-type" className="h-8 text-xs">
+                                                                <SelectValue />
+                                                            </SelectTrigger>
+                                                            <SelectContent>
+                                                                <SelectItem value="none">None</SelectItem>
+                                                                <SelectItem value="storage">Storage</SelectItem>
+                                                                <SelectItem value="user">User</SelectItem>
+                                                                <SelectItem value="device">Device</SelectItem>
+                                                            </SelectContent>
+                                                        </Select>
+                                                    </div>
+                                                    <div className="space-y-1">
+                                                        <Label htmlFor="form-restriction-limit" className="text-xs">Restriction Limit</Label>
+                                                        <Input
+                                                            id="form-restriction-limit"
+                                                            type="number"
+                                                            min={0}
+                                                            value={scopeForm.restrictionLimit ?? ''}
+                                                            onChange={(e) => setScopeForm((prev) => ({ ...prev, restrictionLimit: e.target.value }))}
+                                                            className="h-8 text-sm w-24"
+                                                        />
+                                                    </div>
+                                                    <div className="space-y-1">
+                                                        <Label htmlFor="form-restriction-window" className="text-xs">Window (seconds)</Label>
+                                                        <Input
+                                                            id="form-restriction-window"
+                                                            type="number"
+                                                            min={0}
+                                                            value={scopeForm.restrictionWindow ?? ''}
+                                                            onChange={(e) => setScopeForm((prev) => ({ ...prev, restrictionWindow: e.target.value }))}
+                                                            className="h-8 text-sm w-32"
+                                                        />
                                                     </div>
                                                     <div className="flex gap-2">
                                                         <Button

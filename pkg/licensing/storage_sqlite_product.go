@@ -50,10 +50,10 @@ func ensureProductSchema(db *squealx.DB) error {
 			slug_key TEXT NOT NULL UNIQUE,
 			description TEXT,
 			price INTEGER NOT NULL DEFAULT 0,
-			min_devices INTEGER NOT NULL DEFAULT 1,
-			price_per_device INTEGER NOT NULL DEFAULT 0,
+			duration_days INTEGER NOT NULL DEFAULT 0,
 			currency TEXT NOT NULL DEFAULT 'USD',
 			billing_cycle TEXT NOT NULL DEFAULT 'monthly',
+			price_unit TEXT,
 			trial_days INTEGER NOT NULL DEFAULT 0,
 			is_trial INTEGER NOT NULL DEFAULT 0,
 			is_active INTEGER NOT NULL DEFAULT 1,
@@ -71,6 +71,7 @@ func ensureProductSchema(db *squealx.DB) error {
 			slug_key TEXT NOT NULL UNIQUE,
 			description TEXT,
 			category TEXT,
+			type TEXT,
 			created_at TIMESTAMP NOT NULL,
 			updated_at TIMESTAMP NOT NULL,
 			FOREIGN KEY(product_id) REFERENCES products(id) ON DELETE CASCADE
@@ -119,6 +120,16 @@ func ensureProductSchema(db *squealx.DB) error {
 			FOREIGN KEY(plan_id) REFERENCES plans(id) ON DELETE CASCADE,
 			FOREIGN KEY(license_id) REFERENCES licenses(id) ON DELETE SET NULL
 		);`,
+		`CREATE TABLE IF NOT EXISTS categories (
+			id TEXT PRIMARY KEY,
+			product_id TEXT NOT NULL,
+			name TEXT NOT NULL,
+			slug TEXT NOT NULL,
+			created_at TIMESTAMP NOT NULL,
+			updated_at TIMESTAMP NOT NULL,
+			FOREIGN KEY(product_id) REFERENCES products(id) ON DELETE CASCADE
+		);`,
+		`CREATE INDEX IF NOT EXISTS idx_categories_product_id ON categories(product_id);`,
 		`CREATE INDEX IF NOT EXISTS idx_plans_product_id ON plans(product_id);`,
 		`CREATE INDEX IF NOT EXISTS idx_features_product_id ON features(product_id);`,
 		`CREATE INDEX IF NOT EXISTS idx_feature_scopes_feature_id ON feature_scopes(feature_id);`,
@@ -134,16 +145,13 @@ func ensureProductSchema(db *squealx.DB) error {
 		}
 	}
 
-	// Migration: add is_trial column to plans if it doesn't exist
+	// Migration: ensure duration_days and is_trial columns exist
 	rows, err := db.Query("PRAGMA table_info(plans);")
 	if err != nil {
 		return fmt.Errorf("failed to check plans table info: %w", err)
 	}
 	hasIsTrialColumn := false
-	hasMinDevicesColumn := false
-	hasMaxDevicesColumn := false
 	hasDurationDaysColumn := false
-	hasPricePerDeviceColumn := false
 	for rows.Next() {
 		var cid int
 		var name, ctype string
@@ -156,17 +164,8 @@ func ensureProductSchema(db *squealx.DB) error {
 		if name == "is_trial" {
 			hasIsTrialColumn = true
 		}
-		if name == "min_devices" {
-			hasMinDevicesColumn = true
-		}
-		if name == "max_devices" {
-			hasMaxDevicesColumn = true
-		}
 		if name == "duration_days" {
 			hasDurationDaysColumn = true
-		}
-		if name == "price_per_device" {
-			hasPricePerDeviceColumn = true
 		}
 	}
 	rows.Close()
@@ -176,32 +175,62 @@ func ensureProductSchema(db *squealx.DB) error {
 			return fmt.Errorf("failed to add is_trial column: %w", err)
 		}
 	}
-
-	// Migration: add min_devices column to plans if it doesn't exist
-	if !hasMinDevicesColumn {
-		if _, err := db.Exec(`ALTER TABLE plans ADD COLUMN min_devices INTEGER NOT NULL DEFAULT 1;`); err != nil {
-			return fmt.Errorf("failed to add min_devices column: %w", err)
-		}
-	}
-
-	// Migration: add max_devices column to plans if it doesn't exist
-	if !hasMaxDevicesColumn {
-		if _, err := db.Exec(`ALTER TABLE plans ADD COLUMN max_devices INTEGER NOT NULL DEFAULT 0;`); err != nil {
-			return fmt.Errorf("failed to add max_devices column: %w", err)
-		}
-	}
-
-	// Migration: add duration_days column to plans if it doesn't exist
 	if !hasDurationDaysColumn {
 		if _, err := db.Exec(`ALTER TABLE plans ADD COLUMN duration_days INTEGER NOT NULL DEFAULT 0;`); err != nil {
 			return fmt.Errorf("failed to add duration_days column: %w", err)
 		}
 	}
+	// Migration: add price_unit column to plans if it doesn't exist
+	rows, err = db.Query("PRAGMA table_info(plans);")
+	if err != nil {
+		return fmt.Errorf("failed to check plans table info for price_unit: %w", err)
+	}
+	hasPriceUnitColumn := false
+	for rows.Next() {
+		var cid int
+		var name, ctype string
+		var notnull, pk int
+		var dfltValue interface{}
+		if err := rows.Scan(&cid, &name, &ctype, &notnull, &dfltValue, &pk); err != nil {
+			rows.Close()
+			return fmt.Errorf("failed to scan table info: %w", err)
+		}
+		if name == "price_unit" {
+			hasPriceUnitColumn = true
+		}
+	}
+	rows.Close()
 
-	// Migration: add price_per_device column to plans if it doesn't exist
-	if !hasPricePerDeviceColumn {
-		if _, err := db.Exec(`ALTER TABLE plans ADD COLUMN price_per_device INTEGER NOT NULL DEFAULT 0;`); err != nil {
-			return fmt.Errorf("failed to add price_per_device column: %w", err)
+	if !hasPriceUnitColumn {
+		if _, err := db.Exec(`ALTER TABLE plans ADD COLUMN price_unit TEXT;`); err != nil {
+			return fmt.Errorf("failed to add price_unit column to plans: %w", err)
+		}
+	}
+
+	// Migration: add type column to features if it doesn't exist
+	rows, err = db.Query("PRAGMA table_info(features);")
+	if err != nil {
+		return fmt.Errorf("failed to check features table info: %w", err)
+	}
+	hasTypeColumn := false
+	for rows.Next() {
+		var cid int
+		var name, ctype string
+		var notnull, pk int
+		var dfltValue interface{}
+		if err := rows.Scan(&cid, &name, &ctype, &notnull, &dfltValue, &pk); err != nil {
+			rows.Close()
+			return fmt.Errorf("failed to scan table info: %w", err)
+		}
+		if name == "type" {
+			hasTypeColumn = true
+		}
+	}
+	rows.Close()
+
+	if !hasTypeColumn {
+		if _, err := db.Exec(`ALTER TABLE features ADD COLUMN type TEXT;`); err != nil {
+			return fmt.Errorf("failed to add type column to features: %w", err)
 		}
 	}
 
@@ -361,16 +390,11 @@ func (s *SQLiteStorage) SavePlan(ctx context.Context, plan *Plan) error {
 		plan.Price = 0
 	}
 
-	// Default min_devices to 1 if not specified
-	if plan.MinDevices < 1 {
-		plan.MinDevices = 1
-	}
-
-	query := `INSERT INTO plans (id, product_id, name, slug, slug_key, description, price, min_devices, max_devices, duration_days, price_per_device, currency, billing_cycle, trial_days, is_trial, is_active, display_order, metadata, created_at, updated_at)
-			  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+	query := `INSERT INTO plans (id, product_id, name, slug, slug_key, description, price, duration_days, currency, billing_cycle, price_unit, trial_days, is_trial, is_active, display_order, metadata, created_at, updated_at)
+			  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 	_, err = s.db.ExecContext(ctx, query,
 		plan.ID, plan.ProductID, plan.Name, plan.Slug, slugKey,
-		plan.Description, plan.Price, plan.MinDevices, plan.MaxDevices, plan.DurationDays, plan.PricePerDevice, plan.Currency, plan.BillingCycle,
+		plan.Description, plan.Price, plan.DurationDays, plan.Currency, plan.BillingCycle, plan.PriceUnit,
 		plan.TrialDays, plan.IsTrial, plan.IsActive, plan.DisplayOrder, string(metadataJSON),
 		plan.CreatedAt, plan.UpdatedAt)
 	if err != nil {
@@ -399,15 +423,10 @@ func (s *SQLiteStorage) UpdatePlan(ctx context.Context, plan *Plan) error {
 		plan.Price = 0
 	}
 
-	// Default min_devices to 1 if not specified
-	if plan.MinDevices < 1 {
-		plan.MinDevices = 1
-	}
-
-	query := `UPDATE plans SET product_id=?, name=?, slug=?, slug_key=?, description=?, price=?, min_devices=?, max_devices=?, duration_days=?, price_per_device=?, currency=?, billing_cycle=?, trial_days=?, is_trial=?, is_active=?, display_order=?, metadata=?, updated_at=? WHERE id=?`
+	query := `UPDATE plans SET product_id=?, name=?, slug=?, slug_key=?, description=?, price=?, duration_days=?, currency=?, billing_cycle=?, price_unit=?, trial_days=?, is_trial=?, is_active=?, display_order=?, metadata=?, updated_at=? WHERE id=?`
 	result, err := s.db.ExecContext(ctx, query,
 		plan.ProductID, plan.Name, plan.Slug, slugKey,
-		plan.Description, plan.Price, plan.MinDevices, plan.MaxDevices, plan.DurationDays, plan.PricePerDevice, plan.Currency, plan.BillingCycle,
+		plan.Description, plan.Price, plan.DurationDays, plan.Currency, plan.BillingCycle, plan.PriceUnit,
 		plan.TrialDays, plan.IsTrial, plan.IsActive, plan.DisplayOrder, string(metadataJSON),
 		plan.UpdatedAt, plan.ID)
 	if err != nil {
@@ -424,26 +443,26 @@ func (s *SQLiteStorage) UpdatePlan(ctx context.Context, plan *Plan) error {
 }
 
 func (s *SQLiteStorage) GetPlan(ctx context.Context, planID string) (*Plan, error) {
-	query := `SELECT id, product_id, name, slug, description, price, min_devices, max_devices, duration_days, price_per_device, currency, billing_cycle, trial_days, is_trial, is_active, display_order, metadata, created_at, updated_at FROM plans WHERE id=?`
+	query := `SELECT id, product_id, name, slug, description, price, duration_days, currency, billing_cycle, price_unit, trial_days, is_trial, is_active, display_order, metadata, created_at, updated_at FROM plans WHERE id=?`
 	row := s.db.QueryRowContext(ctx, query, planID)
 	return s.scanPlan(row)
 }
 
 func (s *SQLiteStorage) GetPlanBySlug(ctx context.Context, productID, slug string) (*Plan, error) {
 	slugKey := productID + ":" + strings.ToLower(slug)
-	query := `SELECT id, product_id, name, slug, description, price, min_devices, max_devices, duration_days, price_per_device, currency, billing_cycle, trial_days, is_trial, is_active, display_order, metadata, created_at, updated_at FROM plans WHERE slug_key=?`
+	query := `SELECT id, product_id, name, slug, description, price, duration_days, currency, billing_cycle, price_unit, trial_days, is_trial, is_active, display_order, metadata, created_at, updated_at FROM plans WHERE slug_key=?`
 	row := s.db.QueryRowContext(ctx, query, slugKey)
 	return s.scanPlan(row)
 }
 
 func (s *SQLiteStorage) FindPlanBySlug(ctx context.Context, slug string) (*Plan, error) {
-	query := `SELECT id, product_id, name, slug, description, price, min_devices, max_devices, duration_days, price_per_device, currency, billing_cycle, trial_days, is_trial, is_active, display_order, metadata, created_at, updated_at FROM plans WHERE LOWER(slug)=LOWER(?) LIMIT 1`
+	query := `SELECT id, product_id, name, slug, description, price, duration_days, currency, billing_cycle, price_unit, trial_days, is_trial, is_active, display_order, metadata, created_at, updated_at FROM plans WHERE LOWER(slug)=LOWER(?) LIMIT 1`
 	row := s.db.QueryRowContext(ctx, query, slug)
 	return s.scanPlan(row)
 }
 
 func (s *SQLiteStorage) ListPlansByProduct(ctx context.Context, productID string) ([]*Plan, error) {
-	query := `SELECT id, product_id, name, slug, description, price, min_devices, max_devices, duration_days, price_per_device, currency, billing_cycle, trial_days, is_trial, is_active, display_order, metadata, created_at, updated_at FROM plans WHERE product_id=? ORDER BY display_order, name`
+	query := `SELECT id, product_id, name, slug, description, price, duration_days, currency, billing_cycle, price_unit, trial_days, is_trial, is_active, display_order, metadata, created_at, updated_at FROM plans WHERE product_id=? ORDER BY display_order, name`
 	rows, err := s.db.QueryContext(ctx, query, productID)
 	if err != nil {
 		return nil, err
@@ -461,7 +480,7 @@ func (s *SQLiteStorage) ListPlansByProduct(ctx context.Context, productID string
 }
 
 func (s *SQLiteStorage) GetTrialPlanForProduct(ctx context.Context, productID string) (*Plan, error) {
-	query := `SELECT id, product_id, name, slug, description, price, min_devices, max_devices, duration_days, price_per_device, currency, billing_cycle, trial_days, is_trial, is_active, display_order, metadata, created_at, updated_at FROM plans WHERE product_id=? AND is_trial=1 LIMIT 1`
+	query := `SELECT id, product_id, name, slug, description, price, duration_days, currency, billing_cycle, price_unit, trial_days, is_trial, is_active, display_order, metadata, created_at, updated_at FROM plans WHERE product_id=? AND is_trial=1 LIMIT 1`
 	row := s.db.QueryRowContext(ctx, query, productID)
 	return s.scanPlan(row)
 }
@@ -484,8 +503,9 @@ func (s *SQLiteStorage) scanPlan(scanner productRowScanner) (*Plan, error) {
 	var description sql.NullString
 	var metadataJSON sql.NullString
 	var createdAt, updatedAt sqliteTimeValue
+	var priceUnit sql.NullString
 	err := scanner.Scan(&plan.ID, &plan.ProductID, &plan.Name, &plan.Slug, &description,
-		&plan.Price, &plan.MinDevices, &plan.MaxDevices, &plan.DurationDays, &plan.PricePerDevice, &plan.Currency, &plan.BillingCycle, &plan.TrialDays, &plan.IsTrial,
+		&plan.Price, &plan.DurationDays, &plan.Currency, &plan.BillingCycle, &priceUnit, &plan.TrialDays, &plan.IsTrial,
 		&plan.IsActive, &plan.DisplayOrder, &metadataJSON,
 		&createdAt, &updatedAt)
 	if err == sql.ErrNoRows {
@@ -497,12 +517,11 @@ func (s *SQLiteStorage) scanPlan(scanner productRowScanner) (*Plan, error) {
 	plan.Description = description.String
 	plan.CreatedAt = createdAt.Time
 	plan.UpdatedAt = updatedAt.Time
+	if priceUnit.Valid {
+		plan.PriceUnit = priceUnit.String
+	}
 	if metadataJSON.Valid && metadataJSON.String != "" {
 		json.Unmarshal([]byte(metadataJSON.String), &plan.Metadata)
-	}
-	// Default min_devices to 1 if not set
-	if plan.MinDevices < 1 {
-		plan.MinDevices = 1
 	}
 	return plan, nil
 }
@@ -512,8 +531,9 @@ func (s *SQLiteStorage) scanPlanRow(scanner productRowScanner) (*Plan, error) {
 	var description sql.NullString
 	var metadataJSON sql.NullString
 	var createdAt, updatedAt sqliteTimeValue
+	var priceUnit sql.NullString
 	err := scanner.Scan(&plan.ID, &plan.ProductID, &plan.Name, &plan.Slug, &description,
-		&plan.Price, &plan.MinDevices, &plan.MaxDevices, &plan.DurationDays, &plan.PricePerDevice, &plan.Currency, &plan.BillingCycle, &plan.TrialDays, &plan.IsTrial,
+		&plan.Price, &plan.DurationDays, &plan.Currency, &plan.BillingCycle, &priceUnit, &plan.TrialDays, &plan.IsTrial,
 		&plan.IsActive, &plan.DisplayOrder, &metadataJSON,
 		&createdAt, &updatedAt)
 	if err != nil {
@@ -522,12 +542,11 @@ func (s *SQLiteStorage) scanPlanRow(scanner productRowScanner) (*Plan, error) {
 	plan.Description = description.String
 	plan.CreatedAt = createdAt.Time
 	plan.UpdatedAt = updatedAt.Time
+	if priceUnit.Valid {
+		plan.PriceUnit = priceUnit.String
+	}
 	if metadataJSON.Valid && metadataJSON.String != "" {
 		json.Unmarshal([]byte(metadataJSON.String), &plan.Metadata)
-	}
-	// Default min_devices to 1 if not set
-	if plan.MinDevices < 1 {
-		plan.MinDevices = 1
 	}
 	return plan, nil
 }
@@ -545,11 +564,11 @@ func (s *SQLiteStorage) SaveFeature(ctx context.Context, feature *Feature) error
 	feature.UpdatedAt = now
 	slugKey := feature.ProductID + ":" + strings.ToLower(feature.Slug)
 
-	query := `INSERT INTO features (id, product_id, name, slug, slug_key, description, category, created_at, updated_at)
-			  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+	query := `INSERT INTO features (id, product_id, name, slug, slug_key, description, category, type, created_at, updated_at)
+			  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 	_, err := s.db.ExecContext(ctx, query,
 		feature.ID, feature.ProductID, feature.Name, feature.Slug, slugKey,
-		feature.Description, feature.Category,
+		feature.Description, feature.Category, feature.Type,
 		feature.CreatedAt, feature.UpdatedAt)
 	if err != nil {
 		if strings.Contains(err.Error(), "UNIQUE constraint failed") {
@@ -567,10 +586,10 @@ func (s *SQLiteStorage) UpdateFeature(ctx context.Context, feature *Feature) err
 	feature.UpdatedAt = time.Now()
 	slugKey := feature.ProductID + ":" + strings.ToLower(feature.Slug)
 
-	query := `UPDATE features SET product_id=?, name=?, slug=?, slug_key=?, description=?, category=?, updated_at=? WHERE id=?`
+	query := `UPDATE features SET product_id=?, name=?, slug=?, slug_key=?, description=?, category=?, type=?, updated_at=? WHERE id=?`
 	result, err := s.db.ExecContext(ctx, query,
 		feature.ProductID, feature.Name, feature.Slug, slugKey,
-		feature.Description, feature.Category,
+		feature.Description, feature.Category, feature.Type,
 		feature.UpdatedAt, feature.ID)
 	if err != nil {
 		if strings.Contains(err.Error(), "UNIQUE constraint failed") {
@@ -586,12 +605,12 @@ func (s *SQLiteStorage) UpdateFeature(ctx context.Context, feature *Feature) err
 }
 
 func (s *SQLiteStorage) GetFeature(ctx context.Context, featureID string) (*Feature, error) {
-	query := `SELECT id, product_id, name, slug, description, category, created_at, updated_at FROM features WHERE id=?`
+	query := `SELECT id, product_id, name, slug, description, category, type, created_at, updated_at FROM features WHERE id=?`
 	row := s.db.QueryRowContext(ctx, query, featureID)
 	feature := &Feature{}
-	var description, category sql.NullString
+	var description, category, typ sql.NullString
 	var createdAt, updatedAt sqliteTimeValue
-	err := row.Scan(&feature.ID, &feature.ProductID, &feature.Name, &feature.Slug, &description, &category, &createdAt, &updatedAt)
+	err := row.Scan(&feature.ID, &feature.ProductID, &feature.Name, &feature.Slug, &description, &category, &typ, &createdAt, &updatedAt)
 	if err == sql.ErrNoRows {
 		return nil, errFeatureMissing
 	}
@@ -600,6 +619,7 @@ func (s *SQLiteStorage) GetFeature(ctx context.Context, featureID string) (*Feat
 	}
 	feature.Description = description.String
 	feature.Category = category.String
+	feature.Type = typ.String
 	feature.CreatedAt = createdAt.Time
 	feature.UpdatedAt = updatedAt.Time
 	return feature, nil
@@ -607,12 +627,12 @@ func (s *SQLiteStorage) GetFeature(ctx context.Context, featureID string) (*Feat
 
 func (s *SQLiteStorage) GetFeatureBySlug(ctx context.Context, productID, slug string) (*Feature, error) {
 	slugKey := productID + ":" + strings.ToLower(slug)
-	query := `SELECT id, product_id, name, slug, description, category, created_at, updated_at FROM features WHERE slug_key=?`
+	query := `SELECT id, product_id, name, slug, description, category, type, created_at, updated_at FROM features WHERE slug_key=?`
 	row := s.db.QueryRowContext(ctx, query, slugKey)
 	feature := &Feature{}
-	var description, category sql.NullString
+	var description, category, typ sql.NullString
 	var createdAt, updatedAt sqliteTimeValue
-	err := row.Scan(&feature.ID, &feature.ProductID, &feature.Name, &feature.Slug, &description, &category, &createdAt, &updatedAt)
+	err := row.Scan(&feature.ID, &feature.ProductID, &feature.Name, &feature.Slug, &description, &category, &typ, &createdAt, &updatedAt)
 	if err == sql.ErrNoRows {
 		return nil, errFeatureMissing
 	}
@@ -621,13 +641,14 @@ func (s *SQLiteStorage) GetFeatureBySlug(ctx context.Context, productID, slug st
 	}
 	feature.Description = description.String
 	feature.Category = category.String
+	feature.Type = typ.String
 	feature.CreatedAt = createdAt.Time
 	feature.UpdatedAt = updatedAt.Time
 	return feature, nil
 }
 
 func (s *SQLiteStorage) ListFeaturesByProduct(ctx context.Context, productID string) ([]*Feature, error) {
-	query := `SELECT id, product_id, name, slug, description, category, created_at, updated_at FROM features WHERE product_id=? ORDER BY category, name`
+	query := `SELECT id, product_id, name, slug, description, category, type, created_at, updated_at FROM features WHERE product_id=? ORDER BY category, name`
 	rows, err := s.db.QueryContext(ctx, query, productID)
 	if err != nil {
 		return nil, err
@@ -636,13 +657,14 @@ func (s *SQLiteStorage) ListFeaturesByProduct(ctx context.Context, productID str
 	features := make([]*Feature, 0)
 	for rows.Next() {
 		feature := &Feature{}
-		var description, category sql.NullString
+		var description, category, typ sql.NullString
 		var createdAt, updatedAt sqliteTimeValue
-		if err := rows.Scan(&feature.ID, &feature.ProductID, &feature.Name, &feature.Slug, &description, &category, &createdAt, &updatedAt); err != nil {
+		if err := rows.Scan(&feature.ID, &feature.ProductID, &feature.Name, &feature.Slug, &description, &category, &typ, &createdAt, &updatedAt); err != nil {
 			return nil, err
 		}
 		feature.Description = description.String
 		feature.Category = category.String
+		feature.Type = typ.String
 		feature.CreatedAt = createdAt.Time
 		feature.UpdatedAt = updatedAt.Time
 		features = append(features, feature)
