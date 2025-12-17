@@ -38,7 +38,7 @@ import (
 
 func main() {
 	// Command line flags
-	serverURL := flag.String("server", "https://localhost:6601", "License server URL (use HTTPS in production)")
+	serverURL := flag.String("server", "http://localhost:6601", "License server URL (use HTTPS in production)")
 	licenseKey := flag.String("license-key", "", "License key for activation")
 	email := flag.String("email", "", "Email for activation")
 	clientID := flag.String("client-id", "", "Client ID for activation")

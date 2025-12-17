@@ -18,6 +18,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -1124,6 +1125,26 @@ func (lm *LicenseManager) computeTrialEntitlements(ctx context.Context, productI
 				ScopeSlug:  scope.Slug,
 				Permission: ScopePermissionAllow, // Allow all for trial
 				Metadata:   scope.Metadata,
+			}
+
+			// Populate optional Restrictions from scope metadata for trial entitlements as well
+			if scope.Metadata != nil {
+				if t, ok := scope.Metadata["restriction_type"]; ok && strings.TrimSpace(t) != "" {
+					sr := ScopeRestriction{Type: UsageRestrictionType(strings.TrimSpace(t))}
+					if v, ok := scope.Metadata["restriction_limit"]; ok {
+						if n, err := strconv.Atoi(strings.TrimSpace(v)); err == nil {
+							sr.Limit = n
+						}
+					}
+					if v, ok := scope.Metadata["restriction_window_seconds"]; ok {
+						if n, err := strconv.Atoi(strings.TrimSpace(v)); err == nil {
+							sr.WindowSeconds = n
+						}
+					}
+					sg := scopeGrants[scope.Slug]
+					sg.Restrictions = append(sg.Restrictions, sr)
+					scopeGrants[scope.Slug] = sg
+				}
 			}
 		}
 

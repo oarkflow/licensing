@@ -10,6 +10,7 @@ import {
     verifySignature,
 } from "../src/crypto.js";
 import { decryptStoredLicense, StoredLicenseFile } from "../src/license.js";
+import { canPerformWithContext } from "../src/license.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -83,3 +84,47 @@ activationPayload.device_fingerprint = storedLicense.device_fingerprint;
 assert.deepStrictEqual(activationPayload, licenseData, "activation payload differs");
 
 console.log("TypeScript SDK fixture verification passed ✅");
+
+// Additional restriction checks
+const testLicense: any = {
+    entitlements: {
+        features: {
+            file: {
+                enabled: true,
+                scopes: {
+                    basic_storage: {
+                        scope_slug: 'basic_storage',
+                        permission: 'limit',
+                        limit: 0,
+                        restrictions: [{ type: 'storage', limit: 10 }]
+                    },
+                    export: {
+                        scope_slug: 'export',
+                        permission: 'limit',
+                        limit: 0,
+                        restrictions: [
+                            { type: 'device', limit: 2 },
+                            { type: 'user', limit: 3 }
+                        ]
+                    }
+                }
+            }
+        }
+    }
+};
+
+const res1 = canPerformWithContext(testLicense, 'file', 'basic_storage', { subjectType: 'storage', amount: 5 });
+if (!res1.allowed) throw new Error('expected allowed for storage amount 5');
+const res2 = canPerformWithContext(testLicense, 'file', 'basic_storage', { subjectType: 'storage', amount: 15 });
+if (res2.allowed) throw new Error('expected denied for storage amount 15');
+
+const dev1 = canPerformWithContext(testLicense, 'file', 'export', { subjectType: 'device', subjectID: 'dev1', amount: 1 });
+if (!dev1.allowed) throw new Error('device 1 should be allowed');
+const dev2 = canPerformWithContext(testLicense, 'file', 'export', { subjectType: 'device', subjectID: 'dev1', amount: 3 });
+if (dev2.allowed) throw new Error('device 3 should be denied');
+const user1 = canPerformWithContext(testLicense, 'file', 'export', { subjectType: 'user', subjectID: 'u1', amount: 2 });
+if (!user1.allowed) throw new Error('user 2 should be allowed');
+const user2 = canPerformWithContext(testLicense, 'file', 'export', { subjectType: 'user', subjectID: 'u1', amount: 4 });
+if (user2.allowed) throw new Error('user 4 should be denied');
+
+console.log('TypeScript SDK restriction checks passed ✅');

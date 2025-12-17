@@ -219,3 +219,42 @@ func TestBinaryLicenseFile(t *testing.T) {
 	}
 	t.Logf("✓ license.dat decrypted: %s (plan: %s)", license.ID, license.PlanSlug)
 }
+
+func TestCanPerformWithContextSDK(t *testing.T) {
+	lic := LicenseData{}
+	lic.Entitlements = &LicenseEntitlements{Features: map[string]FeatureGrant{
+		"file": {
+			Enabled: true,
+			Scopes: map[string]ScopeGrant{
+				"basic_storage": {ScopeSlug: "basic_storage", Permission: ScopePermissionLimit, Limit: 0, Restrictions: []ScopeRestriction{{Type: UsageRestrictionStorage, Limit: 10}}},
+				"export":        {ScopeSlug: "export", Permission: ScopePermissionLimit, Limit: 0, Restrictions: []ScopeRestriction{{Type: UsageRestrictionDevice, Limit: 2}, {Type: UsageRestrictionUser, Limit: 3}}},
+			},
+		},
+	}}
+
+	ok, _, _ := lic.CanPerformWithContext("file", "basic_storage", UsageContext{SubjectType: SubjectTypeStorage, Amount: 5})
+	if !ok {
+		t.Fatal("expected allowed for storage amount 5")
+	}
+	ok, _, reason := lic.CanPerformWithContext("file", "basic_storage", UsageContext{SubjectType: SubjectTypeStorage, Amount: 15})
+	if ok {
+		t.Fatalf("expected denied for storage amount 15 (%v)", reason)
+	}
+
+	ok, _, _ = lic.CanPerformWithContext("file", "export", UsageContext{SubjectType: SubjectTypeDevice, SubjectID: "dev1", Amount: 1})
+	if !ok {
+		t.Fatal("device 1 should be allowed")
+	}
+	ok, _, _ = lic.CanPerformWithContext("file", "export", UsageContext{SubjectType: SubjectTypeDevice, SubjectID: "dev1", Amount: 3})
+	if ok {
+		t.Fatal("device 3 should be denied")
+	}
+	ok, _, _ = lic.CanPerformWithContext("file", "export", UsageContext{SubjectType: SubjectTypeUser, SubjectID: "user1", Amount: 2})
+	if !ok {
+		t.Fatal("user 2 should be allowed")
+	}
+	ok, _, _ = lic.CanPerformWithContext("file", "export", UsageContext{SubjectType: SubjectTypeUser, SubjectID: "user1", Amount: 4})
+	if ok {
+		t.Fatal("user 4 should be denied")
+	}
+}

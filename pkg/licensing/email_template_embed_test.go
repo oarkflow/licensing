@@ -35,6 +35,7 @@ func TestEmailTemplateLoaderEmbedded(t *testing.T) {
 	}
 
 	if !strings.Contains(html, "Test User") {
+		t.Logf("Rendered html:\n%s", html)
 		t.Error("Rendered embedded template doesn't contain expected content")
 	}
 }

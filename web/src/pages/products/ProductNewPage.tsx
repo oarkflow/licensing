@@ -3,6 +3,7 @@ import { useMutation } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
 import { ArrowLeft, Package } from 'lucide-react';
 import api from '@/services/api';
+import { normalizeSlug } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import {
     Card,
@@ -26,6 +27,8 @@ export function ProductNewPage() {
         slug: '',
         description: '',
     });
+    // track whether user edited slug manually; if false, slug will auto-update from name
+    const [slugTouched, setSlugTouched] = useState(false);
 
     const createMutation = useMutation({
         mutationFn: (data: CreateProductRequest) => api.createProduct(data),
@@ -48,7 +51,12 @@ export function ProductNewPage() {
 
     const handleSubmit = (e: React.FormEvent) => {
         e.preventDefault();
-        createMutation.mutate(formData);
+        // ensure slug exists (generate from name if not present)
+        setFormData((prev) => ({
+            ...prev,
+            slug: prev.slug || normalizeSlug(prev.name),
+        }));
+        createMutation.mutate({ ...formData, slug: formData.slug || normalizeSlug(formData.name) });
     };
 
     return (
@@ -106,10 +114,26 @@ export function ProductNewPage() {
                             />
                         </div>
 
+                        <div className="space-y-2">
+                            <Label htmlFor="slug">Slug *</Label>
+                            <Input
+                                id="slug"
+                                value={formData.slug}
+                                onChange={(e) => {
+                                    const normalized = normalizeSlug(e.target.value);
+                                    setSlugTouched(true);
+                                    setFormData((prev) => ({ ...prev, slug: normalized }));
+                                }}
+                                placeholder="product-slug"
+                                required
+                            />
+                            <p className="text-sm text-muted-foreground">URL-friendly identifier (lowercase, dashes). Auto-generated from name unless edited.</p>
+                        </div>
+
                         <div className="flex gap-4">
                             <Button
                                 type="submit"
-                                disabled={createMutation.isPending || !formData.name}
+                                disabled={createMutation.isPending || !formData.name || !formData.slug}
                             >
                                 {createMutation.isPending ? 'Creating...' : 'Create Product'}
                             </Button>

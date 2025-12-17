@@ -40,6 +40,25 @@ export interface ScopeGrant {
     permission: ScopePermission;
     limit?: number;
     metadata?: Record<string, unknown>;
+    // Optional usage restrictions emitted by the server
+    restrictions?: ScopeRestriction[];
+}
+
+export type UsageRestrictionType = 'storage' | 'user' | 'device';
+
+export interface ScopeRestriction {
+    type: UsageRestrictionType;
+    limit?: number;
+    window_seconds?: number;
+    metadata?: Record<string, unknown>;
+}
+
+export type SubjectType = 'storage' | 'user' | 'device';
+
+export interface UsageContext {
+    subjectType?: SubjectType;
+    subjectID?: string;
+    amount?: number; // amount requested (1 means single unit)
 }
 
 export interface FeatureGrant {

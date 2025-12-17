@@ -49,6 +49,9 @@ export function ScopeEditPage() {
         permission: 'allow',
         limit: '',
         description: '',
+        restrictionType: '',
+        restrictionLimit: '',
+        restrictionWindow: '',
     });
 
     useEffect(() => {
@@ -62,6 +65,9 @@ export function ScopeEditPage() {
                         ? String(scope.limit)
                         : '',
                 description: scope.metadata?.description || '',
+                restrictionType: scope.metadata?.restriction_type || '',
+                restrictionLimit: scope.metadata?.restriction_limit || '',
+                restrictionWindow: scope.metadata?.restriction_window_seconds || '',
             });
         }
     }, [scope]);
@@ -76,11 +82,27 @@ export function ScopeEditPage() {
             if (formData.permission === 'limit' && formData.limit) {
                 payload.limit = Number(formData.limit);
             }
+            // Determine if metadata has changed (description or restriction fields)
             const trimmedDescription = formData.description.trim();
-            if (trimmedDescription) {
-                payload.metadata = { description: trimmedDescription };
-            } else if (scope?.metadata?.description) {
-                payload.metadata = {};
+            const origDescription = scope?.metadata?.description || '';
+            const origRestrictionType = scope?.metadata?.restriction_type || '';
+            const origRestrictionLimit = scope?.metadata?.restriction_limit || '';
+            const origRestrictionWindow = scope?.metadata?.restriction_window_seconds || '';
+
+            let metadataChanged = false;
+            if (trimmedDescription !== origDescription) metadataChanged = true;
+            if (formData.restrictionType !== origRestrictionType) metadataChanged = true;
+            if (String(formData.restrictionLimit) !== origRestrictionLimit) metadataChanged = true;
+            if (String(formData.restrictionWindow) !== origRestrictionWindow) metadataChanged = true;
+
+            if (metadataChanged) {
+                const newMetadata: Record<string, string> = {};
+                if (trimmedDescription) newMetadata.description = trimmedDescription;
+                if (formData.restrictionType) newMetadata.restriction_type = formData.restrictionType;
+                if (formData.restrictionLimit !== '' && formData.restrictionLimit !== undefined) newMetadata.restriction_limit = String(formData.restrictionLimit);
+                if (formData.restrictionWindow !== '' && formData.restrictionWindow !== undefined) newMetadata.restriction_window_seconds = String(formData.restrictionWindow);
+                // If user cleared all metadata-related fields, newMetadata will be empty which signals clearing metadata
+                payload.metadata = newMetadata;
             }
             return api.updateScope(productId!, featureId!, scopeId!, payload);
         },
@@ -228,6 +250,52 @@ export function ScopeEditPage() {
                                 placeholder="What this scope allows..."
                                 rows={3}
                             />
+                        </div>
+
+                        <div className="grid gap-4 sm:grid-cols-3">
+                            <div className="space-y-2">
+                                <Label htmlFor="restriction_type">Restriction Type</Label>
+                                <Select
+                                    value={formData.restrictionType}
+                                    onValueChange={(value) =>
+                                        setFormData((prev) => ({ ...prev, restrictionType: value }))
+                                    }
+                                >
+                                    <SelectTrigger id="restriction_type">
+                                        <SelectValue />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                        <SelectItem value="">None</SelectItem>
+                                        <SelectItem value="storage">Storage</SelectItem>
+                                        <SelectItem value="user">User</SelectItem>
+                                        <SelectItem value="device">Device</SelectItem>
+                                    </SelectContent>
+                                </Select>
+                            </div>
+                            <div className="space-y-2">
+                                <Label htmlFor="restriction_limit">Restriction Limit</Label>
+                                <Input
+                                    id="restriction_limit"
+                                    type="number"
+                                    min={0}
+                                    value={formData.restrictionLimit}
+                                    onChange={(e) =>
+                                        setFormData((prev) => ({ ...prev, restrictionLimit: e.target.value }))
+                                    }
+                                />
+                            </div>
+                            <div className="space-y-2">
+                                <Label htmlFor="restriction_window">Window (seconds)</Label>
+                                <Input
+                                    id="restriction_window"
+                                    type="number"
+                                    min={0}
+                                    value={formData.restrictionWindow}
+                                    onChange={(e) =>
+                                        setFormData((prev) => ({ ...prev, restrictionWindow: e.target.value }))
+                                    }
+                                />
+                            </div>
                         </div>
 
                         <div className="flex gap-4">

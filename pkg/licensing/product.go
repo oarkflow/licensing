@@ -156,6 +156,25 @@ type ScopeGrant struct {
 	Permission ScopePermission   `json:"permission"`
 	Limit      int               `json:"limit,omitempty"`
 	Metadata   map[string]string `json:"metadata,omitempty"`
+	// Restrictions express usage-limiting constraints intended for clients to enforce.
+	Restrictions []ScopeRestriction `json:"restrictions,omitempty"`
+}
+
+// UsageRestrictionType enumerates supported restriction kinds.
+type UsageRestrictionType string
+
+const (
+	UsageRestrictionStorage UsageRestrictionType = "storage"
+	UsageRestrictionUser    UsageRestrictionType = "user"
+	UsageRestrictionDevice  UsageRestrictionType = "device"
+)
+
+// ScopeRestriction describes a usage restriction that a client can enforce.
+type ScopeRestriction struct {
+	Type          UsageRestrictionType `json:"type"`
+	Limit         int                  `json:"limit,omitempty"`
+	WindowSeconds int                  `json:"window_seconds,omitempty"`
+	Metadata      map[string]string    `json:"metadata,omitempty"`
 }
 
 // ==================== Helper Functions ====================

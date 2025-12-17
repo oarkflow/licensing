@@ -190,6 +190,72 @@ final class License
         return ['allowed' => true, 'limit' => $scope['limit'] ?? 0];
     }
 
+    /**
+     * Evaluate scope restrictions against a usage context.
+     * Context is an array with optional keys: subject_type ('storage'|'user'|'device'), subject_id, amount (int)
+     * Returns ['allowed'=>bool, 'limit'=>int, 'reason'=>string|null]
+     *
+     * @param array<string,mixed> $license
+     * @param string $featureSlug
+     * @param string $scopeSlug
+     * @param array<string,mixed> $ctx
+     * @return array{allowed:bool, limit:int, reason:string|null}
+     */
+    public static function canPerformWithContext(array $license, string $featureSlug, string $scopeSlug, array $ctx): array
+    {
+        $scope = self::getScope($license, $featureSlug, $scopeSlug);
+        if ($scope === null) {
+            return ['allowed' => false, 'limit' => 0, 'reason' => 'scope not granted'];
+        }
+        if (($scope['permission'] ?? 'deny') === 'deny') {
+            return ['allowed' => false, 'limit' => 0, 'reason' => 'scope denied'];
+        }
+
+        $effectiveLimit = $scope['limit'] ?? 0;
+
+        if (!isset($scope['restrictions']) || !is_array($scope['restrictions']) || count($scope['restrictions']) === 0) {
+            $amount = isset($ctx['amount']) ? (int) $ctx['amount'] : 0;
+            if (($scope['permission'] ?? '') === 'limit' && $effectiveLimit > 0 && $amount > $effectiveLimit) {
+                return ['allowed' => false, 'limit' => $effectiveLimit, 'reason' => 'exceeds configured limit'];
+            }
+            return ['allowed' => true, 'limit' => $effectiveLimit, 'reason' => null];
+        }
+
+        $amount = isset($ctx['amount']) ? (int) $ctx['amount'] : 1;
+        $subjectType = $ctx['subject_type'] ?? null;
+
+        foreach ($scope['restrictions'] as $r) {
+            $rtype = $r['type'] ?? '';
+            $rlimit = isset($r['limit']) ? (int) $r['limit'] : 0;
+            if ($rtype === 'storage') {
+                if ($subjectType === null || $subjectType === 'storage') {
+                    if ($rlimit > 0 && $amount > $rlimit) {
+                        return ['allowed' => false, 'limit' => $rlimit, 'reason' => 'storage limit exceeded'];
+                    }
+                    if ($effectiveLimit === 0 || ($rlimit > 0 && $rlimit < $effectiveLimit)) $effectiveLimit = $rlimit ?: $effectiveLimit;
+                }
+            }
+            if ($rtype === 'user') {
+                if ($subjectType === 'user') {
+                    if ($rlimit > 0 && $amount > $rlimit) {
+                        return ['allowed' => false, 'limit' => $rlimit, 'reason' => 'user limit exceeded'];
+                    }
+                    if ($effectiveLimit === 0 || ($rlimit > 0 && $rlimit < $effectiveLimit)) $effectiveLimit = $rlimit ?: $effectiveLimit;
+                }
+            }
+            if ($rtype === 'device') {
+                if ($subjectType === 'device') {
+                    if ($rlimit > 0 && $amount > $rlimit) {
+                        return ['allowed' => false, 'limit' => $rlimit, 'reason' => 'device limit exceeded'];
+                    }
+                    if ($effectiveLimit === 0 || ($rlimit > 0 && $rlimit < $effectiveLimit)) $effectiveLimit = $rlimit ?: $effectiveLimit;
+                }
+            }
+        }
+
+        return ['allowed' => true, 'limit' => $effectiveLimit, 'reason' => null];
+    }
+
     // Trial-related methods
 
     /**

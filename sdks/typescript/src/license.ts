@@ -2,6 +2,7 @@ import { promises as fs } from "node:fs";
 import { createPublicKey } from "node:crypto";
 import { deriveTransportKey, decryptAesGcm, verifySignature } from "./crypto.js";
 import { LicenseData, FeatureGrant, ScopeGrant, CredentialsFile, TrialStatus, TrialInfo } from "./types.js";
+import { ScopeRestriction, UsageContext } from "./types.js";
 
 export interface StoredLicenseFile {
     encrypted_data: string;
@@ -148,6 +149,56 @@ export function canPerform(license: LicenseData, featureSlug: string, scopeSlug:
         return { allowed: false, limit: 0 };
     }
     return { allowed: true, limit: scope.limit ?? 0 };
+}
+
+/**
+ * Evaluate scope restrictions against a usage context.
+ * Returns { allowed, limit, reason } where limit=0 means unlimited.
+ */
+export function canPerformWithContext(license: LicenseData, featureSlug: string, scopeSlug: string, ctx: UsageContext): { allowed: boolean; limit: number; reason?: string } {
+    const scope = getScope(license, featureSlug, scopeSlug);
+    if (!scope) return { allowed: false, limit: 0, reason: 'scope not granted' };
+    if (scope.permission === 'deny') return { allowed: false, limit: 0, reason: 'scope denied' };
+
+    let effectiveLimit = scope.limit ?? 0;
+
+    if (!scope.restrictions || scope.restrictions.length === 0) {
+        // No server-provided restrictions, fall back to simple limit semantics
+        if (scope.permission === 'limit' && effectiveLimit > 0 && (ctx.amount ?? 0) > effectiveLimit) {
+            return { allowed: false, limit: effectiveLimit, reason: 'exceeds configured limit' };
+        }
+        return { allowed: true, limit: effectiveLimit };
+    }
+
+    const amount = (ctx.amount ?? 0) || 1;
+    for (const r of scope.restrictions as ScopeRestriction[]) {
+        if (r.type === 'storage') {
+            if (!ctx.subjectType || ctx.subjectType === 'storage') {
+                if ((r.limit ?? 0) > 0 && amount > (r.limit ?? 0)) {
+                    return { allowed: false, limit: r.limit ?? 0, reason: 'storage limit exceeded' };
+                }
+                if (effectiveLimit === 0 || (r.limit ?? 0) > 0 && (r.limit ?? 0) < effectiveLimit) effectiveLimit = r.limit ?? effectiveLimit;
+            }
+        }
+        if (r.type === 'user') {
+            if (ctx.subjectType === 'user') {
+                if ((r.limit ?? 0) > 0 && amount > (r.limit ?? 0)) {
+                    return { allowed: false, limit: r.limit ?? 0, reason: 'user limit exceeded' };
+                }
+                if (effectiveLimit === 0 || (r.limit ?? 0) > 0 && (r.limit ?? 0) < effectiveLimit) effectiveLimit = r.limit ?? effectiveLimit;
+            }
+        }
+        if (r.type === 'device') {
+            if (ctx.subjectType === 'device') {
+                if ((r.limit ?? 0) > 0 && amount > (r.limit ?? 0)) {
+                    return { allowed: false, limit: r.limit ?? 0, reason: 'device limit exceeded' };
+                }
+                if (effectiveLimit === 0 || (r.limit ?? 0) > 0 && (r.limit ?? 0) < effectiveLimit) effectiveLimit = r.limit ?? effectiveLimit;
+            }
+        }
+    }
+
+    return { allowed: true, limit: effectiveLimit };
 }
 
 // Trial-related helper functions

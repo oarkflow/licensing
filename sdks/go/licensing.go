@@ -114,6 +114,11 @@ type (
 
 	// TrialStatus represents the current status of a trial license.
 	TrialStatus = client.TrialStatus
+	// Types for usage restrictions exported from the core client
+	ScopeRestriction     = client.ScopeRestriction
+	UsageRestrictionType = client.UsageRestrictionType
+	SubjectType          = client.SubjectType
+	UsageContext         = client.UsageContext
 )
 
 // Re-export constants.
@@ -147,6 +152,14 @@ const (
 
 	// TrialStatusExpired indicates the trial has expired.
 	TrialStatusExpired = client.TrialStatusExpired
+	// Usage restriction constants
+	UsageRestrictionStorage = client.UsageRestrictionStorage
+	UsageRestrictionUser    = client.UsageRestrictionUser
+	UsageRestrictionDevice  = client.UsageRestrictionDevice
+	// Subject type constants
+	SubjectTypeStorage = client.SubjectTypeStorage
+	SubjectTypeUser    = client.SubjectTypeUser
+	SubjectTypeDevice  = client.SubjectTypeDevice
 )
 
 // Re-export errors.

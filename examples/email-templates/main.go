@@ -10,7 +10,7 @@ import (
 // Example: Using email templates with embedded and filesystem modes
 
 func main() {
-	fmt.Println("=== Email Template Loader Examples ===\n")
+	fmt.Println("=== Email Template Loader Examples ===")
 
 	// Example 1: Using embedded templates (production mode)
 	fmt.Println("1. Loading from embedded templates:")

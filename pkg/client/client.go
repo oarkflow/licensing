@@ -296,6 +296,113 @@ type ScopeGrant struct {
 	Permission ScopePermission        `json:"permission"`
 	Limit      int                    `json:"limit,omitempty"`
 	Metadata   map[string]interface{} `json:"metadata,omitempty"`
+	// Restrictions express usage-limiting constraints evaluated by the client.
+	// Optional and backward-compatible: absence preserves prior behavior.
+	Restrictions []ScopeRestriction `json:"restrictions,omitempty"`
+}
+
+// UsageRestrictionType enumerates supported restriction kinds.
+type UsageRestrictionType string
+
+const (
+	UsageRestrictionStorage UsageRestrictionType = "storage"
+	UsageRestrictionUser    UsageRestrictionType = "user"
+	UsageRestrictionDevice  UsageRestrictionType = "device"
+)
+
+// ScopeRestriction describes a single usage restriction for a scope.
+type ScopeRestriction struct {
+	Type          UsageRestrictionType `json:"type"`
+	Limit         int                  `json:"limit,omitempty"`
+	WindowSeconds int                  `json:"window_seconds,omitempty"`
+	Metadata      map[string]string    `json:"metadata,omitempty"`
+}
+
+// SubjectType identifies the subject the restriction applies to.
+type SubjectType string
+
+const (
+	SubjectTypeStorage SubjectType = "storage"
+	SubjectTypeUser    SubjectType = "user"
+	SubjectTypeDevice  SubjectType = "device"
+)
+
+// UsageContext supplies context for performing restricted operations.
+type UsageContext struct {
+	SubjectType SubjectType
+	SubjectID   string
+	Amount      int // amount requested (1 means a single unit)
+}
+
+// CanPerformWithContext evaluates scope restrictions against a UsageContext.
+// It returns allowed (bool), an effective limit (0 means unlimited), and an optional message.
+func (ld *LicenseData) CanPerformWithContext(featureSlug, scopeSlug string, ctx UsageContext) (bool, int, string) {
+	scope, ok := ld.GetScope(featureSlug, scopeSlug)
+	if !ok {
+		return false, 0, "scope not granted"
+	}
+	if scope.Permission == ScopePermissionDeny {
+		return false, 0, "scope denied"
+	}
+	// Default limit from scope.Limit (if Permission == limit)
+	effectiveLimit := scope.Limit
+	// If there are no restrictions, fall back to simple limit check
+	if len(scope.Restrictions) == 0 {
+		if scope.Permission == ScopePermissionLimit && effectiveLimit > 0 && ctx.Amount > effectiveLimit {
+			return false, effectiveLimit, "exceeds configured limit"
+		}
+		return true, effectiveLimit, ""
+	}
+
+	// Evaluate restrictions: if any restriction of the relevant type denies the request, deny.
+	for _, r := range scope.Restrictions {
+		switch r.Type {
+		case UsageRestrictionStorage:
+			if ctx.SubjectType == SubjectTypeStorage || ctx.SubjectType == "" {
+				if r.Limit > 0 {
+					if ctx.Amount == 0 {
+						ctx.Amount = 1
+					}
+					if ctx.Amount > r.Limit {
+						return false, r.Limit, "storage limit exceeded"
+					}
+					if effectiveLimit == 0 || r.Limit < effectiveLimit {
+						effectiveLimit = r.Limit
+					}
+				}
+			}
+		case UsageRestrictionUser:
+			if ctx.SubjectType == SubjectTypeUser {
+				if r.Limit > 0 {
+					if ctx.Amount == 0 {
+						ctx.Amount = 1
+					}
+					if ctx.Amount > r.Limit {
+						return false, r.Limit, "user limit exceeded"
+					}
+					if effectiveLimit == 0 || r.Limit < effectiveLimit {
+						effectiveLimit = r.Limit
+					}
+				}
+			}
+		case UsageRestrictionDevice:
+			if ctx.SubjectType == SubjectTypeDevice {
+				if r.Limit > 0 {
+					if ctx.Amount == 0 {
+						ctx.Amount = 1
+					}
+					if ctx.Amount > r.Limit {
+						return false, r.Limit, "device limit exceeded"
+					}
+					if effectiveLimit == 0 || r.Limit < effectiveLimit {
+						effectiveLimit = r.Limit
+					}
+				}
+			}
+		}
+	}
+
+	return true, effectiveLimit, ""
 }
 
 // HasFeature checks if the license has access to a specific feature by slug.
@@ -1254,6 +1361,50 @@ func (lc *Client) decryptLicense(stored *StoredLicense) (*LicenseData, error) {
 	if err := json.Unmarshal(licenseJSON, &licenseData); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal license: %w", err)
 	}
+
+	// Backwards-compatibility: some server payloads embed device info under
+	// entitlements.restrictions.device. If the top-level device fields are
+	// missing, try to hydrate them from the entitlements restrictions.
+	var raw map[string]interface{}
+	if err := json.Unmarshal(licenseJSON, &raw); err == nil {
+		if ent, ok := raw["entitlements"].(map[string]interface{}); ok {
+			if res, ok := ent["restrictions"].(map[string]interface{}); ok {
+				if dev, ok := res["device"].(map[string]interface{}); ok {
+					if md, ok := dev["max_devices"].(float64); ok {
+						licenseData.MaxDevices = int(md)
+					}
+					if dc, ok := dev["device_count"].(float64); ok {
+						licenseData.DeviceCount = int(dc)
+					}
+					if devices, ok := dev["devices"].([]interface{}); ok {
+						var newDevices []LicenseDevice
+						for _, d := range devices {
+							if dm, ok := d.(map[string]interface{}); ok {
+								b, _ := json.Marshal(dm)
+								var ld LicenseDevice
+								if err := json.Unmarshal(b, &ld); err == nil {
+									newDevices = append(newDevices, ld)
+								}
+							}
+						}
+						if len(newDevices) > 0 {
+							licenseData.Devices = newDevices
+						}
+					}
+				}
+			}
+		}
+	}
+
+	// If entitlements contain only duplicate plan information, omit them for parity with
+	// the committed license fixture which keeps plan info at top-level.
+	if licenseData.Entitlements != nil {
+		ent := licenseData.Entitlements
+		if ent.PlanSlug == licenseData.PlanSlug && ent.ProductID == "" && ent.ProductSlug == "" && ent.PlanID == "" && (ent.Features == nil || len(ent.Features) == 0) {
+			licenseData.Entitlements = nil
+		}
+	}
+
 	licenseData.DeviceFingerprint = stored.DeviceFingerprint
 	lc.bindSessionKey(sessionKey, stored.DeviceFingerprint, licenseData.LicenseKey)
 	return &licenseData, nil

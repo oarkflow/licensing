@@ -39,6 +39,9 @@ export function ScopeNewPage() {
         permission: 'allow',
         limit: '',
         description: '',
+        restrictionType: '',
+        restrictionLimit: '',
+        restrictionWindow: '',
     });
 
     const createMutation = useMutation({
@@ -51,8 +54,22 @@ export function ScopeNewPage() {
             if (formData.permission === 'limit' && formData.limit) {
                 payload.limit = Number(formData.limit);
             }
-            if (formData.description.trim()) {
-                payload.metadata = { description: formData.description.trim() };
+            const trimmedDescription = formData.description.trim();
+            const metadata: Record<string, string> = {};
+            if (trimmedDescription) {
+                metadata.description = trimmedDescription;
+            }
+            if (formData.restrictionType) {
+                metadata.restriction_type = formData.restrictionType;
+            }
+            if (formData.restrictionLimit !== '' && formData.restrictionLimit !== undefined) {
+                metadata.restriction_limit = String(formData.restrictionLimit);
+            }
+            if (formData.restrictionWindow !== '' && formData.restrictionWindow !== undefined) {
+                metadata.restriction_window_seconds = String(formData.restrictionWindow);
+            }
+            if (Object.keys(metadata).length > 0) {
+                payload.metadata = metadata;
             }
             return api.createScope(productId!, featureId!, payload);
         },
@@ -207,6 +224,52 @@ export function ScopeNewPage() {
                                 placeholder="What this scope allows..."
                                 rows={3}
                             />
+                        </div>
+
+                        <div className="grid gap-4 sm:grid-cols-3">
+                            <div className="space-y-2">
+                                <Label htmlFor="restriction_type">Restriction Type</Label>
+                                <Select
+                                    value={formData.restrictionType}
+                                    onValueChange={(value) =>
+                                        setFormData((prev) => ({ ...prev, restrictionType: value }))
+                                    }
+                                >
+                                    <SelectTrigger id="restriction_type">
+                                        <SelectValue />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                        <SelectItem value="">None</SelectItem>
+                                        <SelectItem value="storage">Storage</SelectItem>
+                                        <SelectItem value="user">User</SelectItem>
+                                        <SelectItem value="device">Device</SelectItem>
+                                    </SelectContent>
+                                </Select>
+                            </div>
+                            <div className="space-y-2">
+                                <Label htmlFor="restriction_limit">Restriction Limit</Label>
+                                <Input
+                                    id="restriction_limit"
+                                    type="number"
+                                    min={0}
+                                    value={formData.restrictionLimit}
+                                    onChange={(e) =>
+                                        setFormData((prev) => ({ ...prev, restrictionLimit: e.target.value }))
+                                    }
+                                />
+                            </div>
+                            <div className="space-y-2">
+                                <Label htmlFor="restriction_window">Window (seconds)</Label>
+                                <Input
+                                    id="restriction_window"
+                                    type="number"
+                                    min={0}
+                                    value={formData.restrictionWindow}
+                                    onChange={(e) =>
+                                        setFormData((prev) => ({ ...prev, restrictionWindow: e.target.value }))
+                                    }
+                                />
+                            </div>
                         </div>
 
                         <div className="flex gap-4">

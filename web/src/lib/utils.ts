@@ -20,3 +20,66 @@ export function formatCurrencyFromCents(amountCents?: number, currency = "USD", 
     }
     return formatCurrency(amountCents / 100, currency, locale);
 }
+
+export interface SlugifyOptions {
+    /** Character used to separate words */
+    separator?: string;
+    /** Convert result to lowercase */
+    lowercase?: boolean;
+    /** Fallback value if slug becomes empty */
+    fallback?: string;
+}
+
+export function slugify(
+    input: string,
+    options: SlugifyOptions = {}
+): string {
+    if (typeof input !== 'string') {
+        throw new TypeError('slugify: input must be a string');
+    }
+
+    const {
+        separator = '-',
+        lowercase = true,
+        fallback = 'n-a',
+    } = options;
+
+    let slug = input
+        // Normalize accented characters (é → e, ü → u)
+        .normalize('NFKD')
+        .replace(/[\u0300-\u036f]/g, '')
+
+        // Split camelCase & PascalCase words
+        .replace(/([a-z0-9])([A-Z])/g, '$1 $2')
+        .replace(/([A-Z]+)([A-Z][a-z])/g, '$1 $2')
+
+        // Replace underscores & non-word chars with spaces
+        .replace(/[_\W]+/g, ' ')
+
+        // Trim & collapse whitespace into separator
+        .trim()
+        .replace(/\s+/g, separator)
+
+        // Remove leading/trailing separators
+        .replace(new RegExp(`^${separator}+|${separator}+$`, 'g'), '');
+
+    if (lowercase) {
+        slug = slug.toLowerCase();
+    }
+
+    return slug || fallback;
+}
+
+
+
+// normalizeSlug converts a string into a URL-friendly slug.
+// Behavior:
+// - lowercases
+// - trims whitespace
+// - replaces spaces with dashes
+// - removes characters other than a-z0-9 and dashes
+// - collapses multiple dashes
+// - trims leading/trailing dashes
+export function normalizeSlug(value: string) {
+    return slugify(value, { separator: '-', lowercase: true, fallback: 'n-a' });
+}

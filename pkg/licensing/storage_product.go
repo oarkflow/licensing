@@ -3,6 +3,7 @@ package licensing
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"strings"
 )
 
@@ -529,6 +530,25 @@ func (s *InMemoryStorage) ComputeLicenseEntitlements(_ context.Context, productI
 			// Final safety net: enforce plan/feature matrix even if overrides are missing
 			if !IsScopeAllowedForPlan(feature.Slug, scope.Slug, plan.Slug) {
 				scopeGrant.Permission = ScopePermissionDeny
+			}
+
+			// Populate optional Restrictions from scope metadata. Server may emit
+			// keys like restriction_type, restriction_limit, restriction_window_seconds
+			if scope.Metadata != nil {
+				if t, ok := scope.Metadata["restriction_type"]; ok && strings.TrimSpace(t) != "" {
+					sr := ScopeRestriction{Type: UsageRestrictionType(strings.TrimSpace(t))}
+					if v, ok := scope.Metadata["restriction_limit"]; ok {
+						if n, err := strconv.Atoi(strings.TrimSpace(v)); err == nil {
+							sr.Limit = n
+						}
+					}
+					if v, ok := scope.Metadata["restriction_window_seconds"]; ok {
+						if n, err := strconv.Atoi(strings.TrimSpace(v)); err == nil {
+							sr.WindowSeconds = n
+						}
+					}
+					scopeGrant.Restrictions = append(scopeGrant.Restrictions, sr)
+				}
 			}
 
 			featureGrant.Scopes[scope.Slug] = scopeGrant
