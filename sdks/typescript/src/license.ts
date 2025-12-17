@@ -53,18 +53,40 @@ export async function loadLicenseFile(path: string): Promise<StoredLicenseFile> 
     return JSON.parse(raw) as StoredLicenseFile;
 }
 
-export function decryptStoredLicense(stored: StoredLicenseFile): DecryptedLicense {
+export function decryptStoredLicense(stored: StoredLicenseFile, currentFingerprint?: string): DecryptedLicense {
     const encrypted = Buffer.from(stored.encrypted_data, "base64");
     const nonce = Buffer.from(stored.nonce, "base64");
     const signature = Buffer.from(stored.signature, "base64");
     const publicKeyDer = Buffer.from(stored.public_key, "base64");
     const publicKey = createPublicKey({ key: publicKeyDer, format: "der", type: "spki" });
 
-    if (!verifySignature(encrypted, signature, publicKey)) {
-        throw new Error("stored license signature invalid");
+    // Prefer verification that includes device fingerprint (new servers
+    // sign SHA256(encrypted || device_fingerprint)). Fall back to legacy
+    // verification over the encrypted payload only for compatibility.
+    const combined = Buffer.concat([encrypted, Buffer.from(stored.device_fingerprint || '', 'utf8')]);
+    if (!verifySignature(combined, signature, publicKey)) {
+        if (!verifySignature(encrypted, signature, publicKey)) {
+            throw new Error("stored license signature invalid");
+        } else {
+            // Signature valid using legacy method; warn the consumer.
+            // eslint-disable-next-line no-console
+            console.warn('Activation signature validated using legacy method; device fingerprint is not bound by signature');
+        }
     }
 
-    const transportKey = deriveTransportKey(stored.device_fingerprint, nonce);
+    // If caller provided a current device fingerprint, ensure it matches
+    // the one the license was issued to and derive the transport key from
+    // that fingerprint. This prevents a copied license file from being
+    // decrypted on a different device when the caller supplies their
+    // runtime fingerprint.
+    const fingerprintToUse = (currentFingerprint !== undefined) ? (() => {
+        if (currentFingerprint !== stored.device_fingerprint) {
+            throw new Error("device fingerprint mismatch - license is tied to different device");
+        }
+        return currentFingerprint;
+    })() : stored.device_fingerprint;
+
+    const transportKey = deriveTransportKey(fingerprintToUse, nonce);
     const decrypted = decryptAesGcm(encrypted, nonce, transportKey);
     if (decrypted.length <= 32) {
         throw new Error("decrypted payload missing session key");

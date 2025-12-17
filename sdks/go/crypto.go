@@ -15,18 +15,35 @@ import (
 	"encoding/pem"
 	"fmt"
 	"os"
+	"strings"
 )
 
-// DecryptStoredLicense decrypts a stored license blob using the device fingerprint.
-// This is useful for SDK consumers who want to inspect license data without going
-// through the full client verification flow.
-func DecryptStoredLicense(stored *StoredLicense) (*LicenseData, []byte, error) {
+// DecryptStoredLicense decrypts a stored license blob using the provided
+// current device fingerprint. The function verifies the stored license
+// signature and ensures the provided fingerprint matches the one the
+// license was bound to. This prevents a copied license file from being
+// decrypted on a different device.
+func DecryptStoredLicense(stored *StoredLicense, currentFingerprint string) (*LicenseData, []byte, error) {
 	if stored == nil {
 		return nil, nil, fmt.Errorf("stored license is nil")
 	}
 
-	// Derive transport key
-	material := stored.DeviceFingerprint + hex.EncodeToString(stored.Nonce)
+	// Ensure the fingerprint provided by the caller matches the fingerprint
+	// the license was originally issued to.
+	if strings.TrimSpace(stored.DeviceFingerprint) == "" {
+		return nil, nil, fmt.Errorf("stored license missing device fingerprint")
+	}
+	if currentFingerprint != stored.DeviceFingerprint {
+		return nil, nil, fmt.Errorf("device fingerprint mismatch - license is tied to different device")
+	}
+
+	// Verify signature before attempting decryption
+	if err := VerifyStoredLicenseSignature(stored); err != nil {
+		return nil, nil, fmt.Errorf("signature verification failed: %w", err)
+	}
+
+	// Derive transport key using current fingerprint and nonce
+	material := currentFingerprint + hex.EncodeToString(stored.Nonce)
 	transportKeyHash := sha256.Sum256([]byte(material))
 	transportKey := transportKeyHash[:]
 
@@ -117,11 +134,23 @@ func VerifyStoredLicenseSignature(stored *StoredLicense) error {
 		return fmt.Errorf("public key is not RSA")
 	}
 
-	// Verify RSA-PSS signature
-	hash := sha256.Sum256(stored.EncryptedData)
-	err = rsa.VerifyPSS(rsaPub, crypto.SHA256, hash[:], stored.Signature, nil)
+	// Prefer verification over (encryptedData || deviceFingerprint) to ensure the
+	// fingerprint stored in the license file has not been tampered with. Fall
+	// back to legacy single-field signature verification when necessary.
+	combined := append(stored.EncryptedData, []byte(strings.TrimSpace(stored.DeviceFingerprint))...)
+	combinedHash := sha256.Sum256(combined)
+	err = rsa.VerifyPSS(rsaPub, crypto.SHA256, combinedHash[:], stored.Signature, nil)
 	if err != nil {
-		return fmt.Errorf("signature verification failed: %w", err)
+		// Try legacy verification
+		legacyHash := sha256.Sum256(stored.EncryptedData)
+		if err2 := rsa.VerifyPSS(rsaPub, crypto.SHA256, legacyHash[:], stored.Signature, nil); err2 != nil {
+			return fmt.Errorf("signature verification failed (tried combined and legacy): %w / %v", err, err2)
+		}
+		// Legacy passed — warn that fingerprint not covered by signature
+		// but accept legacy signature for backward compatibility.
+		// Consumers should consider updating server to sign the fingerprint.
+		fmt.Printf("Warning: signature validated using legacy method; device fingerprint not bound by signature\n")
+		return nil
 	}
 
 	return nil

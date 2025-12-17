@@ -79,7 +79,7 @@ To prevent plaintext license data from crossing the wire, the client may encrypt
 
 1. The client derives a 32-byte transport key: `SHA256( device_fingerprint + hex(nonce) )`.
 2. Activation responses pack `[session_key (32 bytes) || license_json]` and seal it with AES-256-GCM using the derived transport key + nonce.
-3. The client verifies the RSA signature (SHA-256 hash of `encrypted_license || nonce`) with the provided public key before storing the payload.
+3. The client verifies the RSA signature (SHA-256 hash of `encrypted_license || device_fingerprint`) with the provided public key before storing the payload. For backward compatibility the client will fall back to verifying SHA-256(encrypted_license) if the server is not yet signing the fingerprint.
 4. Subsequent API calls can be wrapped using the same transport key by sending JSON inside `utils.SecureEnvelope` and setting `X-License-Secure: 1`.
 
 ### Stored license format

@@ -1081,8 +1081,8 @@ func TestWithFixtures(t *testing.T) {
     err := licensing.VerifyStoredLicenseSignature(&storedLicense)
     assert.NoError(t, err)
 
-    // Decrypt
-    license, _, err := licensing.DecryptStoredLicense(&storedLicense)
+    // Decrypt (provide current device fingerprint to enforce device binding)
+    license, _, err := licensing.DecryptStoredLicense(&storedLicense, storedLicense.DeviceFingerprint)
     assert.NoError(t, err)
     assert.Equal(t, "lic_fixture_v1", license.ID)
 }

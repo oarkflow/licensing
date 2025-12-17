@@ -1467,7 +1467,13 @@ func (lm *LicenseManager) issueEncryptedLicenseResponse(license *License, identi
 		return nil, fmt.Errorf("failed to create GCM: %w", err)
 	}
 	encryptedData := gcm.Seal(nil, nonce, plaintext, nil)
-	dataHash := sha256.Sum256(encryptedData)
+	// Bind the device fingerprint inside the signed digest so the client can
+	// verify the license file hasn't had its `device_fingerprint` field
+	// tampered with. New servers sign SHA256(encryptedData || fingerprint).
+	// Clients will attempt this verification first and fall back to the
+	// historical behavior (signing SHA256(encryptedData)) for compatibility.
+	combined := append(encryptedData, []byte(fingerprint)...)
+	dataHash := sha256.Sum256(combined)
 	signature, err := lm.signer.Sign(dataHash[:])
 	if err != nil {
 		return nil, fmt.Errorf("failed to sign: %w", err)

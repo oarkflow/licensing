@@ -49,8 +49,8 @@ func TestFixtureDecryption(t *testing.T) {
 	}
 	t.Log("✓ Signature verification passed")
 
-	// Test decryption
-	license, _, err := DecryptStoredLicense(stored)
+	// Test decryption (provide the device fingerprint to ensure binding)
+	license, _, err := DecryptStoredLicense(stored, fingerprint)
 	if err != nil {
 		t.Fatalf("decryption failed: %v", err)
 	}
@@ -99,8 +99,8 @@ func TestStoredLicenseDecryption(t *testing.T) {
 	}
 	t.Log("✓ Stored license signature verification passed")
 
-	// Decrypt
-	license, _, err := DecryptStoredLicense(&stored)
+	// Decrypt (provide the stored fingerprint)
+	license, _, err := DecryptStoredLicense(&stored, stored.DeviceFingerprint)
 	if err != nil {
 		t.Fatalf("decryption failed: %v", err)
 	}
@@ -212,12 +212,31 @@ func TestBinaryLicenseFile(t *testing.T) {
 	}
 	t.Log("✓ license.dat signature verification passed")
 
-	// Decrypt
-	license, _, err := DecryptStoredLicense(&stored)
+	// Decrypt (use the fingerprint embedded in the file)
+	license, _, err := DecryptStoredLicense(&stored, stored.DeviceFingerprint)
 	if err != nil {
 		t.Fatalf("license.dat decryption failed: %v", err)
 	}
 	t.Logf("✓ license.dat decrypted: %s (plan: %s)", license.ID, license.PlanSlug)
+}
+
+func TestDecryptFailsWithWrongFingerprint(t *testing.T) {
+	// Load stored_license.json
+	storedData, err := os.ReadFile(filepath.Join(fixturesDir, "stored_license.json"))
+	if err != nil {
+		t.Fatalf("failed to read stored_license.json: %v", err)
+	}
+	var stored StoredLicense
+	if err := json.Unmarshal(storedData, &stored); err != nil {
+		t.Fatalf("failed to unmarshal stored license: %v", err)
+	}
+
+	// Attempt to decrypt using an incorrect fingerprint
+	_, _, err = DecryptStoredLicense(&stored, "incorrect-fingerprint")
+	if err == nil {
+		t.Fatalf("expected decryption to fail with wrong fingerprint")
+	}
+	t.Logf("✓ Decryption failed with wrong fingerprint as expected: %v", err)
 }
 
 func TestCanPerformWithContextSDK(t *testing.T) {

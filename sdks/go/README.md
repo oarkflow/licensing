@@ -569,8 +569,9 @@ func (ld *LicenseData) CanPerform(featureSlug, scopeSlug string) (allowed bool, 
 For SDK testing and fixture verification:
 
 ```go
-// DecryptStoredLicense decrypts a stored license
-func DecryptStoredLicense(stored *StoredLicense) (*LicenseData, []byte, error)
+// DecryptStoredLicense decrypts a stored license. Accepts the current device fingerprint
+// so that decryption is only possible on the device the license was issued to.
+func DecryptStoredLicense(stored *StoredLicense, currentFingerprint string) (*LicenseData, []byte, error)
 
 // VerifyStoredLicenseSignature verifies the RSA-PSS signature
 func VerifyStoredLicenseSignature(stored *StoredLicense) error
@@ -731,8 +732,8 @@ func TestLicenseValidation(t *testing.T) {
     err := licensing.VerifyStoredLicenseSignature(&stored)
     require.NoError(t, err)
 
-    // Decrypt
-    license, _, err := licensing.DecryptStoredLicense(&stored)
+    // Decrypt (provide the device fingerprint to enforce binding)
+    license, _, err := licensing.DecryptStoredLicense(&stored, stored.DeviceFingerprint)
     require.NoError(t, err)
 
     assert.Equal(t, "lic_fixture_v1", license.ID)

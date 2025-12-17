@@ -545,6 +545,9 @@ Response:
         "current_device_count": 1
     },
     "signature": "digital-signature-123...",
+    // Note: signatures now cover both the encrypted license blob and the device fingerprint
+    // (SHA256(encrypted_license || device_fingerprint)) to prevent tampering of the
+    // device binding field in stored license files.
     "validation_time": "2024-11-09T16:00:00Z"
 }
 ```

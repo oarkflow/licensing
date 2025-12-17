@@ -16,6 +16,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"net/url"
 	"os"
@@ -901,9 +902,20 @@ func (lc *Client) buildStoredLicenseFromResponse(resp *ActivationResponse, finge
 	if !ok {
 		return nil, fmt.Errorf("not an RSA public key")
 	}
-	dataHash := sha256.Sum256(encryptedData)
-	if err := rsa.VerifyPSS(publicKey, crypto.SHA256, dataHash[:], signature, nil); err != nil {
-		return nil, fmt.Errorf("signature verification failed: %w", err)
+	// Verify signature. Prefer the new format where the server signed
+	// SHA256(encryptedData || fingerprint). Fall back to the legacy
+	// SHA256(encryptedData) verification for older servers.
+	combined := append(encryptedData, []byte(strings.TrimSpace(fingerprint))...)
+	combinedHash := sha256.Sum256(combined)
+	if err := rsa.VerifyPSS(publicKey, crypto.SHA256, combinedHash[:], signature, nil); err != nil {
+		// Try legacy verification for backward compatibility
+		legacyHash := sha256.Sum256(encryptedData)
+		if err2 := rsa.VerifyPSS(publicKey, crypto.SHA256, legacyHash[:], signature, nil); err2 != nil {
+			return nil, fmt.Errorf("signature verification failed (tried combined and legacy): %w / %v", err, err2)
+		}
+		// If legacy verification passed, warn that server did not include
+		// the device fingerprint in the signed material (old server).
+		log.Printf("Warning: activation signature verified with legacy method; consider updating server to sign device fingerprint")
 	}
 	lc.publicKey = publicKey
 	storedLicense := &StoredLicense{

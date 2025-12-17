@@ -84,7 +84,9 @@ async function validateLicense() {
     const stored = await loadLicenseFile(licensePath);
 
     // Decrypt and verify signature
-    const { license, sessionKey } = decryptStoredLicense(stored);
+    // Optionally provide the current device fingerprint as a second argument to
+    // ensure the license file can only be decrypted on the device it was bound to.
+    const { license, sessionKey } = decryptStoredLicense(stored /*, currentFingerprint */);
 
     // Check expiration
     const expiresAt = new Date(license.expires_at);
