@@ -953,9 +953,20 @@ func (lc *Client) validateStoredLicenseSignature(stored *StoredLicense) error {
 		return fmt.Errorf("invalid public key type")
 	}
 	lc.publicKey = publicKey
-	dataHash := sha256.Sum256(stored.EncryptedData)
-	if err := rsa.VerifyPSS(publicKey, crypto.SHA256, dataHash[:], stored.Signature, nil); err != nil {
-		return fmt.Errorf("signature verification failed - license may be tampered")
+	// Verify signature. Prefer the new format where the server signed
+	// SHA256(encryptedData || fingerprint). Fall back to the legacy
+	// SHA256(encryptedData) verification for older servers.
+	combined := append(stored.EncryptedData, []byte(strings.TrimSpace(stored.DeviceFingerprint))...)
+	combinedHash := sha256.Sum256(combined)
+	if err := rsa.VerifyPSS(publicKey, crypto.SHA256, combinedHash[:], stored.Signature, nil); err != nil {
+		// Try legacy verification for backward compatibility
+		legacyHash := sha256.Sum256(stored.EncryptedData)
+		if err2 := rsa.VerifyPSS(publicKey, crypto.SHA256, legacyHash[:], stored.Signature, nil); err2 != nil {
+			return fmt.Errorf("signature verification failed - license may be tampered (%w / %v)", err, err2)
+		}
+		// If legacy verification passed, warn that server did not include
+		// the device fingerprint in the signed material (old server).
+		log.Printf("Warning: stored license signature validated with legacy method; consider updating server to sign device fingerprint")
 	}
 	return nil
 }
