@@ -6,11 +6,11 @@ Migration "1765980228_create_email_events_table" {
 		CreateTable "email_events" {
 			Field "id" { type = "text" primary_key = true }
 				Field "message_id" { type = "text" not_null = true foreign_key = { reference_table = "email_messages" reference_field = "id" } index = true }
-						Field "provider_id" { type = "text" not_null = true foreign_key = { reference_table = "email_providers" reference_field = "id" } }
-							Field "event_type" { type = "text" not_null = true }
-								Field "payload" { type = "text" nullable = true }
-									Field "created_at" { type = "datetime" not_null = true }
-									
+					Field "provider_id" { type = "text" not_null = true foreign_key = { reference_table = "email_providers" reference_field = "id" } }
+						Field "event_type" { type = "text" not_null = true }
+							Field "payload" { type = "text" nullable = true }
+								Field "created_at" { type = "datetime" not_null = true }
+
 								}
 								Down {
 									DropTable "email_events" { Cascade = true }

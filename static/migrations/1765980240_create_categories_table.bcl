@@ -6,13 +6,13 @@ Migration "1765980240_create_categories_table" {
 		CreateTable "categories" {
 			Field "id" { type = "text" primary_key = true }
 				Field "product_id" { type = "text" not_null = true foreign_key = { reference_table = "products" reference_field = "id" on_delete = "CASCADE" } index = true }
-						Field "name" { type = "text" not_null = true }
-							Field "slug" { type = "text" not_null = true }
-								Field "created_at" { type = "datetime" not_null = true }
-									Field "updated_at" { type = "datetime" not_null = true }
-										
+					Field "name" { type = "text" not_null = true }
+						Field "slug" { type = "text" not_null = true }
+							Field "created_at" { type = "datetime" not_null = true }
+								Field "updated_at" { type = "datetime" not_null = true }
+
+								}
+								Down {
+									DropTable "categories" { Cascade = true }
 									}
-									Down {
-										DropTable "categories" { Cascade = true }
-										}
-									}
+								}

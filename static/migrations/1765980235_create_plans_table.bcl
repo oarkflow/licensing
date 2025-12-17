@@ -23,10 +23,10 @@ Migration "1765980235_create_plans_table" {
 																			Field "created_at" { type = "datetime" not_null = true }
 																				Field "updated_at" { type = "datetime" not_null = true }
 
-																					}
-															
-																					}
-																					Down {
-																						DropTable "plans" { Cascade = true }
-																						}
-																					}
+																				}
+
+																			}
+																			Down {
+																				DropTable "plans" { Cascade = true }
+																				}
+																			}

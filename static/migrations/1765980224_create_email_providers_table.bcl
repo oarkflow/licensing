@@ -24,8 +24,8 @@ Migration "1765980224_create_email_providers_table" {
 																				Field "updated_at" { type = "datetime" not_null = true }
 																				}
 
+																			}
+																			Down {
+																				DropTable "email_providers" { Cascade = true }
 																				}
-																				Down {
-																					DropTable "email_providers" { Cascade = true }
-																					}
-																				}
+																			}

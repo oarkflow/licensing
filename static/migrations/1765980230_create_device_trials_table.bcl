@@ -6,15 +6,15 @@ Migration "1765980230_create_device_trials_table" {
 		CreateTable "device_trials" {
 			Field "device_fingerprint" { type = "text" primary_key = true }
 				Field "license_id" { type = "text" not_null = true foreign_key = { reference_table = "licenses" reference_field = "id" on_delete = "CASCADE" } index = true }
-						Field "client_id" { type = "text" not_null = true }
-							Field "email" { type = "text" not_null = true }
-								Field "product_id" { type = "text" nullable = true }
-									Field "trial_started_at" { type = "datetime" not_null = true }
-										Field "trial_expires_at" { type = "datetime" not_null = true }
-											Field "created_at" { type = "datetime" not_null = true }
-												
+					Field "client_id" { type = "text" not_null = true }
+						Field "email" { type = "text" not_null = true }
+							Field "product_id" { type = "text" nullable = true }
+								Field "trial_started_at" { type = "datetime" not_null = true }
+									Field "trial_expires_at" { type = "datetime" not_null = true }
+										Field "created_at" { type = "datetime" not_null = true }
+
+										}
+										Down {
+											DropTable "device_trials" { Cascade = true }
 											}
-											Down {
-												DropTable "device_trials" { Cascade = true }
-												}
-											}
+										}

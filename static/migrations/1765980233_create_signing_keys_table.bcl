@@ -11,9 +11,9 @@ Migration "1765980233_create_signing_keys_table" {
 							Field "is_active" { type = "boolean" not_null = true default = false index = true }
 								Field "created_at" { type = "datetime" not_null = true }
 								}
-		
+
+							}
+							Down {
+								DropTable "signing_keys" { Cascade = true }
 								}
-								Down {
-									DropTable "signing_keys" { Cascade = true }
-									}
-								}
+							}

@@ -6,9 +6,9 @@ Migration "1765980239_create_subscriptions_table" {
 		CreateTable "subscriptions" {
 			Field "id" { type = "text" primary_key = true }
 				Field "client_id" { type = "text" not_null = true foreign_key = { reference_table = "clients" reference_field = "id" on_delete = "CASCADE" } index = true }
-						Field "product_id" { type = "text" not_null = true foreign_key = { reference_table = "products" reference_field = "id" on_delete = "CASCADE" } index = true }
-							Field "plan_id" { type = "text" not_null = true foreign_key = { reference_table = "plans" reference_field = "id" on_delete = "CASCADE" } index = true }
-								Field "license_id" { type = "text" nullable = true foreign_key = { reference_table = "licenses" reference_field = "id" on_delete = "SET NULL" } }
+					Field "product_id" { type = "text" not_null = true foreign_key = { reference_table = "products" reference_field = "id" on_delete = "CASCADE" } index = true }
+						Field "plan_id" { type = "text" not_null = true foreign_key = { reference_table = "plans" reference_field = "id" on_delete = "CASCADE" } index = true }
+							Field "license_id" { type = "text" nullable = true foreign_key = { reference_table = "licenses" reference_field = "id" on_delete = "SET NULL" } }
 								Field "status" { type = "text" not_null = true default = "pending" }
 									Field "start_date" { type = "datetime" not_null = true }
 										Field "end_date" { type = "datetime" not_null = true }
@@ -22,12 +22,12 @@ Migration "1765980239_create_subscriptions_table" {
 
 
 
-																				}
-														
-														
-														
-																						}
-																						Down {
-																							DropTable "subscriptions" { Cascade = true }
-																							}
-																						}
+																}
+
+
+
+															}
+															Down {
+																DropTable "subscriptions" { Cascade = true }
+																}
+															}

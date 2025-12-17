@@ -10,9 +10,9 @@ Migration "1765980222_create_admin_users_table" {
 						Field "created_at" { type = "datetime" not_null = true }
 							Field "updated_at" { type = "datetime" not_null = true }
 							}
-		
+
+						}
+						Down {
+							DropTable "admin_users" { Cascade = true }
 							}
-							Down {
-								DropTable "admin_users" { Cascade = true }
-								}
-							}
+						}

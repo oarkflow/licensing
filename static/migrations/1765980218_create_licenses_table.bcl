@@ -23,11 +23,11 @@ Migration "1765980218_create_licenses_table" {
 																			Field "check_interval_seconds" { type = "integer" default = 0 }
 																				Field "next_check_at" { type = "datetime" nullable = true }
 																					Field "last_check_at" { type = "datetime" nullable = true }
-							
-																						}
-																
-																						}
-																						Down {
-																							DropTable "licenses" { Cascade = true }
-																							}
-																						}
+
+																					}
+
+																				}
+																				Down {
+																					DropTable "licenses" { Cascade = true }
+																					}
+																				}

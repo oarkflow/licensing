@@ -6,8 +6,8 @@ Migration "1765980232_create_offline_validation_logs_table" {
 		CreateTable "offline_validation_logs" {
 			Field "id" { type = "text" primary_key = true }
 				Field "token" { type = "text" not_null = true index = true }
-						Field "license_key" { type = "text" not_null = true index = true }
-							Field "client_id" { type = "text" not_null = true index = true }
+					Field "license_key" { type = "text" not_null = true index = true }
+						Field "client_id" { type = "text" not_null = true index = true }
 							Field "device_fingerprint" { type = "text" not_null = true }
 								Field "validation_time" { type = "datetime" not_null = true }
 									Field "success" { type = "boolean" not_null = true }
@@ -17,11 +17,11 @@ Migration "1765980232_create_offline_validation_logs_table" {
 													Field "app_version" { type = "text" nullable = true }
 														Field "metadata" { type = "text" nullable = true }
 														}
-								
-								
-								
-																}
-																Down {
-																	DropTable "offline_validation_logs" { Cascade = true }
-																	}
-																}
+
+
+
+													}
+													Down {
+														DropTable "offline_validation_logs" { Cascade = true }
+														}
+													}

@@ -4,15 +4,15 @@ Migration "1765980219_create_license_devices_table" {
 	Connection = "default"
 	Up {
 		CreateTable "license_devices" {
-				Field "license_id" { type = "text" not_null = true foreign_key = { reference_table = "licenses" reference_field = "id" on_delete = "CASCADE" } }
+			Field "license_id" { type = "text" not_null = true foreign_key = { reference_table = "licenses" reference_field = "id" on_delete = "CASCADE" } }
 				Field "fingerprint" { type = "text" not_null = true }
 					Field "activated_at" { type = "datetime" not_null = true }
 						Field "last_seen_at" { type = "datetime" not_null = true }
 							Field "transport_key" { type = "blob" not_null = true }
 								PrimaryKey ["license_id", "fingerprint"]
-								}
 							}
-							Down {
-								DropTable "license_devices" { Cascade = true }
-								}
+						}
+						Down {
+							DropTable "license_devices" { Cascade = true }
 							}
+						}

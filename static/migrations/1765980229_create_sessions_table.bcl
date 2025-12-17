@@ -6,12 +6,12 @@ Migration "1765980229_create_sessions_table" {
 		CreateTable "sessions" {
 			Field "id" { type = "text" primary_key = true }
 				Field "user_id" { type = "text" not_null = true foreign_key = { reference_table = "admin_users" reference_field = "id" on_delete = "CASCADE" } index = true }
-						Field "username" { type = "text" not_null = true }
-							Field "created_at" { type = "datetime" not_null = true }
-								Field "expires_at" { type = "datetime" not_null = true index = true }
-									
-									}
-									Down {
-										DropTable "sessions" { Cascade = true }
-										}
-									}
+					Field "username" { type = "text" not_null = true }
+						Field "created_at" { type = "datetime" not_null = true }
+							Field "expires_at" { type = "datetime" not_null = true index = true }
+
+							}
+							Down {
+								DropTable "sessions" { Cascade = true }
+								}
+							}

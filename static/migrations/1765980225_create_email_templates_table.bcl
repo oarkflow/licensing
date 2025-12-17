@@ -8,17 +8,17 @@ Migration "1765980225_create_email_templates_table" {
 				Field "name" { type = "text" not_null = true }
 					Field "slug" { type = "text" not_null = true }
 						Field "slug_lower" { type = "text" not_null = true unique = true }
-				Field "category" { type = "text" not_null = true index = true }
-						Field "subject" { type = "text" not_null = true }
-							Field "html_body" { type = "text" nullable = true }
-								Field "text_body" { type = "text" nullable = true }
-									Field "description" { type = "text" nullable = true }
-										Field "metadata" { type = "text" nullable = true }
-											Field "default_provider_id" { type = "text" nullable = true foreign_key = { reference_table = "email_providers" reference_field = "id" } }
-												Field "max_retries_override" { type = "integer" nullable = true }
-													Field "created_at" { type = "datetime" not_null = true }
-														Field "updated_at" { type = "datetime" not_null = true }
-													
+							Field "category" { type = "text" not_null = true index = true }
+								Field "subject" { type = "text" not_null = true }
+									Field "html_body" { type = "text" nullable = true }
+										Field "text_body" { type = "text" nullable = true }
+											Field "description" { type = "text" nullable = true }
+												Field "metadata" { type = "text" nullable = true }
+													Field "default_provider_id" { type = "text" nullable = true foreign_key = { reference_table = "email_providers" reference_field = "id" } }
+														Field "max_retries_override" { type = "integer" nullable = true }
+															Field "created_at" { type = "datetime" not_null = true }
+																Field "updated_at" { type = "datetime" not_null = true }
+
 																}
 																Down {
 																	DropTable "email_templates" { Cascade = true }
