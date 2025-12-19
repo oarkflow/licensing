@@ -20,12 +20,12 @@ import (
 	"net/http"
 	"net/url"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
 	"time"
 
+	"github.com/oarkflow/licensing/pkg/device"
 	"github.com/oarkflow/licensing/pkg/utils"
 )
 
@@ -1448,107 +1448,11 @@ func (lc *Client) deriveTransportKey(fingerprint string, nonce []byte) ([]byte, 
 // Device fingerprinting helpers -------------------------------------------------
 
 func (lc *Client) generateDeviceFingerprint() (string, error) {
-	var identifiers []string
-
-	hostname, err := os.Hostname()
-	if err == nil {
-		identifiers = append(identifiers, "HOST:"+hostname)
+	device, err := device.GetInfo()
+	if err != nil {
+		return "", err
 	}
-
-	identifiers = append(identifiers, "OS:"+runtime.GOOS)
-	identifiers = append(identifiers, "ARCH:"+runtime.GOARCH)
-
-	macAddr, err := lc.getPrimaryMACAddress()
-	if err == nil {
-		identifiers = append(identifiers, "MAC:"+macAddr)
-	}
-
-	cpuInfo, err := lc.getCPUInfo()
-	if err == nil {
-		identifiers = append(identifiers, "CPU:"+cpuInfo)
-	}
-
-	combined := strings.Join(identifiers, "|")
-	hash := sha256.Sum256([]byte(combined))
-	return hex.EncodeToString(hash[:]), nil
-}
-
-func (lc *Client) getPrimaryMACAddress() (string, error) {
-	var cmd *exec.Cmd
-
-	switch runtime.GOOS {
-	case "linux":
-		for _, iface := range []string{"eth0", "ens33", "enp0s3", "wlan0"} {
-			cmd = exec.Command("cat", "/sys/class/net/"+iface+"/address")
-			if output, err := cmd.Output(); err == nil && len(output) > 0 {
-				return strings.TrimSpace(string(output)), nil
-			}
-		}
-	case "darwin":
-		cmd = exec.Command("ifconfig", "en0")
-		if output, err := cmd.Output(); err == nil {
-			lines := strings.Split(string(output), "\n")
-			for _, line := range lines {
-				if strings.Contains(line, "ether") {
-					fields := strings.Fields(line)
-					if len(fields) >= 2 {
-						return fields[1], nil
-					}
-				}
-			}
-		}
-	case "windows":
-		cmd = exec.Command("getmac", "/fo", "csv", "/nh")
-		if output, err := cmd.Output(); err == nil && len(output) > 0 {
-			parts := strings.Split(string(output), ",")
-			if len(parts) > 0 {
-				return strings.Trim(parts[0], "\" \r\n"), nil
-			}
-		}
-	}
-
-	return "NO_MAC_ADDR", nil
-}
-
-func (lc *Client) getCPUInfo() (string, error) {
-	var cmd *exec.Cmd
-
-	switch runtime.GOOS {
-	case "linux":
-		cmd = exec.Command("cat", "/proc/cpuinfo")
-		if output, err := cmd.Output(); err == nil {
-			lines := strings.Split(string(output), "\n")
-			for _, line := range lines {
-				if strings.HasPrefix(line, "model name") {
-					parts := strings.Split(line, ":")
-					if len(parts) > 1 {
-						cpuName := strings.TrimSpace(parts[1])
-						hash := sha256.Sum256([]byte(cpuName))
-						return hex.EncodeToString(hash[:16]), nil
-					}
-				}
-			}
-		}
-	case "darwin":
-		cmd = exec.Command("sysctl", "-n", "machdep.cpu.brand_string")
-		if output, err := cmd.Output(); err == nil {
-			cpuName := strings.TrimSpace(string(output))
-			hash := sha256.Sum256([]byte(cpuName))
-			return hex.EncodeToString(hash[:16]), nil
-		}
-	case "windows":
-		cmd = exec.Command("wmic", "cpu", "get", "name")
-		if output, err := cmd.Output(); err == nil {
-			lines := strings.Split(string(output), "\n")
-			if len(lines) > 1 {
-				cpuName := strings.TrimSpace(lines[1])
-				hash := sha256.Sum256([]byte(cpuName))
-				return hex.EncodeToString(hash[:16]), nil
-			}
-		}
-	}
-
-	return "NO_CPU_INFO", nil
+	return device.Fingerprint, nil
 }
 
 func truncateFingerprint(fp string) string {
