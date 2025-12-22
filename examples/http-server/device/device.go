@@ -155,17 +155,17 @@ func hasSufficientEntropy(ids map[string]string) bool {
 	if totalEntropy >= 32 && highPriorityCount >= 1 {
 		return true // Full security requirements met
 	}
-	
+
 	// Relaxed requirements for development/limited environments
 	if totalEntropy >= 16 && (highPriorityCount >= 1 || stableCount >= 2) {
 		return true // Minimum viable security
 	}
-	
+
 	// Absolute minimum: some identifiers with basic entropy
 	if totalEntropy >= 8 && stableCount >= 1 {
 		return true // Basic functionality (for development/testing)
 	}
-	
+
 	return false
 }
 
