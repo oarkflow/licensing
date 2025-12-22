@@ -51,12 +51,10 @@ export function ProductNewPage() {
 
     const handleSubmit = (e: React.FormEvent) => {
         e.preventDefault();
-        // ensure slug exists (generate from name if not present)
-        setFormData((prev) => ({
-            ...prev,
-            slug: prev.slug || normalizeSlug(prev.name),
-        }));
-        createMutation.mutate({ ...formData, slug: formData.slug || normalizeSlug(formData.name) });
+        // ensure slug exists and is normalized
+        const slugToSend = normalizeSlug(formData.slug || formData.name);
+        setFormData((prev) => ({ ...prev, slug: slugToSend }));
+        createMutation.mutate({ ...formData, slug: slugToSend });
     };
 
     return (
@@ -120,14 +118,17 @@ export function ProductNewPage() {
                                 id="slug"
                                 value={formData.slug}
                                 onChange={(e) => {
-                                    const normalized = normalizeSlug(e.target.value);
+                                    // allow user to type symbols freely; normalize on blur/submit
                                     setSlugTouched(true);
-                                    setFormData((prev) => ({ ...prev, slug: normalized }));
+                                    setFormData((prev) => ({ ...prev, slug: e.target.value }));
                                 }}
-                                placeholder="product-slug"
+                                onBlur={() => {
+                                    setFormData((prev) => ({ ...prev, slug: normalizeSlug(prev.slug || prev.name) }));
+                                }}
+                                placeholder="product-slug (dashes and underscores allowed)"
                                 required
                             />
-                            <p className="text-sm text-muted-foreground">URL-friendly identifier (lowercase, dashes). Auto-generated from name unless edited.</p>
+                            <p className="text-sm text-muted-foreground">URL-friendly identifier (lowercase, dashes and underscores allowed). Auto-generated from name unless edited.</p>
                         </div>
 
                         <div className="flex gap-4">

@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	email "github.com/oarkflow/licensing/pkg/email"
+	"github.com/oarkflow/licensing/pkg/email"
 	"github.com/oarkflow/licensing/pkg/licensing"
 	"github.com/oarkflow/licensing/pkg/utils"
 	"github.com/oarkflow/licensing/pkg/web"

@@ -314,6 +314,7 @@ export function LicenseDetailPage() {
                                     Create an offline validation token that can be used by clients when offline.
                                 </DialogDescription>
                             </DialogHeader>
+
                             <div className="space-y-3 py-2">
                                 <div className="space-y-1">
                                     <Label>Device fingerprint</Label>
@@ -338,6 +339,27 @@ export function LicenseDetailPage() {
                             </DialogFooter>
                         </DialogContent>
                     </Dialog>
+
+                    <Tooltip>
+                        <TooltipTrigger asChild>
+                            <Button
+                                variant="outline"
+                                onClick={() => {
+                                    const licenseJson = JSON.stringify({
+                                        email: license?.email ?? '',
+                                        client_id: license?.client_id ?? '',
+                                        license_key: license?.license_key ?? '',
+                                    }, null, 2);
+                                    copyToClipboard(licenseJson);
+                                }}
+                            >
+                                Copy License JSON
+                            </Button>
+                        </TooltipTrigger>
+                        <TooltipContent>
+                            <p>Copy email, client_id and license_key as JSON</p>
+                        </TooltipContent>
+                    </Tooltip>
 
                     {/* Show issued bundle dialog */}
                     {issuedTokenBundle && (
@@ -504,18 +526,50 @@ export function LicenseDetailPage() {
                     <CardContent className="space-y-4">
                         <div className="space-y-2">
                             <Label className="text-muted-foreground">Email</Label>
-                            <div className="font-medium">{license.email}</div>
+                            <div className="flex items-center gap-2">
+                                <div className="font-medium">{license.email}</div>
+                                <Tooltip>
+                                    <TooltipTrigger asChild>
+                                        <Button
+                                            variant="outline"
+                                            size="icon"
+                                            onClick={() => copyToClipboard(license.email ?? '')}
+                                            aria-label="Copy email"
+                                        >
+                                            <Copy className="h-4 w-4" />
+                                        </Button>
+                                    </TooltipTrigger>
+                                    <TooltipContent>
+                                        <p>Copy email</p>
+                                    </TooltipContent>
+                                </Tooltip>
+                            </div>
                         </div>
 
                         <div className="space-y-2">
                             <Label className="text-muted-foreground">Client ID</Label>
-                            <div>
+                            <div className="flex items-center gap-2">
                                 <Link
                                     to={`/clients/${license.client_id}`}
                                     className="text-primary hover:underline"
                                 >
                                     {license.client_id}
                                 </Link>
+                                <Tooltip>
+                                    <TooltipTrigger asChild>
+                                        <Button
+                                            variant="outline"
+                                            size="icon"
+                                            onClick={() => copyToClipboard(license.client_id ?? '')}
+                                            aria-label="Copy client ID"
+                                        >
+                                            <Copy className="h-4 w-4" />
+                                        </Button>
+                                    </TooltipTrigger>
+                                    <TooltipContent>
+                                        <p>Copy client ID</p>
+                                    </TooltipContent>
+                                </Tooltip>
                             </div>
                         </div>
 

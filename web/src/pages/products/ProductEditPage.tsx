@@ -3,6 +3,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useParams, useNavigate } from 'react-router-dom';
 import { ArrowLeft, Package } from 'lucide-react';
 import api from '@/services/api';
+import { normalizeSlug } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import {
     Card,
@@ -40,6 +41,7 @@ export function ProductEditPage() {
         if (productResponse?.data) {
             setFormData({
                 name: productResponse.data.name,
+                slug: productResponse.data.slug || '',
                 description: productResponse.data.description || '',
             });
         }
@@ -65,7 +67,9 @@ export function ProductEditPage() {
 
     const handleSubmit = (e: React.FormEvent) => {
         e.preventDefault();
-        updateMutation.mutate(formData);
+        const slugToSend = normalizeSlug(formData.slug || formData.name);
+        setFormData((prev) => ({ ...prev, slug: slugToSend }));
+        updateMutation.mutate({ ...formData, slug: slugToSend });
     };
 
     if (isLoading) {
@@ -112,6 +116,23 @@ export function ProductEditPage() {
                                 placeholder="My Awesome App"
                                 required
                             />
+                        </div>
+
+                        <div className="space-y-2">
+                            <Label htmlFor="slug">Slug *</Label>
+                            <Input
+                                id="slug"
+                                value={formData.slug}
+                                onChange={(e) =>
+                                    setFormData((prev) => ({ ...prev, slug: e.target.value }))
+                                }
+                                onBlur={() =>
+                                    setFormData((prev) => ({ ...prev, slug: normalizeSlug(prev.slug || prev.name) }))
+                                }
+                                placeholder="product-slug (dashes and underscores allowed)"
+                                required
+                            />
+                            <p className="text-sm text-muted-foreground">URL-friendly identifier (lowercase, dashes and underscores allowed). Edit to change the url slug.</p>
                         </div>
 
                         <div className="space-y-2">

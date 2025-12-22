@@ -53,8 +53,8 @@ export function slugify(
         .replace(/([a-z0-9])([A-Z])/g, '$1 $2')
         .replace(/([A-Z]+)([A-Z][a-z])/g, '$1 $2')
 
-        // Replace underscores & non-word chars with spaces
-        .replace(/[_\W]+/g, ' ')
+        // Replace characters that are not alphanumeric, dash, or underscore with spaces
+        .replace(/[^A-Za-z0-9_-]+/g, ' ')
 
         // Trim & collapse whitespace into separator
         .trim()
@@ -77,7 +77,7 @@ export function slugify(
 // - lowercases
 // - trims whitespace
 // - replaces spaces with dashes
-// - removes characters other than a-z0-9 and dashes
+// - preserves dashes and underscores; removes other characters
 // - collapses multiple dashes
 // - trims leading/trailing dashes
 export function normalizeSlug(value: string) {
