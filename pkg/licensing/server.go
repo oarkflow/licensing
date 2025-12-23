@@ -2731,6 +2731,26 @@ func (s *Server) handleLicenseActions(w http.ResponseWriter, r *http.Request) {
 			activations = []*ActivationRecord{}
 		}
 		s.respondJSON(w, http.StatusOK, activations)
+	case "delete-device":
+		if r.Method != http.MethodPost {
+			s.respondError(w, http.StatusMethodNotAllowed, "Method not allowed")
+			return
+		}
+		var req struct {
+			Fingerprint string `json:"fingerprint"`
+		}
+		if !s.decodeJSONBody(w, r, &req, maxAdminPayloadBytes) {
+			return
+		}
+		if strings.TrimSpace(req.Fingerprint) == "" {
+			s.respondError(w, http.StatusBadRequest, "fingerprint is required")
+			return
+		}
+		if err := s.lm.DeleteDevice(r.Context(), licenseID, req.Fingerprint); err != nil {
+			s.respondError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		s.respondJSON(w, http.StatusOK, map[string]string{"message": "Device deleted"})
 	case "entitlements":
 		if r.Method != http.MethodPut && r.Method != http.MethodPost {
 			s.respondError(w, http.StatusMethodNotAllowed, "Method not allowed")

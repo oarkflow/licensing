@@ -159,23 +159,6 @@ export function LicenseDetailPage() {
         onSuccess: () => {
             queryClient.invalidateQueries({ queryKey: ['license', id] });
             queryClient.invalidateQueries({ queryKey: ['license-activations', id] });
-
-            useEffect(() => {
-                if (!entitlementDialogOpen) {
-                    return;
-                }
-                if (license?.entitlements) {
-                    const initial = entitlementsToSelections(license.entitlements);
-                    setEditedFeatureScopes(initial);
-                    setInitialFeatureScopes(initial);
-                    return;
-                }
-                if (planEntitlementsResponse?.data) {
-                    const initial = entitlementsToSelections(planEntitlementsResponse.data);
-                    setEditedFeatureScopes(initial);
-                    setInitialFeatureScopes(initial);
-                }
-            }, [entitlementDialogOpen, license?.entitlements, planEntitlementsResponse?.data]);
             toast({ title: 'Device deleted successfully' });
         },
         onError: (error) => {
@@ -186,6 +169,23 @@ export function LicenseDetailPage() {
             });
         },
     });
+
+    useEffect(() => {
+        if (!entitlementDialogOpen) {
+            return;
+        }
+        if (license?.entitlements) {
+            const initial = entitlementsToSelections(license.entitlements);
+            setEditedFeatureScopes(initial);
+            setInitialFeatureScopes(initial);
+            return;
+        }
+        if (planEntitlementsResponse?.data) {
+            const initial = entitlementsToSelections(planEntitlementsResponse.data);
+            setEditedFeatureScopes(initial);
+            setInitialFeatureScopes(initial);
+        }
+    }, [entitlementDialogOpen, license?.entitlements, planEntitlementsResponse?.data]);
 
     const updateEntitlementsMutation = useMutation({
         mutationFn: (scopes: FeatureScopeSelection[]) => api.updateLicenseEntitlements(id!, scopes),
@@ -639,18 +639,18 @@ export function LicenseDetailPage() {
                                         </TableCell>
                                         <TableCell>
                                             <AlertDialog>
-                                                <AlertDialogTrigger asChild>
-                                                    <Tooltip>
-                                                        <TooltipTrigger asChild>
+                                                <Tooltip>
+                                                    <TooltipTrigger asChild>
+                                                        <AlertDialogTrigger asChild>
                                                             <Button variant="ghost" size="icon">
                                                                 <Trash2 className="h-4 w-4" />
                                                             </Button>
-                                                        </TooltipTrigger>
-                                                        <TooltipContent>
-                                                            <p>Delete device</p>
-                                                        </TooltipContent>
-                                                    </Tooltip>
-                                                </AlertDialogTrigger>
+                                                        </AlertDialogTrigger>
+                                                    </TooltipTrigger>
+                                                    <TooltipContent>
+                                                        <p>Delete device</p>
+                                                    </TooltipContent>
+                                                </Tooltip>
                                                 <AlertDialogContent>
                                                     <AlertDialogHeader>
                                                         <AlertDialogTitle>Delete Device</AlertDialogTitle>
@@ -662,11 +662,10 @@ export function LicenseDetailPage() {
                                                     <AlertDialogFooter>
                                                         <AlertDialogCancel>Cancel</AlertDialogCancel>
                                                         <AlertDialogAction
-                                                            onClick={() =>
-                                                                deleteDeviceMutation.mutate(fingerprint)
-                                                            }
+                                                            onClick={() => deleteDeviceMutation.mutate(fingerprint)}
+                                                            disabled={deleteDeviceMutation.isPending}
                                                         >
-                                                            Delete
+                                                            {deleteDeviceMutation.isPending ? 'Deleting…' : 'Delete'}
                                                         </AlertDialogAction>
                                                     </AlertDialogFooter>
                                                 </AlertDialogContent>
