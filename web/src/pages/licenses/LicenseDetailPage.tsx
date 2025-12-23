@@ -154,8 +154,8 @@ export function LicenseDetailPage() {
         },
     });
 
-    const deactivateMutation = useMutation({
-        mutationFn: (fingerprint: string) => api.deactivateDevice(id!, fingerprint),
+    const deleteDeviceMutation = useMutation({
+        mutationFn: (fingerprint: string) => api.deleteDevice(id!, fingerprint),
         onSuccess: () => {
             queryClient.invalidateQueries({ queryKey: ['license', id] });
             queryClient.invalidateQueries({ queryKey: ['license-activations', id] });
@@ -176,11 +176,11 @@ export function LicenseDetailPage() {
                     setInitialFeatureScopes(initial);
                 }
             }, [entitlementDialogOpen, license?.entitlements, planEntitlementsResponse?.data]);
-            toast({ title: 'Device deactivated successfully' });
+            toast({ title: 'Device deleted successfully' });
         },
         onError: (error) => {
             toast({
-                title: 'Failed to deactivate device',
+                title: 'Failed to delete device',
                 description: error instanceof Error ? error.message : 'Unknown error',
                 variant: 'destructive',
             });
@@ -647,13 +647,13 @@ export function LicenseDetailPage() {
                                                             </Button>
                                                         </TooltipTrigger>
                                                         <TooltipContent>
-                                                            <p>Remove device</p>
+                                                            <p>Delete device</p>
                                                         </TooltipContent>
                                                     </Tooltip>
                                                 </AlertDialogTrigger>
                                                 <AlertDialogContent>
                                                     <AlertDialogHeader>
-                                                        <AlertDialogTitle>Deactivate Device</AlertDialogTitle>
+                                                        <AlertDialogTitle>Delete Device</AlertDialogTitle>
                                                         <AlertDialogDescription>
                                                             This will remove the device from this license. The device
                                                             will need to reactivate to use the software.
@@ -663,10 +663,10 @@ export function LicenseDetailPage() {
                                                         <AlertDialogCancel>Cancel</AlertDialogCancel>
                                                         <AlertDialogAction
                                                             onClick={() =>
-                                                                deactivateMutation.mutate(fingerprint)
+                                                                deleteDeviceMutation.mutate(fingerprint)
                                                             }
                                                         >
-                                                            Deactivate
+                                                            Delete
                                                         </AlertDialogAction>
                                                     </AlertDialogFooter>
                                                 </AlertDialogContent>

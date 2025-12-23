@@ -24,12 +24,14 @@ import type {
     License,
     LicenseEntitlements,
     LoginRequest,
+    OfflineValidationToken,
     Plan,
     PlanFeature,
     Product,
     ProductStats,
     SaveEmailProviderRequest,
     SaveEmailTemplateRequest,
+    SigningKeyMeta,
     User,
 } from '@/types/api';
 
@@ -276,11 +278,11 @@ class ApiService {
         });
     }
 
-    async deactivateDevice(
+    async deleteDevice(
         licenseId: string,
         fingerprint: string
     ): Promise<ApiResponse<void>> {
-        return this.request<void>(`/api/licenses/${licenseId}/deactivate-device`, {
+        return this.request<void>(`/api/licenses/${licenseId}/delete-device`, {
             method: 'POST',
             body: JSON.stringify({ fingerprint }),
         });

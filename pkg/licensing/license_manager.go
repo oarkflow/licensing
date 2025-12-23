@@ -1823,8 +1823,8 @@ func (lm *LicenseManager) ListActivations(ctx context.Context, licenseID string)
 	return lm.storage.ListActivations(ctx, licenseID)
 }
 
-// DeactivateDevice removes a device from a license by fingerprint
-func (lm *LicenseManager) DeactivateDevice(ctx context.Context, licenseID, fingerprint string) error {
+// DeleteDevice removes a device from a license by fingerprint
+func (lm *LicenseManager) DeleteDevice(ctx context.Context, licenseID, fingerprint string) error {
 	license, err := lm.storage.GetLicense(ctx, licenseID)
 	if err != nil {
 		return fmt.Errorf("license not found: %w", err)

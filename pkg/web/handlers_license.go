@@ -148,8 +148,8 @@ func (ws *WebServer) handleAPILicenseDetail(w http.ResponseWriter, r *http.Reque
 		ws.handleAPILicenseRevoke(w, r, ctx, licenseID)
 	case "reinstate":
 		ws.handleAPILicenseReinstate(w, r, ctx, licenseID)
-	case "deactivate-device":
-		ws.handleAPILicenseDeactivateDevice(w, r, ctx, licenseID)
+	case "delete-device":
+		ws.handleAPILicenseDeleteDevice(w, r, ctx, licenseID)
 	case "activations":
 		ws.handleAPILicenseActivations(w, r, ctx, licenseID)
 	case "entitlements":
@@ -189,7 +189,7 @@ func (ws *WebServer) handleAPILicenseReinstate(w http.ResponseWriter, r *http.Re
 	ws.respondJSON(w, http.StatusOK, license)
 }
 
-func (ws *WebServer) handleAPILicenseDeactivateDevice(w http.ResponseWriter, r *http.Request, ctx context.Context, licenseID string) {
+func (ws *WebServer) handleAPILicenseDeleteDevice(w http.ResponseWriter, r *http.Request, ctx context.Context, licenseID string) {
 	if r.Method != http.MethodPost {
 		ws.respondAPIError(w, http.StatusMethodNotAllowed, "Method not allowed")
 		return
@@ -213,11 +213,11 @@ func (ws *WebServer) handleAPILicenseDeactivateDevice(w http.ResponseWriter, r *
 		ws.respondAPIError(w, http.StatusBadRequest, "fingerprint is required")
 		return
 	}
-	if err := ws.lm.DeactivateDevice(ctx, licenseID, req.Fingerprint); err != nil {
+	if err := ws.lm.DeleteDevice(ctx, licenseID, req.Fingerprint); err != nil {
 		ws.respondAPIError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	ws.respondJSON(w, http.StatusOK, map[string]string{"message": "Device deactivated"})
+	ws.respondJSON(w, http.StatusOK, map[string]string{"message": "Device deleted"})
 }
 
 func (ws *WebServer) handleAPILicenseActivations(w http.ResponseWriter, r *http.Request, ctx context.Context, licenseID string) {
