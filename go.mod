@@ -6,8 +6,10 @@ require github.com/google/uuid v1.6.0
 
 require (
 	github.com/oarkflow/date v0.0.4
+	github.com/oarkflow/log v1.0.84
 	github.com/oarkflow/squealx v0.0.62
 	golang.org/x/crypto v0.45.0
+	golang.org/x/text v0.31.0
 )
 
 require (
@@ -15,6 +17,7 @@ require (
 	github.com/oarkflow/expr v0.0.11 // indirect
 	github.com/oarkflow/jet v0.0.4 // indirect
 	github.com/oarkflow/json v0.0.28 // indirect
+	github.com/oarkflow/xid v1.2.5 // indirect
 	modernc.org/sqlite v1.40.1 // indirect
 )
 

@@ -15,7 +15,6 @@ import (
 	"encoding/pem"
 	"errors"
 	"fmt"
-	"log"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -26,6 +25,7 @@ import (
 	"crypto/ed25519"
 
 	"github.com/google/uuid"
+	phusluLog "github.com/oarkflow/log"
 	"golang.org/x/crypto/bcrypt"
 )
 
@@ -567,7 +567,7 @@ func (lm *LicenseManager) ValidateClientAPIKey(ctx context.Context, token string
 	}
 	record.LastUsed = time.Now()
 	if err := lm.storage.UpdateAPIKey(ctx, record); err != nil {
-		log.Printf("failed to update api key usage: %v", err)
+		phusluLog.Error().Err(err).Msg("failed to update api key usage")
 	}
 	return client, record, nil
 }
@@ -598,7 +598,7 @@ func (lm *LicenseManager) ValidateAPIKey(ctx context.Context, token string) (*Ad
 	}
 	record.LastUsed = time.Now()
 	if err := lm.storage.UpdateAPIKey(ctx, record); err != nil {
-		log.Printf("failed to update api key usage: %v", err)
+		phusluLog.Error().Err(err).Msg("failed to update api key usage")
 	}
 	return user, nil
 }
@@ -990,6 +990,7 @@ func (lm *LicenseManager) GenerateTrialLicense(ctx context.Context, req *TrialLi
 	}
 	if hasUsed {
 		existingTrial, _ := lm.storage.GetDeviceTrial(ctx, fingerprint)
+		phusluLog.Error().Str("operation", "generate_trial_license").Str("message", "This device has already used a trial license. Please purchase a subscription.").Str("deviceFingerprint", fingerprint).Time("existingTrialExpiresAt", existingTrial.TrialExpiresAt).Msg("")
 		return &TrialLicenseResponse{
 			Success:         false,
 			Message:         "This device has already used a trial license. Please purchase a subscription.",
@@ -1009,6 +1010,7 @@ func (lm *LicenseManager) GenerateTrialLicense(ctx context.Context, req *TrialLi
 		}
 	}
 	if client.Status == ClientStatusBanned {
+		phusluLog.Error().Str("operation", "generate_trial_license").Str("message", "Client is banned").Str("clientID", client.ID).Str("email", email).Msg("")
 		return &TrialLicenseResponse{
 			Success: false,
 			Message: "Client is banned",
@@ -1034,7 +1036,7 @@ func (lm *LicenseManager) GenerateTrialLicense(ctx context.Context, req *TrialLi
 		// For trial, enable all features of the product
 		entitlements, err = lm.computeTrialEntitlements(ctx, productID)
 		if err != nil {
-			log.Printf("Warning: failed to compute trial entitlements: %v", err)
+			phusluLog.Warn().Err(err).Str("operation", "generate_trial_license").Str("productID", productID).Msg("failed to compute trial entitlements")
 		}
 	}
 
@@ -1083,6 +1085,7 @@ func (lm *LicenseManager) GenerateTrialLicense(ctx context.Context, req *TrialLi
 		return nil, fmt.Errorf("failed to register trial: %w", err)
 	}
 
+	phusluLog.Info().Str("operation", "generate_trial_license").Str("message", fmt.Sprintf("Trial license activated. Expires on %s", expiresAt.Format("2006-01-02"))).Str("licenseID", license.ID).Str("clientID", client.ID).Str("email", email).Str("deviceFingerprint", fingerprint).Time("expiresAt", expiresAt).Msg("")
 	return &TrialLicenseResponse{
 		Success:         true,
 		Message:         fmt.Sprintf("Trial license activated. Expires on %s", expiresAt.Format("2006-01-02")),
@@ -1324,6 +1327,7 @@ func (lm *LicenseManager) ActivateLicense(ctx context.Context, req *ActivationRe
 		licenseProductID := strings.TrimSpace(license.ProductID)
 		if licenseProductID == "" {
 			message := "License is not associated with any product"
+			phusluLog.Error().Str("operation", "activate_license").Str("message", message).Str("licenseID", license.ID).Str("reqProductID", reqProductID).Msg("")
 			lm.recordActivationAttempt(ctx, license, req, false, message)
 			return &ActivationResponse{Success: false, Message: message}, nil
 		}
@@ -1340,6 +1344,7 @@ func (lm *LicenseManager) ActivateLicense(ctx context.Context, req *ActivationRe
 		}
 		if !productMatch {
 			message := "License is not valid for this product"
+			phusluLog.Error().Str("operation", "activate_license").Str("message", message).Str("licenseProductID", licenseProductID).Str("reqProductID", reqProductID).Msg("Invalid license")
 			lm.recordActivationAttempt(ctx, license, req, false, message)
 			return &ActivationResponse{Success: false, Message: message}, nil
 		}
@@ -1352,6 +1357,7 @@ func (lm *LicenseManager) ActivateLicense(ctx context.Context, req *ActivationRe
 
 	if client.Status == ClientStatusBanned {
 		message := "Client is banned"
+		phusluLog.Error().Str("operation", "activate_license").Str("message", message).Str("clientID", client.ID).Str("licenseID", license.ID).Msg("")
 		lm.recordActivationAttempt(ctx, license, req, false, message)
 		return &ActivationResponse{Success: false, Message: message}, nil
 	}
@@ -1359,12 +1365,14 @@ func (lm *LicenseManager) ActivateLicense(ctx context.Context, req *ActivationRe
 	now := time.Now()
 	if license.IsRevoked {
 		message := "License has been revoked"
+		phusluLog.Error().Str("operation", "activate_license").Str("message", message).Str("licenseID", license.ID).Str("revokeReason", license.RevokeReason).Msg("")
 		lm.recordActivationAttempt(ctx, license, req, false, message)
 		return &ActivationResponse{Success: false, Message: message}, nil
 	}
 
 	if now.After(license.ExpiresAt) {
 		message := fmt.Sprintf("License expired on %s", license.ExpiresAt.Format("2006-01-02"))
+		phusluLog.Error().Str("operation", "activate_license").Str("message", message).Str("licenseID", license.ID).Time("expiresAt", license.ExpiresAt).Msg("")
 		lm.recordActivationAttempt(ctx, license, req, false, message)
 		return &ActivationResponse{Success: false, Message: message}, nil
 	}
@@ -1384,6 +1392,7 @@ func (lm *LicenseManager) ActivateLicense(ctx context.Context, req *ActivationRe
 	if !exists {
 		if license.MaxDevices > 0 && len(license.Devices) >= license.MaxDevices {
 			message := fmt.Sprintf("Maximum devices (%d) reached", license.MaxDevices)
+			phusluLog.Error().Str("operation", "activate_license").Str("message", message).Str("licenseID", license.ID).Int("maxDevices", license.MaxDevices).Int("currentDevices", len(license.Devices)).Msg("")
 			lm.recordActivationAttempt(ctx, license, req, false, message)
 			return &ActivationResponse{Success: false, Message: message}, nil
 		}
@@ -1419,7 +1428,7 @@ func (lm *LicenseManager) ActivateLicense(ctx context.Context, req *ActivationRe
 
 	// Ensure entitlements are computed if missing
 	if err := lm.ensureLicenseEntitlements(ctx, license); err != nil {
-		log.Printf("Warning: failed to compute entitlements for license %s: %v", license.ID, err)
+		phusluLog.Warn().Err(err).Str("operation", "activate_license").Str("licenseID", license.ID).Msg("failed to compute entitlements")
 		// Don't fail activation if entitlements can't be computed
 	}
 
@@ -1432,7 +1441,7 @@ func (lm *LicenseManager) ActivateLicense(ctx context.Context, req *ActivationRe
 		return nil, err
 	}
 	resp.Message = "License activated successfully"
-	log.Printf("Activated license for %s on device %s", identity.Email, truncateFingerprint(req.DeviceFingerprint))
+	phusluLog.Info().Str("operation", "activate_license").Str("licenseID", license.ID).Str("email", identity.Email).Str("deviceFingerprint", truncateFingerprint(req.DeviceFingerprint)).Msg("license activated successfully")
 	lm.recordActivationAttempt(ctx, license, req, true, resp.Message)
 	return resp, nil
 }
@@ -1510,6 +1519,7 @@ func (lm *LicenseManager) VerifyLicense(ctx context.Context, req *ActivationRequ
 		licenseProductID := strings.TrimSpace(license.ProductID)
 		if licenseProductID == "" {
 			message := "License is not associated with any product"
+			phusluLog.Error().Str("operation", "verify_license").Str("message", message).Str("licenseID", license.ID).Str("reqProductID", reqProductID).Msg("")
 			lm.recordActivationAttempt(ctx, license, req, false, message)
 			return &ActivationResponse{Success: false, Message: message}, nil
 		}
@@ -1526,6 +1536,7 @@ func (lm *LicenseManager) VerifyLicense(ctx context.Context, req *ActivationRequ
 		}
 		if !productMatch {
 			message := "License is not valid for this product"
+			phusluLog.Error().Str("operation", "verify_license").Str("message", message).Str("licenseProductID", licenseProductID).Str("reqProductID", reqProductID).Msg("")
 			lm.recordActivationAttempt(ctx, license, req, false, message)
 			return &ActivationResponse{Success: false, Message: message}, nil
 		}
@@ -1543,28 +1554,33 @@ func (lm *LicenseManager) VerifyLicense(ctx context.Context, req *ActivationRequ
 	}
 	if client.Status == ClientStatusBanned {
 		message := "Client is banned"
+		phusluLog.Error().Str("operation", "verify_license").Str("message", message).Str("clientID", client.ID).Str("licenseID", license.ID).Msg("")
 		lm.recordActivationAttempt(ctx, license, req, false, message)
 		return &ActivationResponse{Success: false, Message: message}, nil
 	}
 	now := time.Now()
 	if license.IsRevoked {
 		message := "License has been revoked"
+		phusluLog.Error().Str("operation", "verify_license").Str("message", message).Str("licenseID", license.ID).Str("revokeReason", license.RevokeReason).Msg("")
 		lm.recordActivationAttempt(ctx, license, req, false, message)
 		return &ActivationResponse{Success: false, Message: message}, nil
 	}
 	if now.After(license.ExpiresAt) {
 		message := fmt.Sprintf("License expired on %s", license.ExpiresAt.Format("2006-01-02"))
+		phusluLog.Error().Str("operation", "verify_license").Str("message", message).Str("licenseID", license.ID).Time("expiresAt", license.ExpiresAt).Msg("")
 		lm.recordActivationAttempt(ctx, license, req, false, message)
 		return &ActivationResponse{Success: false, Message: message}, nil
 	}
 	if license.Devices == nil {
 		message := "Device not previously activated"
+		phusluLog.Error().Str("operation", "verify_license").Str("message", message).Str("licenseID", license.ID).Str("deviceFingerprint", req.DeviceFingerprint).Msg("")
 		lm.recordActivationAttempt(ctx, license, req, false, message)
 		return &ActivationResponse{Success: false, Message: message}, nil
 	}
 	device, exists := license.Devices[req.DeviceFingerprint]
 	if !exists {
 		message := "Device not previously activated"
+		phusluLog.Error().Str("operation", "verify_license").Str("message", message).Str("licenseID", license.ID).Str("deviceFingerprint", req.DeviceFingerprint).Msg("")
 		lm.recordActivationAttempt(ctx, license, req, false, message)
 		return &ActivationResponse{Success: false, Message: message}, nil
 	}
@@ -1582,7 +1598,7 @@ func (lm *LicenseManager) VerifyLicense(ctx context.Context, req *ActivationRequ
 
 	// Ensure entitlements are computed if missing
 	if err := lm.ensureLicenseEntitlements(ctx, license); err != nil {
-		log.Printf("Warning: failed to compute entitlements for license %s: %v", license.ID, err)
+		phusluLog.Warn().Err(err).Str("operation", "verify_license").Str("licenseID", license.ID).Msg("failed to compute entitlements")
 		// Don't fail verification if entitlements can't be computed
 	}
 
@@ -1594,6 +1610,7 @@ func (lm *LicenseManager) VerifyLicense(ctx context.Context, req *ActivationRequ
 		return nil, err
 	}
 	resp.Message = "License verified successfully"
+	phusluLog.Info().Str("operation", "verify_license").Str("message", resp.Message).Str("licenseID", license.ID).Str("email", identity.Email).Str("deviceFingerprint", truncateFingerprint(req.DeviceFingerprint)).Msg("")
 	lm.recordActivationAttempt(ctx, license, req, true, resp.Message)
 	return resp, nil
 }
@@ -1792,7 +1809,7 @@ func (lm *LicenseManager) recordActivationAttempt(ctx context.Context, license *
 		Timestamp:         time.Now(),
 	}
 	if err := lm.storage.RecordActivation(ctx, record); err != nil {
-		log.Printf("failed to record activation audit: %v", err)
+		phusluLog.Error().Err(err).Str("operation", "record_activation_attempt").Str("licenseID", record.LicenseID).Str("deviceFingerprint", record.DeviceFingerprint).Msg("failed to record activation audit")
 	}
 }
 
@@ -1810,7 +1827,7 @@ func (lm *LicenseManager) GetLicenseByID(ctx context.Context, licenseID string) 
 	}
 	// Compute entitlements if missing; don't fail the request if this errors.
 	if err := lm.ensureLicenseEntitlements(ctx, license); err != nil {
-		log.Printf("Warning: failed to compute entitlements for license %s: %v", license.ID, err)
+		phusluLog.Warn().Err(err).Str("operation", "get_license_by_id").Str("licenseID", license.ID).Msg("failed to compute entitlements")
 	}
 	return license, nil
 }
@@ -1852,25 +1869,30 @@ func (lm *LicenseManager) GenerateOfflineValidationToken(ctx context.Context, li
 	// Get the license
 	license, err := lm.storage.GetLicenseByKey(ctx, licenseKey)
 	if err != nil {
+		phusluLog.Error().Err(err).Str("operation", "generate_offline_validation_token").Str("message", "license not found").Str("licenseKey", licenseKey).Msg("")
 		return nil, "", fmt.Errorf("license not found: %w", err)
 	}
 
 	// Validate the license
 	if license.IsRevoked {
+		phusluLog.Error().Str("operation", "generate_offline_validation_token").Str("message", "license has been revoked").Str("licenseID", license.ID).Str("revokeReason", license.RevokeReason).Msg("")
 		return nil, "", fmt.Errorf("license has been revoked")
 	}
 
 	if time.Now().After(license.ExpiresAt) {
+		phusluLog.Error().Str("operation", "generate_offline_validation_token").Str("message", "license has expired").Str("licenseID", license.ID).Time("expiresAt", license.ExpiresAt).Msg("")
 		return nil, "", fmt.Errorf("license has expired")
 	}
 
 	// Check if the device is authorized for this license
 	if len(license.Devices) == 0 {
+		phusluLog.Error().Str("operation", "generate_offline_validation_token").Str("message", "license has no activated devices").Str("licenseID", license.ID).Msg("")
 		return nil, "", fmt.Errorf("license has no activated devices")
 	}
 
 	_, exists := license.Devices[deviceFingerprint]
 	if !exists {
+		phusluLog.Error().Str("operation", "generate_offline_validation_token").Str("message", "device not found in license").Str("licenseID", license.ID).Str("deviceFingerprint", deviceFingerprint).Msg("")
 		return nil, "", fmt.Errorf("device not found in license")
 	}
 
@@ -1916,6 +1938,7 @@ func (lm *LicenseManager) GenerateOfflineValidationToken(ctx context.Context, li
 	}
 
 	if err := lm.storage.SaveOfflineValidationToken(ctx, offlineToken); err != nil {
+		phusluLog.Error().Err(err).Str("operation", "generate_offline_validation_token").Str("message", "failed to save offline validation token").Str("licenseKey", licenseKey).Str("deviceFingerprint", deviceFingerprint).Msg("")
 		return nil, "", fmt.Errorf("failed to save offline validation token: %w", err)
 	}
 
@@ -1955,11 +1978,12 @@ func (lm *LicenseManager) GenerateOfflineValidationToken(ctx context.Context, li
 			// Update offline token record to include signing key id (already set earlier) — persist the change
 			if err := lm.storage.UpdateOfflineValidationToken(ctx, offlineToken); err != nil {
 				// Not fatal — token issued; just log
-				log.Printf("Warning: failed to persist signing_key_id for offline token: %v", err)
+				phusluLog.Warn().Err(err).Str("operation", "generate_offline_validation_token").Str("token", offlineToken.Token).Msg("failed to persist signing_key_id for offline token")
 			}
 		}
 	}
 
+	phusluLog.Info().Str("operation", "generate_offline_validation_token").Str("message", "offline validation token generated successfully").Str("token", offlineToken.Token).Str("licenseKey", licenseKey).Str("deviceFingerprint", deviceFingerprint).Int("maxUses", maxUses).Int("validityDays", validityDays).Msg("")
 	return offlineToken, signedBundle, nil
 }
 
@@ -1978,15 +2002,18 @@ func (lm *LicenseManager) ValidateOfflineToken(ctx context.Context, token string
 			Signature string                 `json:"signature"`
 		}
 		if err := json.Unmarshal([]byte(token), &bundle); err != nil {
+			phusluLog.Error().Err(err).Str("operation", "validate_offline_token").Str("message", "invalid offline token bundle").Msg("")
 			return nil, nil, fmt.Errorf("invalid offline token bundle: %w", err)
 		}
 		// Extract signing key id from payload
 		skidVal, ok := bundle.Payload["signing_key_id"]
 		if !ok {
+			phusluLog.Error().Str("operation", "validate_offline_token").Str("message", "bundle missing signing_key_id").Msg("")
 			return nil, nil, fmt.Errorf("bundle missing signing_key_id")
 		}
 		skid, ok := skidVal.(string)
 		if !ok || skid == "" {
+			phusluLog.Error().Str("operation", "validate_offline_token").Str("message", "invalid signing_key_id in bundle").Str("signingKeyID", skid).Msg("")
 			return nil, nil, fmt.Errorf("invalid signing_key_id in bundle")
 		}
 		// Get signing key public part, prefer configured offline signer
@@ -1995,14 +2022,17 @@ func (lm *LicenseManager) ValidateOfflineToken(ctx context.Context, token string
 		if lm.offlineSigner != nil {
 			pub, perr = lm.offlineSigner.PublicKey(skid)
 			if perr != nil {
+				phusluLog.Error().Err(perr).Str("operation", "validate_offline_token").Str("message", "signing key not available from provider").Str("signingKeyID", skid).Msg("")
 				return nil, nil, fmt.Errorf("signing key not available from provider: %w", perr)
 			}
 		} else {
 			key, err := lm.storage.GetSigningKey(ctx, skid)
 			if err != nil {
+				phusluLog.Error().Err(err).Str("operation", "validate_offline_token").Str("message", "signing key not found").Str("signingKeyID", skid).Msg("")
 				return nil, nil, fmt.Errorf("signing key not found: %w", err)
 			}
 			if len(key.PublicKey) == 0 {
+				phusluLog.Error().Str("operation", "validate_offline_token").Str("message", "signing key missing public key").Str("signingKeyID", skid).Msg("")
 				return nil, nil, fmt.Errorf("signing key missing public key")
 			}
 			pub = key.PublicKey
@@ -2010,22 +2040,27 @@ func (lm *LicenseManager) ValidateOfflineToken(ctx context.Context, token string
 		// Re-marshal the payload deterministically and verify signature
 		payloadBytes, err := json.Marshal(bundle.Payload)
 		if err != nil {
+			phusluLog.Error().Err(err).Str("operation", "validate_offline_token").Str("message", "failed to re-marshal bundle payload").Msg("")
 			return nil, nil, fmt.Errorf("failed to re-marshal bundle payload: %w", err)
 		}
 		sig, err := base64.StdEncoding.DecodeString(strings.TrimSpace(bundle.Signature))
 		if err != nil {
+			phusluLog.Error().Err(err).Str("operation", "validate_offline_token").Str("message", "invalid signature encoding").Msg("")
 			return nil, nil, fmt.Errorf("invalid signature encoding: %w", err)
 		}
 		if !ed25519.Verify(ed25519.PublicKey(pub), payloadBytes, sig) {
+			phusluLog.Error().Str("operation", "validate_offline_token").Str("message", "invalid bundle signature").Str("signingKeyID", skid).Msg("")
 			return nil, nil, fmt.Errorf("invalid bundle signature")
 		}
 		// Extract token id from payload
 		tVal, ok := bundle.Payload["token"]
 		if !ok {
+			phusluLog.Error().Str("operation", "validate_offline_token").Str("message", "bundle payload missing token").Msg("")
 			return nil, nil, fmt.Errorf("bundle payload missing token")
 		}
 		t, ok := tVal.(string)
 		if !ok || t == "" {
+			phusluLog.Error().Str("operation", "validate_offline_token").Str("message", "invalid token in bundle payload").Str("token", t).Msg("")
 			return nil, nil, fmt.Errorf("invalid token in bundle payload")
 		}
 		token = t
@@ -2033,47 +2068,56 @@ func (lm *LicenseManager) ValidateOfflineToken(ctx context.Context, token string
 	// Get the offline token
 	offlineToken, err := lm.storage.GetOfflineValidationToken(ctx, token)
 	if err != nil {
+		phusluLog.Error().Err(err).Str("operation", "validate_offline_token").Str("message", "invalid offline validation token").Str("token", token).Msg("")
 		return nil, nil, fmt.Errorf("invalid offline validation token: %w", err)
 	}
 
 	// Check if token is revoked
 	if offlineToken.IsRevoked {
+		phusluLog.Error().Str("operation", "validate_offline_token").Str("message", "offline validation token has been revoked").Str("token", token).Str("revokedBy", offlineToken.RevokedBy).Str("revokedReason", offlineToken.RevokedReason).Msg("")
 		return nil, nil, fmt.Errorf("offline validation token has been revoked")
 	}
 
 	// Check if token has expired
 	if time.Now().After(offlineToken.ValidUntil) {
+		phusluLog.Error().Str("operation", "validate_offline_token").Str("message", "offline validation token has expired").Str("token", token).Time("validUntil", offlineToken.ValidUntil).Msg("")
 		return nil, nil, fmt.Errorf("offline validation token has expired")
 	}
 
 	// Check if token has exceeded maximum uses
 	if offlineToken.UsageCount >= offlineToken.MaxUses {
+		phusluLog.Error().Str("operation", "validate_offline_token").Str("message", "offline validation token has exceeded maximum uses").Str("token", token).Int("usageCount", offlineToken.UsageCount).Int("maxUses", offlineToken.MaxUses).Msg("")
 		return nil, nil, fmt.Errorf("offline validation token has exceeded maximum uses")
 	}
 
 	// Check if device fingerprint matches
 	if strings.TrimSpace(deviceFingerprint) != "" && deviceFingerprint != offlineToken.DeviceFingerprint {
+		phusluLog.Error().Str("operation", "validate_offline_token").Str("message", "device fingerprint does not match token").Str("token", token).Str("reqDeviceFingerprint", deviceFingerprint).Str("tokenDeviceFingerprint", offlineToken.DeviceFingerprint).Msg("")
 		return nil, nil, fmt.Errorf("device fingerprint does not match token")
 	}
 
 	// Get the license
 	license, err := lm.storage.GetLicenseByKey(ctx, offlineToken.LicenseKey)
 	if err != nil {
+		phusluLog.Error().Err(err).Str("operation", "validate_offline_token").Str("message", "license not found").Str("licenseKey", offlineToken.LicenseKey).Msg("")
 		return nil, nil, fmt.Errorf("license not found: %w", err)
 	}
 
 	// Validate the license
 	if license.IsRevoked {
+		phusluLog.Error().Str("operation", "validate_offline_token").Str("message", "license has been revoked").Str("licenseID", license.ID).Str("revokeReason", license.RevokeReason).Msg("")
 		return nil, nil, fmt.Errorf("license has been revoked")
 	}
 
 	if time.Now().After(license.ExpiresAt) {
+		phusluLog.Error().Str("operation", "validate_offline_token").Str("message", "license has expired").Str("licenseID", license.ID).Time("expiresAt", license.ExpiresAt).Msg("")
 		return nil, nil, fmt.Errorf("license has expired")
 	}
 
 	// Increment usage count
 	offlineToken.UsageCount++
 	if err := lm.storage.UpdateOfflineValidationToken(ctx, offlineToken); err != nil {
+		phusluLog.Error().Err(err).Str("operation", "validate_offline_token").Str("message", "failed to update token usage").Str("token", token).Msg("")
 		return nil, nil, fmt.Errorf("failed to update token usage: %w", err)
 	}
 
@@ -2090,9 +2134,10 @@ func (lm *LicenseManager) ValidateOfflineToken(ctx context.Context, token string
 
 	if err := lm.storage.SaveOfflineValidationLog(ctx, validationLog); err != nil {
 		// Don't fail the validation if logging fails
-		log.Printf("Warning: failed to log offline validation: %v", err)
+		phusluLog.Warn().Err(err).Str("operation", "validate_offline_token").Str("token", token).Msg("failed to log offline validation")
 	}
 
+	phusluLog.Info().Str("operation", "validate_offline_token").Str("message", "offline token validated successfully").Str("licenseID", license.ID).Str("token", token).Str("deviceFingerprint", deviceFingerprint).Msg("")
 	return license, offlineToken, nil
 }
 

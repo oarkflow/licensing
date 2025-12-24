@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/oarkflow/licensing/pkg/utils"
 )
 
 // ==================== Request Types ====================
@@ -128,9 +129,16 @@ func (s *Server) handleProducts(w http.ResponseWriter, r *http.Request) {
 			s.respondError(w, http.StatusBadRequest, "name and slug are required")
 			return
 		}
+		if name != "" && slug == "" {
+			slug = utils.Make(name)
+		}
 		now := time.Now()
+		id := uuid.New().String()
+		if slug != "" {
+			id = slug
+		}
 		product := &Product{
-			ID:          uuid.New().String(),
+			ID:          id,
 			Name:        name,
 			Slug:        slug,
 			Description: strings.TrimSpace(req.Description),
