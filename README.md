@@ -42,6 +42,7 @@ A hardened license server and client that leverage pluggable signing providers (
    export LICENSE_SERVER_STORAGE_SQLITE_PATH="/var/lib/licensing/licensing.db"
 
    # TLS (required for all non-development deployments)
+   export APP_ENV="production"
    export LICENSE_SERVER_TLS_CERT="/path/to/server.crt"
    export LICENSE_SERVER_TLS_KEY="/path/to/server.key"
    # Enable mutual TLS by providing a client CA bundle
@@ -60,10 +61,15 @@ A hardened license server and client that leverage pluggable signing providers (
    export LICENSE_SERVER_KEY_PASSPHRASE="change-me"
    # When using "tpm" target a specific device path (defaults to /dev/tpmrm0)
    export LICENSE_SERVER_TPM_DEVICE="/dev/tpmrm0"
+   # Production mode rejects software keys unless explicitly allowed.
+   # export LICENSE_SERVER_ALLOW_SOFTWARE_KEYS_IN_PROD="true"
 
    # CORS configuration (optional)
    # Comma-separated list of allowed origins for frontend applications
    export LICENSE_SERVER_ALLOWED_ORIGINS="http://localhost:5173,http://localhost:3000,https://your-production-domain.com"
+
+   # Metrics endpoint (/metrics). In production this is disabled by default unless explicitly enabled.
+   export LICENSE_SERVER_METRICS_ENABLED="true"
    ```
 
    > Upgrading from an older release? Follow the SQLite migration guide in `docs/sqlite_migration.md` after deploying the new binaries.
@@ -73,6 +79,8 @@ A hardened license server and client that leverage pluggable signing providers (
    ```
    On startup the server logs the active storage backend, TLS mode, and the location of the exported public key (`~/.licensing/server_public_key.pem`).
 4. **Use the admin APIs:** include `X-API-Key: <key>` on every request.
+5. **Production container profile:** use `docker-compose.prod.yml` (non-root runtime, read-only root FS, persistent SQLite volume, TLS mounts).
+6. **Compliance operations:** follow `docs/COMPLIANCE_OPERATIONS_RUNBOOK.md` for audit evidence export, backup/restore drills, and rotation policy.
 
 ## Admin API Reference
 
@@ -110,6 +118,8 @@ All endpoints live under `http(s)://<host>:<port>/api`. Supply the `X-API-Key` h
 | `GET` | `/api/licenses/{id}` | Retrieve a single license |
 | `POST` | `/api/licenses/{id}/revoke` | Revoke a license |
 | `POST` | `/api/licenses/{id}/reinstate` | Reinstate a revoked license |
+| `GET` | `/api/admin/audit` | Query tamper-evident audit events (admin only) |
+| `GET` | `/api/admin/audit/compliance` | Generate compliance report (admin only) |
 
 **Create License Request**
 ```json

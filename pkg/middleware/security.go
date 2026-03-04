@@ -270,10 +270,11 @@ func (sm *SecurityMiddleware) hasRequiredRole(userRole, requiredRole auth.Role) 
 
 // validateAPIKey validates an API key and returns user info
 func (sm *SecurityMiddleware) validateAPIKey(apiKey string) (string, auth.Role, error) {
-	// TODO: Implement actual API key validation
-	// This should query your database or cache
-	// For now, return placeholder
-	return "user-123", auth.RoleManager, nil
+	if strings.TrimSpace(apiKey) == "" {
+		return "", "", fmt.Errorf("empty API key")
+	}
+	// Fail closed until a concrete validator is wired to a persistent auth store.
+	return "", "", fmt.Errorf("API key validation backend not configured")
 }
 
 // logUnauthorized logs unauthorized access attempts

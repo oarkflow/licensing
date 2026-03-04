@@ -1,1 +1,169 @@
-<html></html>
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Your License Credentials for {{.ProductName}}</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            line-height: 1.6;
+            color: #333;
+            max-width: 600px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f9f9f9;
+        }
+
+        .container {
+            background-color: white;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+            padding: 30px;
+        }
+
+        .header {
+            background: linear-gradient(135deg, #2ECC71, #27AE60);
+            color: white;
+            padding: 20px;
+            border-radius: 8px 8px 0 0;
+            text-align: center;
+            margin: -30px -30px 20px -30px;
+        }
+
+        .logo {
+            font-size: 24px;
+            font-weight: bold;
+            margin-bottom: 10px;
+        }
+
+        .company-branding {
+            font-size: 14px;
+            margin-top: 10px;
+            opacity: 0.9;
+        }
+
+        .content {
+            padding: 20px 0;
+        }
+
+        .license-box {
+            background-color: #f0f0f0;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            padding: 15px;
+            font-family: 'Courier New', monospace;
+            font-size: 13px;
+            overflow-x: auto;
+            white-space: pre-wrap;
+            margin: 20px 0;
+            max-height: 300px;
+            overflow-y: auto;
+        }
+
+        .important {
+            background-color: #fff8e1;
+            border-left: 4px solid #f57c00;
+            padding: 15px;
+            margin: 20px 0;
+        }
+
+        .button {
+            display: inline-block;
+            background: linear-gradient(135deg, #2ECC71, #27AE60);
+            color: white;
+            padding: 12px 24px;
+            text-decoration: none;
+            border-radius: 4px;
+            font-weight: bold;
+            margin: 20px 0;
+        }
+
+        .footer {
+            margin-top: 30px;
+            padding-top: 20px;
+            border-top: 1px solid #eee;
+            color: #666;
+            font-size: 14px;
+            text-align: center;
+        }
+
+        .brand-footer {
+            background-color: #2ECC71;
+            color: white;
+            padding: 15px;
+            border-radius: 0 0 8px 8px;
+            margin: -30px -30px -30px -30px;
+            margin-top: 20px;
+            text-align: center;
+            font-size: 12px;
+        }
+
+        .brand-logo {
+            font-size: 18px;
+            font-weight: bold;
+            margin-bottom: 5px;
+        }
+
+        .brand-info {
+            opacity: 0.9;
+        }
+    </style>
+</head>
+
+<body>
+    <div class="container">
+        <div class="header">
+            <div class="logo">Verishore LLC</div>
+            <div class="company-branding">Professional Licensing Solutions</div>
+            <div style="font-size: 16px; margin-top: 10px;">Your License Credentials</div>
+        </div>
+
+        <div class="content">
+            <p>Hi {{.ClientName}},</p>
+
+            <p>Thank you for choosing {{.ProductName}}! Below are your license credentials provided by Verishore LLC.
+            </p>
+
+            <div class="important">
+                <p>🔒 <strong>IMPORTANT:</strong> Please keep this information secure and private.</p>
+                <p>Do not share your license credentials with anyone.</p>
+            </div>
+
+            <p>We have attached the <code>license.json</code> file to this email for your convenience.</p>
+
+            <div class="license-box">
+                {{.LicenseJSON}}
+            </div>
+
+            <p>Here's what you need to do next:</p>
+            <ul>
+                <li>💾 Save the attached license.json file securely</li>
+                <li>🔑 Use these credentials to activate your devices</li>
+                <li>📚 Refer to our documentation for activation instructions</li>
+            </ul>
+
+            <div style="text-align: center; margin: 30px 0;">
+                <a href="{{.DocsURL}}" class="button">View Documentation</a>
+            </div>
+
+            <p>If you have any questions or need assistance with activation, please contact our support team.</p>
+        </div>
+
+        <div class="footer">
+            <p>© {{.Year}} Verishore LLC. All rights reserved.</p>
+            <p style="font-size: 12px; color: #999; margin-top: 10px;">
+                This email was sent to {{.Email}}. If you didn't request this, please ignore it.
+            </p>
+        </div>
+
+        <div class="brand-footer">
+            <div class="brand-logo">Verishore LLC</div>
+            <div class="brand-info">Professional Licensing Solutions | Secure. Reliable. Trusted.</div>
+            <div class="brand-info" style="margin-top: 5px;">📞 Support: support@verishore.com | 🌐 verishore.com</div>
+        </div>
+    </div>
+</body>
+
+</html>

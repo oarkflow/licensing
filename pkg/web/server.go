@@ -299,6 +299,13 @@ func (ws *WebServer) isOriginAllowed(origin string) bool {
 	return false
 }
 
+func isSecureRequest(r *http.Request) bool {
+	if r != nil && r.TLS != nil {
+		return true
+	}
+	return strings.EqualFold(strings.TrimSpace(r.Header.Get("X-Forwarded-Proto")), "https")
+}
+
 func (ws *WebServer) withMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Handle CORS with proper origin handling for credentialed requests
@@ -557,7 +564,7 @@ func (ws *WebServer) handleAPILogin(w http.ResponseWriter, r *http.Request) {
 		MaxAge:   int(ws.sessionMaxAge.Seconds()),
 		HttpOnly: true,
 		SameSite: http.SameSiteLaxMode, // Use Lax for cross-origin requests from frontend
-		Secure:   r.TLS != nil,
+		Secure:   isSecureRequest(r),
 	})
 
 	ws.respondJSON(w, http.StatusOK, map[string]interface{}{
@@ -590,6 +597,7 @@ func (ws *WebServer) handleAPILogout(w http.ResponseWriter, r *http.Request) {
 		MaxAge:   -1,
 		HttpOnly: true,
 		SameSite: http.SameSiteLaxMode,
+		Secure:   isSecureRequest(r),
 	})
 
 	ws.respondJSON(w, http.StatusOK, map[string]string{"message": "Logged out successfully"})
@@ -709,7 +717,7 @@ func (ws *WebServer) handleAPISetup(w http.ResponseWriter, r *http.Request) {
 		MaxAge:   int(ws.sessionMaxAge.Seconds()),
 		HttpOnly: true,
 		SameSite: http.SameSiteLaxMode,
-		Secure:   r.TLS != nil,
+		Secure:   isSecureRequest(r),
 	})
 
 	ws.respondJSON(w, http.StatusCreated, map[string]interface{}{

@@ -19,8 +19,6 @@ import (
 // ==================== Main ====================
 
 func main() {
-	os.Setenv("LICENSE_SERVER_ALLOW_INSECURE_HTTP", "true")
-
 	// Check for help flag in any position
 	for _, arg := range os.Args[1:] {
 		if arg == "--help" || arg == "-h" || arg == "help" {
@@ -70,7 +68,7 @@ func printUsage() {
 }
 
 func runServerCommand() {
-	httpServer := flag.String("http-addr", ":6601", "HTTP server address")
+	httpServer := flag.String("http-addr", defaultHTTPAddr(), "HTTP server address")
 	defaultAllowInsecure := envBool("LICENSE_SERVER_ALLOW_INSECURE_HTTP")
 	allowInsecureHTTP := flag.Bool("allow-insecure-http", defaultAllowInsecure, "Allow HTTP without TLS (development only)")
 	flag.Parse()
@@ -108,6 +106,9 @@ func runServerCommand() {
 		log.Printf("🔑 Public key stored at %s", pubPath)
 	}
 	log.Printf("🔏 Signing provider: %s", lm.SigningProviderID())
+	if err := validateProductionHardening(storageMode, lm.SigningProviderID()); err != nil {
+		log.Fatalf("Production hardening check failed: %v", err)
+	}
 	adminUsers, err := lm.ListAdminUsers(ctx)
 	if err != nil {
 		log.Fatalf("Failed to inspect admin users: %v", err)
@@ -145,6 +146,9 @@ func runServerCommand() {
 	tlsCert := os.Getenv("LICENSE_SERVER_TLS_CERT")
 	tlsKey := os.Getenv("LICENSE_SERVER_TLS_KEY")
 	clientCA := os.Getenv("LICENSE_SERVER_CLIENT_CA")
+	if err := validateServerRuntime(*allowInsecureHTTP, tlsCert, tlsKey, apiKeys); err != nil {
+		log.Fatalf("Invalid runtime configuration: %v", err)
+	}
 	server, err := licensing.NewServer(lm, *httpServer, apiKeys, rateLimiter, tlsCert, tlsKey, clientCA, *allowInsecureHTTP)
 	if err != nil {
 		log.Fatalf("Failed to initialize server: %v", err)
@@ -163,6 +167,68 @@ func runServerCommand() {
 	// Start HTTP server
 	if err := server.Start(); err != nil {
 		log.Fatalf("Server error: %v", err)
+	}
+}
+
+func defaultHTTPAddr() string {
+	if raw := strings.TrimSpace(os.Getenv("LICENSE_SERVER_HTTP_ADDR")); raw != "" {
+		return raw
+	}
+	if raw := strings.TrimSpace(os.Getenv("PORT")); raw != "" {
+		return ":" + strings.TrimPrefix(raw, ":")
+	}
+	return ":6601"
+}
+
+func validateServerRuntime(allowInsecure bool, tlsCert, tlsKey string, apiKeys []string) error {
+	if len(apiKeys) == 0 {
+		log.Printf("⚠️ No legacy admin API keys in environment; rely on web setup/session auth and stored API keys")
+	}
+	env := strings.ToLower(strings.TrimSpace(os.Getenv("APP_ENV")))
+	if env == "prod" || env == "production" {
+		if allowInsecure {
+			return fmt.Errorf("insecure HTTP is forbidden when APP_ENV=%q", env)
+		}
+		if strings.TrimSpace(tlsCert) == "" || strings.TrimSpace(tlsKey) == "" {
+			return fmt.Errorf("TLS cert/key are required when APP_ENV=%q", env)
+		}
+		if !envBoolDefault("LICENSE_SERVER_AUDIT_ENABLED", true) {
+			return fmt.Errorf("audit logging cannot be disabled when APP_ENV=%q", env)
+		}
+	}
+	return nil
+}
+
+func validateProductionHardening(storageMode, signingProviderID string) error {
+	env := strings.ToLower(strings.TrimSpace(os.Getenv("APP_ENV")))
+	if env != "prod" && env != "production" {
+		return nil
+	}
+	if strings.EqualFold(strings.TrimSpace(os.Getenv("LICENSE_SERVER_ALLOW_MEMORY_STORAGE_IN_PROD")), "true") {
+		return nil
+	}
+	if strings.HasPrefix(strings.ToLower(strings.TrimSpace(storageMode)), "memory") {
+		return fmt.Errorf("memory storage is not allowed in production")
+	}
+	if strings.EqualFold(strings.TrimSpace(os.Getenv("LICENSE_SERVER_ALLOW_SOFTWARE_KEYS_IN_PROD")), "true") {
+		return nil
+	}
+	if strings.HasPrefix(strings.ToLower(strings.TrimSpace(signingProviderID)), "software-") {
+		return fmt.Errorf("software signing provider is not allowed in production; use file or TPM provider")
+	}
+	return nil
+}
+
+func envBoolDefault(key string, defaultVal bool) bool {
+	raw := strings.TrimSpace(os.Getenv(key))
+	if raw == "" {
+		return defaultVal
+	}
+	switch strings.ToLower(raw) {
+	case "1", "true", "yes", "on":
+		return true
+	default:
+		return false
 	}
 }
 

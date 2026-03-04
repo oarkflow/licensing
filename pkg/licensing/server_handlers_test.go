@@ -6,17 +6,12 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
-	"os"
 	"testing"
 	"time"
 )
 
 func TestClientRegisterLoginProfileFlow(t *testing.T) {
 	storage := NewInMemoryStorage()
-	// Ensure templates exist for EmailTemplateLoader, since NewServer loads them
-	_ = os.MkdirAll("templates/email", 0o755)
-	_ = os.WriteFile("templates/email/license_email.html", []byte("<html><body>License for {{.ClientName}}</body></html>"), 0o644)
-	_ = os.WriteFile("templates/email/welcome_email.html", []byte("<html><body>Welcome {{.ClientName}}</body></html>"), 0o644)
 	lm, err := NewLicenseManager(storage)
 	if err != nil {
 		t.Fatalf("failed to create license manager: %v", err)
@@ -227,9 +222,6 @@ func TestOfflineTokenGenerateValidateFlow(t *testing.T) {
 
 func TestClientAPIKeysCRUD(t *testing.T) {
 	storage := NewInMemoryStorage()
-	_ = os.MkdirAll("templates/email", 0o755)
-	_ = os.WriteFile("templates/email/license_email.html", []byte("<html></html>"), 0o644)
-	_ = os.WriteFile("templates/email/welcome_email.html", []byte("<html></html>"), 0o644)
 	lm, err := NewLicenseManager(storage)
 	if err != nil {
 		t.Fatalf("NewLicenseManager failed: %v", err)
@@ -313,9 +305,6 @@ func TestClientAPIKeysCRUD(t *testing.T) {
 
 func TestClientAPIKeyAuthorizationHeader(t *testing.T) {
 	storage := NewInMemoryStorage()
-	_ = os.MkdirAll("templates/email", 0o755)
-	_ = os.WriteFile("templates/email/license_email.html", []byte("<html></html>"), 0o644)
-	_ = os.WriteFile("templates/email/welcome_email.html", []byte("<html></html>"), 0o644)
 	lm, err := NewLicenseManager(storage)
 	if err != nil {
 		t.Fatalf("NewLicenseManager failed: %v", err)
@@ -351,9 +340,6 @@ func TestClientAPIKeyAuthorizationHeader(t *testing.T) {
 
 func TestClientEndpointLoginPath(t *testing.T) {
 	storage := NewInMemoryStorage()
-	_ = os.MkdirAll("templates/email", 0o755)
-	_ = os.WriteFile("templates/email/license_email.html", []byte("<html></html>"), 0o644)
-	_ = os.WriteFile("templates/email/welcome_email.html", []byte("<html></html>"), 0o644)
 	lm, err := NewLicenseManager(storage)
 	if err != nil {
 		t.Fatalf("NewLicenseManager failed: %v", err)
@@ -384,9 +370,6 @@ func TestClientEndpointLoginPath(t *testing.T) {
 
 func TestAdminAuthorizationWithBearerToken(t *testing.T) {
 	storage := NewInMemoryStorage()
-	_ = os.MkdirAll("templates/email", 0o755)
-	_ = os.WriteFile("templates/email/license_email.html", []byte("<html></html>"), 0o644)
-	_ = os.WriteFile("templates/email/welcome_email.html", []byte("<html></html>"), 0o644)
 	lm, err := NewLicenseManager(storage)
 	if err != nil {
 		t.Fatalf("NewLicenseManager failed: %v", err)

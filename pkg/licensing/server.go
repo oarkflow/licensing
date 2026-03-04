@@ -8,6 +8,7 @@ import (
 	"crypto/subtle"
 	"crypto/tls"
 	"crypto/x509"
+	"database/sql"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -19,13 +20,19 @@ import (
 	"net/http"
 	"net/smtp"
 	"os"
+	"path/filepath"
+	"runtime"
+	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/oarkflow/licensing/pkg/audit"
 	email "github.com/oarkflow/licensing/pkg/email"
 	"github.com/oarkflow/licensing/pkg/utils"
+	_ "modernc.org/sqlite"
 )
 
 type Server struct {
@@ -43,6 +50,21 @@ type Server struct {
 	// In-memory client sessions (for client authentication). Persist via storage in future.
 	clientSessions   map[string]*ClientSession
 	clientSessionsMu sync.RWMutex
+	metrics          *serverMetrics
+	auditLogger      *audit.AuditLogger
+	auditIncludePing bool
+	auditDB          *sql.DB
+}
+
+type serverMetrics struct {
+	startedAt     time.Time
+	requestsTotal atomic.Uint64
+	requestsLive  atomic.Uint64
+	requests2xx   atomic.Uint64
+	requests4xx   atomic.Uint64
+	requests5xx   atomic.Uint64
+	latencyNanos  atomic.Uint64
+	responseBytes atomic.Uint64
 }
 
 // SessionValidator validates session cookies for authentication
@@ -126,7 +148,7 @@ func NewServer(lm *LicenseManager, port string, apiKeys []string, limiter *RateL
 		return nil, fmt.Errorf("failed to load email templates: %w", err)
 	}
 
-	return &Server{
+	server := &Server{
 		lm:                  lm,
 		port:                port,
 		rateLimiter:         limiter,
@@ -137,7 +159,12 @@ func NewServer(lm *LicenseManager, port string, apiKeys []string, limiter *RateL
 		allowInsecureHTTP:   allowInsecure,
 		emailTemplateLoader: emailTemplateLoader,
 		clientSessions:      map[string]*ClientSession{},
-	}, nil
+		metrics:             &serverMetrics{startedAt: time.Now()},
+	}
+	if err := server.initAuditLogger(); err != nil {
+		return nil, err
+	}
+	return server, nil
 }
 
 // SetWebHandler sets an optional web UI handler for the server
@@ -161,6 +188,14 @@ func clientIP(r *http.Request) string {
 		return r.RemoteAddr
 	}
 	return host
+}
+
+func isSecureRequest(r *http.Request) bool {
+	if r != nil && r.TLS != nil {
+		return true
+	}
+	proto := strings.ToLower(strings.TrimSpace(r.Header.Get("X-Forwarded-Proto")))
+	return proto == "https"
 }
 
 func (s *Server) enforceRateLimit(w http.ResponseWriter, r *http.Request) bool {
@@ -778,6 +813,259 @@ func (s *Server) withSecurityHeaders(next http.Handler) http.Handler {
 	})
 }
 
+func envBoolDefault(key string, defaultVal bool) bool {
+	raw := strings.TrimSpace(os.Getenv(key))
+	if raw == "" {
+		return defaultVal
+	}
+	switch strings.ToLower(raw) {
+	case "1", "true", "yes", "on":
+		return true
+	default:
+		return false
+	}
+}
+
+func (s *Server) initAuditLogger() error {
+	if !envBoolDefault("LICENSE_SERVER_AUDIT_ENABLED", true) {
+		return nil
+	}
+	auditPath := strings.TrimSpace(os.Getenv("LICENSE_SERVER_AUDIT_DB_PATH"))
+	if auditPath == "" {
+		if sqlitePath := strings.TrimSpace(os.Getenv("LICENSE_SERVER_STORAGE_SQLITE_PATH")); sqlitePath != "" {
+			auditPath = sqlitePath
+		} else if homeDir, err := os.UserHomeDir(); err == nil {
+			auditPath = filepath.Join(homeDir, ".licensing", "data", "audit.db")
+		} else {
+			auditPath = "./data/audit.db"
+		}
+	}
+	if err := os.MkdirAll(filepath.Dir(auditPath), 0o700); err != nil {
+		return fmt.Errorf("create audit directory: %w", err)
+	}
+	db, err := sql.Open("sqlite", auditPath)
+	if err != nil {
+		return fmt.Errorf("open audit sqlite db: %w", err)
+	}
+	db.SetMaxOpenConns(1)
+	db.SetConnMaxLifetime(0)
+	storage, err := audit.NewSQLiteStorage(db)
+	if err != nil {
+		_ = db.Close()
+		return fmt.Errorf("initialize audit storage: %w", err)
+	}
+	bufferSize := 2000
+	if raw := strings.TrimSpace(os.Getenv("LICENSE_SERVER_AUDIT_BUFFER_SIZE")); raw != "" {
+		if parsed, err := strconv.Atoi(raw); err == nil && parsed > 0 {
+			bufferSize = parsed
+		}
+	}
+	logger, err := audit.NewAuditLogger(&audit.AuditLoggerConfig{
+		Storage:        storage,
+		Async:          envBoolDefault("LICENSE_SERVER_AUDIT_ASYNC", true),
+		BufferSize:     bufferSize,
+		EnableChaining: envBoolDefault("LICENSE_SERVER_AUDIT_CHAINING", true),
+	})
+	if err != nil {
+		_ = db.Close()
+		return fmt.Errorf("initialize audit logger: %w", err)
+	}
+	s.auditLogger = logger
+	s.auditDB = db
+	s.auditIncludePing = envBoolDefault("LICENSE_SERVER_AUDIT_INCLUDE_HEALTH", false)
+	log.Printf("🧾 Audit logging enabled (sqlite: %s)", auditPath)
+	return nil
+}
+
+func (s *Server) auditLog(ctx context.Context, event *audit.Event) {
+	if s.auditLogger == nil || event == nil {
+		return
+	}
+	if err := s.auditLogger.Log(ctx, event); err != nil {
+		log.Printf("failed to write audit event: %v", err)
+	}
+}
+
+func (s *Server) resolveAuditActor(r *http.Request) (string, string) {
+	if r == nil {
+		return "anonymous", "unknown"
+	}
+	providedKey := strings.TrimSpace(r.Header.Get("X-API-Key"))
+	if providedKey != "" {
+		if rec, err := s.lm.ValidateAPIKey(r.Context(), providedKey); err == nil {
+			return rec.ID, "admin_api_key"
+		}
+	}
+	auth := strings.TrimSpace(r.Header.Get("Authorization"))
+	if auth != "" {
+		parts := strings.SplitN(auth, " ", 2)
+		if len(parts) == 2 && strings.EqualFold(parts[0], "Bearer") {
+			token := strings.TrimSpace(parts[1])
+			if token != "" {
+				if rec, err := s.lm.ValidateAPIKey(r.Context(), token); err == nil {
+					return rec.ID, "admin_api_key"
+				}
+			}
+		}
+	}
+	if s.sessionValidator != nil {
+		if cookie, err := r.Cookie("session_id"); err == nil && cookie.Value != "" {
+			if userID, _, ok := s.sessionValidator.ValidateSession(cookie.Value); ok {
+				return userID, "admin_session"
+			}
+		}
+	}
+	return "anonymous", "unknown"
+}
+
+func (s *Server) withAudit(next http.Handler) http.Handler {
+	if s.auditLogger == nil {
+		return next
+	}
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !s.auditIncludePing && (r.URL.Path == "/health" || r.URL.Path == "/metrics") {
+			next.ServeHTTP(w, r)
+			return
+		}
+		start := time.Now()
+		rec := &statusRecorder{ResponseWriter: w}
+		next.ServeHTTP(rec, r)
+		status := rec.status
+		if status == 0 {
+			status = http.StatusOK
+		}
+		actorID, actorType := s.resolveAuditActor(r)
+		result := "success"
+		severity := audit.SeverityInfo
+		if status >= 400 {
+			result = "failure"
+			severity = audit.SeverityWarning
+		}
+		if status >= 500 {
+			severity = audit.SeverityError
+		}
+		event := audit.NewEvent(audit.EventAPIRequest, severity, "http_request", fmt.Sprintf("%s %s", r.Method, r.URL.Path)).
+			WithActor(actorID, actorType, clientIP(r)).
+			WithResult(result).
+			WithRequest(uuid.New().String(), "", r.UserAgent()).
+			WithMetadata("method", r.Method).
+			WithMetadata("path", r.URL.Path).
+			WithMetadata("status_code", status).
+			WithMetadata("duration_ms", time.Since(start).Milliseconds()).
+			WithMetadata("response_bytes", rec.bytes)
+		s.auditLog(r.Context(), event)
+	})
+}
+
+type statusRecorder struct {
+	http.ResponseWriter
+	status int
+	bytes  int
+}
+
+func (sr *statusRecorder) WriteHeader(code int) {
+	sr.status = code
+	sr.ResponseWriter.WriteHeader(code)
+}
+
+func (sr *statusRecorder) Write(p []byte) (int, error) {
+	if sr.status == 0 {
+		sr.status = http.StatusOK
+	}
+	n, err := sr.ResponseWriter.Write(p)
+	sr.bytes += n
+	return n, err
+}
+
+func (s *Server) withMetrics(next http.Handler) http.Handler {
+	if s.metrics == nil {
+		return next
+	}
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		start := time.Now()
+		s.metrics.requestsTotal.Add(1)
+		s.metrics.requestsLive.Add(1)
+		defer s.metrics.requestsLive.Add(^uint64(0))
+
+		rec := &statusRecorder{ResponseWriter: w}
+		next.ServeHTTP(rec, r)
+
+		status := rec.status
+		if status == 0 {
+			status = http.StatusOK
+		}
+		switch {
+		case status >= 500:
+			s.metrics.requests5xx.Add(1)
+		case status >= 400:
+			s.metrics.requests4xx.Add(1)
+		default:
+			s.metrics.requests2xx.Add(1)
+		}
+		s.metrics.responseBytes.Add(uint64(rec.bytes))
+		s.metrics.latencyNanos.Add(uint64(time.Since(start).Nanoseconds()))
+	})
+}
+
+func metricsEnabled() bool {
+	raw := strings.TrimSpace(os.Getenv("LICENSE_SERVER_METRICS_ENABLED"))
+	if raw != "" {
+		switch strings.ToLower(raw) {
+		case "1", "true", "yes", "on":
+			return true
+		default:
+			return false
+		}
+	}
+	env := strings.ToLower(strings.TrimSpace(os.Getenv("APP_ENV")))
+	if env == "prod" || env == "production" {
+		return false
+	}
+	return true
+}
+
+func (s *Server) handleMetrics(w http.ResponseWriter, _ *http.Request) {
+	if s.metrics == nil {
+		http.Error(w, "metrics unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	total := s.metrics.requestsTotal.Load()
+	latencyNanos := s.metrics.latencyNanos.Load()
+	avgLatency := 0.0
+	if total > 0 {
+		avgLatency = (float64(latencyNanos) / float64(total)) / float64(time.Second)
+	}
+
+	w.Header().Set("Content-Type", "text/plain; version=0.0.4")
+	fmt.Fprintf(w, "# HELP licensing_http_requests_total Total HTTP requests handled.\n")
+	fmt.Fprintf(w, "# TYPE licensing_http_requests_total counter\n")
+	fmt.Fprintf(w, "licensing_http_requests_total %d\n", total)
+	fmt.Fprintf(w, "# HELP licensing_http_requests_in_flight Current in-flight HTTP requests.\n")
+	fmt.Fprintf(w, "# TYPE licensing_http_requests_in_flight gauge\n")
+	fmt.Fprintf(w, "licensing_http_requests_in_flight %d\n", s.metrics.requestsLive.Load())
+	fmt.Fprintf(w, "# HELP licensing_http_requests_2xx_total Total successful HTTP requests.\n")
+	fmt.Fprintf(w, "# TYPE licensing_http_requests_2xx_total counter\n")
+	fmt.Fprintf(w, "licensing_http_requests_2xx_total %d\n", s.metrics.requests2xx.Load())
+	fmt.Fprintf(w, "# HELP licensing_http_requests_4xx_total Total client error HTTP requests.\n")
+	fmt.Fprintf(w, "# TYPE licensing_http_requests_4xx_total counter\n")
+	fmt.Fprintf(w, "licensing_http_requests_4xx_total %d\n", s.metrics.requests4xx.Load())
+	fmt.Fprintf(w, "# HELP licensing_http_requests_5xx_total Total server error HTTP requests.\n")
+	fmt.Fprintf(w, "# TYPE licensing_http_requests_5xx_total counter\n")
+	fmt.Fprintf(w, "licensing_http_requests_5xx_total %d\n", s.metrics.requests5xx.Load())
+	fmt.Fprintf(w, "# HELP licensing_http_response_bytes_total Total bytes written in HTTP responses.\n")
+	fmt.Fprintf(w, "# TYPE licensing_http_response_bytes_total counter\n")
+	fmt.Fprintf(w, "licensing_http_response_bytes_total %d\n", s.metrics.responseBytes.Load())
+	fmt.Fprintf(w, "# HELP licensing_http_request_duration_seconds_avg Average request duration in seconds.\n")
+	fmt.Fprintf(w, "# TYPE licensing_http_request_duration_seconds_avg gauge\n")
+	fmt.Fprintf(w, "licensing_http_request_duration_seconds_avg %f\n", avgLatency)
+	fmt.Fprintf(w, "# HELP licensing_process_uptime_seconds Process uptime in seconds.\n")
+	fmt.Fprintf(w, "# TYPE licensing_process_uptime_seconds gauge\n")
+	fmt.Fprintf(w, "licensing_process_uptime_seconds %d\n", int64(time.Since(s.metrics.startedAt).Seconds()))
+	fmt.Fprintf(w, "# HELP licensing_process_goroutines Number of goroutines.\n")
+	fmt.Fprintf(w, "# TYPE licensing_process_goroutines gauge\n")
+	fmt.Fprintf(w, "licensing_process_goroutines %d\n", runtime.NumGoroutine())
+}
+
 func (s *Server) getAllowedOrigins() []string {
 	// Get allowed origins from environment variable
 	originsStr := strings.TrimSpace(os.Getenv("LICENSE_SERVER_ALLOWED_ORIGINS"))
@@ -1052,7 +1340,7 @@ func (s *Server) handleClientRegister(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// Set cookie
-	http.SetCookie(w, &http.Cookie{Name: "client_session", Value: sess.ID, Path: "/", HttpOnly: true, Secure: s.hasTLSConfig(), Expires: sess.ExpiresAt})
+	http.SetCookie(w, &http.Cookie{Name: "client_session", Value: sess.ID, Path: "/", HttpOnly: true, Secure: isSecureRequest(r), Expires: sess.ExpiresAt})
 	// Return client with session info
 	s.respondJSON(w, http.StatusCreated, map[string]interface{}{"client": client, "session": sess})
 }
@@ -1089,7 +1377,7 @@ func (s *Server) handleClientLogin(w http.ResponseWriter, r *http.Request) {
 		s.respondError(w, http.StatusInternalServerError, "failed to create session")
 		return
 	}
-	http.SetCookie(w, &http.Cookie{Name: "client_session", Value: sess.ID, Path: "/", HttpOnly: true, Secure: s.hasTLSConfig(), Expires: sess.ExpiresAt})
+	http.SetCookie(w, &http.Cookie{Name: "client_session", Value: sess.ID, Path: "/", HttpOnly: true, Secure: isSecureRequest(r), Expires: sess.ExpiresAt})
 	// Response includes a refresh token that can be used by the client (if desired)
 	s.respondJSON(w, http.StatusOK, map[string]interface{}{"client": client, "session": sess})
 }
@@ -1106,7 +1394,7 @@ func (s *Server) handleClientLogout(w http.ResponseWriter, r *http.Request) {
 	}
 	s.revokeClientSession(sess.ID)
 	// Clear cookie
-	http.SetCookie(w, &http.Cookie{Name: "client_session", Value: "", Path: "/", HttpOnly: true, Secure: s.hasTLSConfig(), Expires: time.Now().Add(-1 * time.Hour)})
+	http.SetCookie(w, &http.Cookie{Name: "client_session", Value: "", Path: "/", HttpOnly: true, Secure: isSecureRequest(r), Expires: time.Now().Add(-1 * time.Hour)})
 	s.respondJSON(w, http.StatusOK, map[string]interface{}{"message": "logged out", "client": client.ID})
 }
 
@@ -1228,7 +1516,7 @@ func (s *Server) handleClientRefresh(w http.ResponseWriter, r *http.Request) {
 	// Revoke old session
 	s.revokeClientSession(oldSess.ID)
 	// Return new session details
-	http.SetCookie(w, &http.Cookie{Name: "client_session", Value: newSess.ID, Path: "/", HttpOnly: true, Secure: s.hasTLSConfig(), Expires: newSess.ExpiresAt})
+	http.SetCookie(w, &http.Cookie{Name: "client_session", Value: newSess.ID, Path: "/", HttpOnly: true, Secure: isSecureRequest(r), Expires: newSess.ExpiresAt})
 	client, _ := s.lm.GetClient(r.Context(), newSess.ClientID)
 	s.respondJSON(w, http.StatusOK, map[string]interface{}{"client": client, "session": newSess})
 }
@@ -2461,6 +2749,95 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	s.respondJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }
 
+func (s *Server) handleAuditLogs(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		s.respondError(w, http.StatusMethodNotAllowed, "Method not allowed")
+		return
+	}
+	if !s.enforceRateLimit(w, r) {
+		return
+	}
+	if !s.authorizeAdmin(w, r) {
+		return
+	}
+	if s.auditLogger == nil {
+		s.respondError(w, http.StatusServiceUnavailable, "audit logger is not enabled")
+		return
+	}
+	limit := 200
+	if raw := strings.TrimSpace(r.URL.Query().Get("limit")); raw != "" {
+		if parsed, err := strconv.Atoi(raw); err == nil && parsed > 0 && parsed <= 5000 {
+			limit = parsed
+		}
+	}
+	offset := 0
+	if raw := strings.TrimSpace(r.URL.Query().Get("offset")); raw != "" {
+		if parsed, err := strconv.Atoi(raw); err == nil && parsed >= 0 {
+			offset = parsed
+		}
+	}
+	filter := &audit.AuditFilter{
+		ActorID: actorIDParam(r.URL.Query().Get("actor_id")),
+		Result:  strings.TrimSpace(r.URL.Query().Get("result")),
+		Limit:   limit,
+		Offset:  offset,
+	}
+	if et := strings.TrimSpace(r.URL.Query().Get("event_type")); et != "" {
+		filter.EventTypes = []audit.EventType{audit.EventType(et)}
+	}
+	if sv := strings.TrimSpace(r.URL.Query().Get("severity")); sv != "" {
+		filter.Severities = []audit.Severity{audit.Severity(sv)}
+	}
+	events, err := s.auditLogger.Query(r.Context(), filter)
+	if err != nil {
+		s.respondError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if events == nil {
+		events = []*audit.Event{}
+	}
+	s.respondJSON(w, http.StatusOK, events)
+}
+
+func actorIDParam(v string) string {
+	return strings.TrimSpace(v)
+}
+
+func (s *Server) handleAuditComplianceReport(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		s.respondError(w, http.StatusMethodNotAllowed, "Method not allowed")
+		return
+	}
+	if !s.enforceRateLimit(w, r) {
+		return
+	}
+	if !s.authorizeAdmin(w, r) {
+		return
+	}
+	if s.auditLogger == nil {
+		s.respondError(w, http.StatusServiceUnavailable, "audit logger is not enabled")
+		return
+	}
+	framework := strings.TrimSpace(r.URL.Query().Get("framework"))
+	if framework == "" {
+		framework = "SOC2"
+	}
+	days := 30
+	if raw := strings.TrimSpace(r.URL.Query().Get("days")); raw != "" {
+		if parsed, err := strconv.Atoi(raw); err == nil && parsed > 0 && parsed <= 3650 {
+			days = parsed
+		}
+	}
+	end := time.Now().UTC()
+	start := end.AddDate(0, 0, -days)
+	report, err := s.auditLogger.GenerateComplianceReport(r.Context(), framework, start, end)
+	if err != nil {
+		s.respondError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	s.respondJSON(w, http.StatusOK, report)
+}
+
 func (s *Server) handleClients(w http.ResponseWriter, r *http.Request) {
 	if !s.enforceRateLimit(w, r) {
 		return
@@ -2587,6 +2964,17 @@ func (s *Server) handleClientActions(w http.ResponseWriter, r *http.Request) {
 		log.Printf("Client %s banned", clientID)
 		s.respondJSON(w, http.StatusOK, client)
 	case "unban":
+		if r.Method != http.MethodPost {
+			s.respondError(w, http.StatusMethodNotAllowed, "Method not allowed")
+			return
+		}
+		client, err := s.lm.UnbanClient(r.Context(), clientID)
+		if err != nil {
+			s.respondError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		log.Printf("Client %s unbanned", clientID)
+		s.respondJSON(w, http.StatusOK, client)
 	case "keys":
 		// Admin operations for client API keys
 		if r.Method == http.MethodGet {
@@ -2628,17 +3016,8 @@ func (s *Server) handleClientActions(w http.ResponseWriter, r *http.Request) {
 			s.respondJSON(w, http.StatusOK, map[string]string{"message": "API key deleted"})
 			return
 		}
-		if r.Method != http.MethodPost {
-			s.respondError(w, http.StatusMethodNotAllowed, "Method not allowed")
-			return
-		}
-		client, err := s.lm.UnbanClient(r.Context(), clientID)
-		if err != nil {
-			s.respondError(w, http.StatusBadRequest, err.Error())
-			return
-		}
-		log.Printf("Client %s unbanned", clientID)
-		s.respondJSON(w, http.StatusOK, client)
+		s.respondError(w, http.StatusMethodNotAllowed, "Method not allowed")
+		return
 	default:
 		http.NotFound(w, r)
 	}
@@ -2790,6 +3169,8 @@ func (s *Server) Start() error {
 	mux.HandleFunc("/api/admin/users", s.handleAdminUsers)
 	mux.HandleFunc("/api/admin/api-keys", s.handleAdminAPIKeys)
 	mux.HandleFunc("/api/admin/api-keys/", s.handleAdminAPIKeyActions)
+	mux.HandleFunc("/api/admin/audit", s.handleAuditLogs)
+	mux.HandleFunc("/api/admin/audit/compliance", s.handleAuditComplianceReport)
 	mux.HandleFunc("/api/admin/signing-keys", s.handleAdminSigningKeys)
 	mux.HandleFunc("/api/admin/signing-keys/", s.handleAdminSigningKeyActions)
 	mux.HandleFunc("/api/admin/licenses/provision", s.handleProvisionLicense)
@@ -2797,6 +3178,9 @@ func (s *Server) Start() error {
 	mux.HandleFunc("/api/products/", s.handleProductActions)
 	mux.HandleFunc("/api/entitlements", s.handleEntitlements)
 	mux.HandleFunc("/health", s.handleHealth)
+	if metricsEnabled() {
+		mux.HandleFunc("/metrics", s.handleMetrics)
+	}
 
 	// Offline validation endpoints
 	mux.HandleFunc("/api/licenses/offline-token", s.handleGenerateOfflineToken)
@@ -2834,7 +3218,7 @@ func (s *Server) Start() error {
 
 	server := &http.Server{
 		Addr:              s.port,
-		Handler:           s.withCORS(s.withSecurityHeaders(mux)),
+		Handler:           s.withMetrics(s.withAudit(s.withCORS(s.withSecurityHeaders(mux)))),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       15 * time.Second,
 		WriteTimeout:      15 * time.Second,

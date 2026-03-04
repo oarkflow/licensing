@@ -1,0 +1,37 @@
+services:
+  licensing:
+    image: crm:latest
+    restart: unless-stopped
+    ports:
+      - "6601:6601"
+    environment:
+      APP_ENV: "production"
+      LICENSE_SERVER_HTTP_ADDR: ":6601"
+      LICENSE_SERVER_ALLOW_INSECURE_HTTP: "false"
+      LICENSE_SERVER_STORAGE: "sqlite"
+      LICENSE_SERVER_STORAGE_SQLITE_PATH: "/data/licensing.db"
+      LICENSE_SERVER_TLS_CERT: "/certs/tls.crt"
+      LICENSE_SERVER_TLS_KEY: "/certs/tls.key"
+      LICENSE_SERVER_METRICS_ENABLED: "true"
+      # Strongly recommended: use file/tpm provider in production.
+      # LICENSE_SERVER_KEY_PROVIDER: "file"
+      # LICENSE_SERVER_KEY_FILE: "/certs/signing.key"
+      # Configure at least one admin API key in production.
+      # LICENSE_SERVER_API_KEYS: "key-one,key-two"
+    volumes:
+      - licensing_data:/data
+      - ./certs:/certs:ro
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:6601/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+
+volumes:
+  licensing_data:
