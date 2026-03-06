@@ -206,7 +206,7 @@ The CLI layers configuration in the following order: command-line flags → envi
 
 | Flag | Env Var | Description | Default |
 | --- | --- | --- | --- |
-| `--activation-mode` | — | Chooses the activation strategy (`auto`, `env`, `prompt`, `verify`). | `auto` |
+| `--activation-mode` | — | Chooses the activation strategy (`auto`, `prompt`, `verify`). | `auto` |
 | `--config-dir` | `LICENSE_CLIENT_CONFIG_DIR` | Directory that stores the encrypted license payload. | `$HOME/.licensing` |
 | `--license-store` | `LICENSE_CLIENT_LICENSE_FILE` | File name (placed under `config-dir`) for the encrypted license blob. | `.license.dat` |
 | `--license-file` | — | Path to a JSON file containing `email`, `client_id`, and `license_key` used to pre-fill activation prompts. | — |
@@ -214,8 +214,6 @@ The CLI layers configuration in the following order: command-line flags → envi
 | `--ca-cert` | `LICENSE_CLIENT_CA_CERT` | Path to a PEM bundle that should be trusted in addition to system roots. | — |
 | `--allow-insecure-http` | `LICENSE_CLIENT_ALLOW_INSECURE_HTTP` | Permit HTTP URLs and skip TLS verification (development only). | `false` |
 | `--http-timeout` | `LICENSE_CLIENT_HTTP_TIMEOUT` | HTTP client timeout (Go duration, e.g. `20s`, `1m`). | `15s` |
-
-Environment activation also consumes `LICENSE_CLIENT_EMAIL`, `LICENSE_CLIENT_LICENSE_KEY`, and **always** `LICENSE_CLIENT_ID`.
 
 | `--exec` or args after `--` | `LICENSE_CLIENT_EXEC` | Command to run once the license is verified (quote the flag value or place the command after `--`). | — |
 
@@ -250,8 +248,7 @@ If you omit the wrapped command the client simply verifies the license and exits
 
 | Mode | Flow | When to use | Example |
 | --- | --- | --- | --- |
-| `auto` | Runs verification if a license already exists. Otherwise attempts environment activation, falling back to the interactive prompt. | Production defaults where you want non-interactive first, but still allow manual entry. | `go run ./client --activation-mode auto` |
-| `env` | Requires `LICENSE_CLIENT_EMAIL`, `LICENSE_CLIENT_LICENSE_KEY`, and `LICENSE_CLIENT_ID`. | Headless containers/CI that receive license secrets via env/secret stores. | `LICENSE_CLIENT_EMAIL=john@example.com LICENSE_CLIENT_ID=client-123 LICENSE_CLIENT_LICENSE_KEY=KEY go run ./client --activation-mode env` |
+| `auto` | Runs verification if a license already exists. Otherwise falls back to the interactive prompt. | Production defaults where you want to reuse existing activations but still allow manual entry. | `go run ./client --activation-mode auto` |
 | `prompt` | Always prompt for email, license key, and client ID. | Local development, demos, or manual activation scripts. | `go run ./client --activation-mode prompt --server-url https://licensing.example.com` |
 | `verify` | Only verifies an already-activated license; never prompts, uses env credentials, or runs the wrapped command. | Hardened production startups where activations happen during image build time. | `go run ./client --activation-mode verify --config-dir /var/lib/myapp-licenses` |
 
@@ -267,24 +264,15 @@ Use the new flags to test every path without touching code:
      --license-file demo.lic \
      --server-url http://localhost:8080
    ```
-   Verifies existing licenses, tries environment activation, then prompts as a last resort.
+   Verifies existing licenses, then prompts as a last resort.
 
-2. **Environment activation:**
-   ```bash
-   export LICENSE_CLIENT_EMAIL=john@example.com
-   export LICENSE_CLIENT_LICENSE_KEY=ABCDE-12345-FGHIJ-67890
-   export LICENSE_CLIENT_ID=client-john
-   go run ./client --activation-mode env --http-timeout 25s
-   ```
-   Confirms that non-interactive activation succeeds (or fails with a descriptive error if credentials are wrong).
-
-3. **Interactive prompt:**
+2. **Interactive prompt:**
    ```bash
    go run ./client --activation-mode prompt --server-url https://licensing.example.com
    ```
    Forces the CLI to ask for credentials even if env vars are present, useful for support/debugging.
 
-4. **Verification-only:**
+3. **Verification-only:**
    ```bash
    go run ./client --activation-mode verify --config-dir /tmp/myapp-licenses
    ```
@@ -333,26 +321,20 @@ Licenses now distinguish between the **owner** (`client_id`) and the **recipient
 
 To activate successfully you must always provide the email + license key + `LICENSE_CLIENT_ID` (your identifier). The server checks the supplied email against the license owner email; if they match, it treats the activation as direct. If they differ, the server records you as a delegated identity and automatically sets `granted_by` to the license owner's client ID.
 
-The interactive prompt mirrors this logic and now requires only the client ID. You can still pre-fill credentials via `--license-file` or environment variables.
+The interactive prompt mirrors this logic and now requires only the client ID. You can still pre-fill credentials via `--license-file`.
 
 The first delegated activation persists the recipient and returns a license file containing the recipient's `subject_client_id`. Subsequent verifications reuse that ID automatically, so downstream machines no longer need to know the provider's identity once their local license file exists.
 
 #### Example: Original Purchaser (direct activation)
 
 ```bash
-export LICENSE_CLIENT_EMAIL=owner@example.com
-export LICENSE_CLIENT_LICENSE_KEY=AAAA-BBBB-CCCC-DDDD-EEEE-FFFF-GGGG-HHHH
-export LICENSE_CLIENT_ID=client-owner
-go run ./client --activation-mode env
+go run ./client --activation-mode prompt
 ```
 
 #### Example: Provider issuing to a teammate/customer
 
 ```bash
-export LICENSE_CLIENT_EMAIL=teammate@example.com
-export LICENSE_CLIENT_LICENSE_KEY=AAAA-BBBB-CCCC-DDDD-EEEE-FFFF-GGGG-HHHH
-export LICENSE_CLIENT_ID=client-teammate
-go run ./client --activation-mode env
+go run ./client --license-file delegated.json
 ```
 
 If you prefer file-based automation, include `email`, `client_id`, and `license_key` in JSON and pass `--license-file delegated.json`; the CLI validates that the client ID is present before contacting the server.

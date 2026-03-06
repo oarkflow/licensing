@@ -207,7 +207,7 @@ Run the CLI directly (`go run ./client`) or build a static binary. Configuration
 
 | Flag | Environment | Purpose |
 | --- | --- | --- |
-| `--activation-mode` | — | `auto`, `env`, `prompt`, or `verify`. |
+| `--activation-mode` | — | `auto`, `prompt`, or `verify`. |
 | `--config-dir` | `LICENSE_CLIENT_CONFIG_DIR` | Directory that holds the encrypted license (`~/.licensing` default). |
 | `--license-store` | `LICENSE_CLIENT_LICENSE_FILE` | File name under the config dir (`.license.dat` default). |
 | `--license-file` | — | JSON file containing `email`, `client_id`, `license_key`. |
@@ -217,18 +217,11 @@ Run the CLI directly (`go run ./client`) or build a static binary. Configuration
 | `--allow-insecure-http` | `LICENSE_CLIENT_ALLOW_INSECURE_HTTP` | Accept HTTP + skip TLS verification (local testing). |
 | `--exec` / `--` | `LICENSE_CLIENT_EXEC` | Command to run after successful verification. |
 
-Additional activation env vars:
-
-- `LICENSE_CLIENT_EMAIL`
-- `LICENSE_CLIENT_LICENSE_KEY`
-- `LICENSE_CLIENT_ID` (always required for env-based activation)
-
 ### Activation Strategies
 
 | Mode | Description | Example |
 | --- | --- | --- |
-| `auto` | Verify existing licenses, attempt env-based activation, finally prompt interactively. | `go run ./client --activation-mode auto` |
-| `env` | Uses environment variables exclusively. Fails if any field missing. | `LICENSE_CLIENT_EMAIL=john@example.com LICENSE_CLIENT_ID=client-john LICENSE_CLIENT_LICENSE_KEY=KEY go run ./client --activation-mode env` |
+| `auto` | Verify existing licenses, otherwise prompt interactively. | `go run ./client --activation-mode auto` |
 | `prompt` | Forces prompts even if env/JSON data exists. | `go run ./client --activation-mode prompt --server-url https://licensing.example.com` |
 | `verify` | Only verifies existing license files; never activates or runs wrapped commands. | `go run ./client --activation-mode verify --config-dir /var/lib/myapp-licenses` |
 
@@ -276,14 +269,14 @@ When a license uses `check_mode"custom"`, the helper client (`client/app.go`) au
 5. Distribute the client binary with `LICENSE_CLIENT_SERVER=https://licensing.example.com` baked in.
 
 ### 2. Offline-first appliance
-1. Activate once while connected using `--activation-mode env`.
+1. Activate once while connected using `--activation-mode prompt` or `--license-file`.
 2. Persist the encrypted license to a secure volume.
 3. On each boot run `go run ./client --activation-mode verify --config-dir /mnt/license`.
 4. If the server becomes reachable, switch back to `auto` so scheduled checks resume.
 
 ### 3. Reseller / Delegated activations
 1. Provider issues the license normally and shares the key with downstream customer.
-2. Customer sets `LICENSE_CLIENT_EMAIL=<customer>` and `LICENSE_CLIENT_ID=<their-id>`.
+2. Customer enters their email and client ID at the prompt, or supplies them via `--license-file`.
 3. Server records `subject_client_id` separately from the original purchaser.
 4. Your wrapped app inspects `LICENSE_DATA_JSON` to see `client_id`, `subject_client_id`, and `plan_slug` for entitlement decisions.
 

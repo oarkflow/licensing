@@ -24,7 +24,7 @@ const (
 )
 
 var (
-	activationMode      = flag.String("activation-mode", defaultActivationMode, "Activation strategy: auto, env, prompt, verify")
+	activationMode      = flag.String("activation-mode", defaultActivationMode, "Activation strategy: auto, prompt, verify")
 	configDirFlag       = flag.String("config-dir", "", fmt.Sprintf("Directory for license data (default $HOME/%s or $%s)", client.DefaultConfigDir, EnvConfigDir))
 	licenseStoreFlag    = flag.String("license-store", "", fmt.Sprintf("License store file name (default %s or $%s)", client.DefaultLicenseFile, EnvLicenseFile))
 	licenseInfoFileFlag = flag.String("license-file", "", "Path to JSON file with activation details (email, client ID, license key)")

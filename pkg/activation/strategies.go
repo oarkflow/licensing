@@ -14,12 +14,6 @@ import (
 	"github.com/oarkflow/licensing/pkg/runner"
 )
 
-const (
-	EnvActivationEmail      = "LICENSE_CLIENT_EMAIL"
-	EnvActivationClientID   = "LICENSE_CLIENT_ID"
-	EnvActivationLicenseKey = "LICENSE_CLIENT_LICENSE_KEY"
-)
-
 var licenseFilePath string
 
 type licenseFileData struct {
@@ -58,7 +52,7 @@ type PromptIO struct {
 func Strategy(mode string, io PromptIO) runner.ActivationStrategy[*licensingclient.LicenseData] {
 	switch strings.ToLower(strings.TrimSpace(mode)) {
 	case "env":
-		return Env()
+		return DisabledEnv()
 	case "prompt":
 		return Prompt(io)
 	case "verify":
@@ -70,18 +64,17 @@ func Strategy(mode string, io PromptIO) runner.ActivationStrategy[*licensingclie
 	}
 }
 
-// Auto ensures an existing activation, then tries env-based activation, then interactive activation.
+// Auto ensures an existing activation, then falls back to interactive activation.
 func Auto(io PromptIO) runner.ActivationStrategy[*licensingclient.LicenseData] {
 	return runner.ComposeActivation(
 		runner.EnsureExistingActivation[*licensingclient.LicenseData]{},
-		Env(),
 		Prompt(io),
 	)
 }
 
-// Env attempts activation using environment variables.
-func Env() runner.ActivationStrategy[*licensingclient.LicenseData] {
-	return envActivationStrategy{}
+// DisabledEnv rejects environment-driven activation.
+func DisabledEnv() runner.ActivationStrategy[*licensingclient.LicenseData] {
+	return disabledEnvActivationStrategy{}
 }
 
 // Prompt collects credentials from the provided IO streams.
@@ -94,33 +87,10 @@ func VerifyOnly() runner.ActivationStrategy[*licensingclient.LicenseData] {
 	return runner.EnsureExistingActivation[*licensingclient.LicenseData]{}
 }
 
-type envActivationStrategy struct{}
+type disabledEnvActivationStrategy struct{}
 
-func (envActivationStrategy) EnsureActivated(ctx context.Context, client runner.Client[*licensingclient.LicenseData]) error {
-	typed, ok := client.(*licensingclient.Client)
-	if !ok {
-		return fmt.Errorf("environment activation requires *licensingclient.Client")
-	}
-	if typed.IsActivated() {
-		return nil
-	}
-
-	email := strings.TrimSpace(os.Getenv(EnvActivationEmail))
-	licenseKey := strings.TrimSpace(os.Getenv(EnvActivationLicenseKey))
-	clientID := strings.TrimSpace(os.Getenv(EnvActivationClientID))
-	if email == "" || licenseKey == "" {
-		return fmt.Errorf("environment activation not configured (set %s and %s)", EnvActivationEmail, EnvActivationLicenseKey)
-	}
-	if clientID == "" {
-		return fmt.Errorf("environment activation requires %s", EnvActivationClientID)
-	}
-
-	if err := typed.Activate(email, clientID, licenseKey); err != nil {
-		return err
-	}
-
-	fmt.Fprintln(defaultWriter(nil), "\n✅ License activated via environment configuration")
-	return nil
+func (disabledEnvActivationStrategy) EnsureActivated(context.Context, runner.Client[*licensingclient.LicenseData]) error {
+	return fmt.Errorf("environment-based license activation is disabled")
 }
 
 type promptActivationStrategy struct {
