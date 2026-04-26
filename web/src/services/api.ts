@@ -4,6 +4,8 @@ import type {
     Activation,
     ApiResponse,
     Client,
+    CouponCode,
+    CouponRedemption,
     CreateAdminUserRequest,
     CreateClientRequest,
     CreateFeatureRequest,
@@ -29,6 +31,7 @@ import type {
     PlanFeature,
     Product,
     ProductStats,
+    SaveCouponRequest,
     SaveEmailProviderRequest,
     SaveEmailTemplateRequest,
     SigningKeyMeta,
@@ -642,6 +645,39 @@ class ApiService {
     async deleteAPIKey(id: string): Promise<ApiResponse<void>> {
         return this.request<void>(`/api/admin/api-keys/${id}`, {
             method: 'DELETE',
+        });
+    }
+
+    async listCoupons(): Promise<ApiResponse<CouponCode[]>> {
+        return this.request<CouponCode[]>('/api/coupons');
+    }
+
+    async getCoupon(id: string): Promise<ApiResponse<CouponCode>> {
+        return this.request<CouponCode>(`/api/coupons/${id}`);
+    }
+
+    async createCoupon(data: SaveCouponRequest): Promise<ApiResponse<CouponCode>> {
+        return this.request<CouponCode>('/api/coupons', {
+            method: 'POST',
+            body: JSON.stringify(data),
+        });
+    }
+
+    async updateCoupon(id: string, data: SaveCouponRequest): Promise<ApiResponse<CouponCode>> {
+        return this.request<CouponCode>(`/api/coupons/${id}`, {
+            method: 'PUT',
+            body: JSON.stringify(data),
+        });
+    }
+
+    async listLicenseCoupons(licenseId: string): Promise<ApiResponse<CouponRedemption[]>> {
+        return this.request<CouponRedemption[]>(`/api/licenses/${licenseId}/coupons`);
+    }
+
+    async redeemLicenseCoupon(licenseId: string, code: string, redeemedBy?: string): Promise<ApiResponse<{ license: License; redemption: CouponRedemption }>> {
+        return this.request<{ license: License; redemption: CouponRedemption }>(`/api/licenses/${licenseId}/coupons`, {
+            method: 'POST',
+            body: JSON.stringify({ code, redeemed_by: redeemedBy }),
         });
     }
 

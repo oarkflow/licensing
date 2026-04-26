@@ -121,6 +121,38 @@ func ensureProductSchema(db *squealx.DB) error {
 			FOREIGN KEY(plan_id) REFERENCES plans(id) ON DELETE CASCADE,
 			FOREIGN KEY(license_id) REFERENCES licenses(id) ON DELETE SET NULL
 		);`,
+		`CREATE TABLE IF NOT EXISTS coupons (
+			id TEXT PRIMARY KEY,
+			code TEXT NOT NULL UNIQUE,
+			code_upper TEXT NOT NULL UNIQUE,
+			name TEXT NOT NULL,
+			description TEXT,
+			product_id TEXT,
+			allowed_client_ids TEXT,
+			max_redemptions INTEGER NOT NULL DEFAULT 0,
+			max_redemptions_per_client INTEGER NOT NULL DEFAULT 0,
+			is_active INTEGER NOT NULL DEFAULT 1,
+			starts_at TIMESTAMP,
+			expires_at TIMESTAMP,
+			metadata TEXT,
+			features TEXT,
+			created_at TIMESTAMP NOT NULL,
+			updated_at TIMESTAMP NOT NULL,
+			FOREIGN KEY(product_id) REFERENCES products(id) ON DELETE SET NULL
+		);`,
+		`CREATE TABLE IF NOT EXISTS coupon_redemptions (
+			id TEXT PRIMARY KEY,
+			coupon_id TEXT NOT NULL,
+			coupon_code TEXT NOT NULL,
+			license_id TEXT NOT NULL,
+			client_id TEXT NOT NULL,
+			redeemed_by TEXT,
+			redeemed_at TIMESTAMP NOT NULL,
+			metadata TEXT,
+			FOREIGN KEY(coupon_id) REFERENCES coupons(id) ON DELETE CASCADE,
+			FOREIGN KEY(license_id) REFERENCES licenses(id) ON DELETE CASCADE,
+			FOREIGN KEY(client_id) REFERENCES clients(id) ON DELETE CASCADE
+		);`,
 		`CREATE INDEX IF NOT EXISTS idx_plans_product_id ON plans(product_id);`,
 		`CREATE INDEX IF NOT EXISTS idx_features_product_id ON features(product_id);`,
 		`CREATE INDEX IF NOT EXISTS idx_feature_scopes_feature_id ON feature_scopes(feature_id);`,
@@ -129,6 +161,9 @@ func ensureProductSchema(db *squealx.DB) error {
 		`CREATE INDEX IF NOT EXISTS idx_subscriptions_client_id ON subscriptions(client_id);`,
 		`CREATE INDEX IF NOT EXISTS idx_subscriptions_product_id ON subscriptions(product_id);`,
 		`CREATE INDEX IF NOT EXISTS idx_subscriptions_plan_id ON subscriptions(plan_id);`,
+		`CREATE INDEX IF NOT EXISTS idx_coupon_redemptions_coupon_id ON coupon_redemptions(coupon_id);`,
+		`CREATE INDEX IF NOT EXISTS idx_coupon_redemptions_license_id ON coupon_redemptions(license_id);`,
+		`CREATE INDEX IF NOT EXISTS idx_coupon_redemptions_client_id ON coupon_redemptions(client_id);`,
 	}
 	for _, stmt := range stmts {
 		if _, err := db.Exec(stmt); err != nil {

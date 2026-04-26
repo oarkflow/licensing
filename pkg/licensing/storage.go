@@ -85,6 +85,17 @@ type Storage interface {
 	// Entitlement computation
 	ComputeLicenseEntitlements(ctx context.Context, productID, planID string) (*LicenseEntitlements, error)
 
+	// Coupon management
+	SaveCouponCode(ctx context.Context, coupon *CouponCode) error
+	UpdateCouponCode(ctx context.Context, coupon *CouponCode) error
+	GetCouponCode(ctx context.Context, couponID string) (*CouponCode, error)
+	GetCouponCodeByCode(ctx context.Context, code string) (*CouponCode, error)
+	ListCouponCodes(ctx context.Context) ([]*CouponCode, error)
+	SaveCouponRedemption(ctx context.Context, redemption *CouponRedemption) error
+	ListCouponRedemptionsByCoupon(ctx context.Context, couponID string) ([]*CouponRedemption, error)
+	ListCouponRedemptionsByLicense(ctx context.Context, licenseID string) ([]*CouponRedemption, error)
+	ListCouponRedemptionsByClient(ctx context.Context, clientID string) ([]*CouponRedemption, error)
+
 	// Trial registry - tracks device fingerprints that have used trial licenses
 	SaveDeviceTrial(ctx context.Context, trial *DeviceTrial) error
 	GetDeviceTrial(ctx context.Context, deviceFingerprint string) (*DeviceTrial, error)
@@ -179,6 +190,9 @@ var (
 	errOfflineTokenExists      = errors.New("offline validation token already exists")
 	errOfflineTokenMissing     = errors.New("offline validation token not found")
 	errOfflineLogMissing       = errors.New("offline validation log not found")
+	errCouponExists            = errors.New("coupon already exists")
+	errCouponMissing           = errors.New("coupon not found")
+	errCouponRedemptionExists  = errors.New("coupon redemption already exists")
 )
 
 // DeviceTrial tracks devices that have used a trial license.
@@ -306,49 +320,61 @@ type InMemoryStorage struct {
 	signingKeys        map[string]*SigningKey
 	activeSigningKeyID string
 	// Email management
-	emailProviders       map[string]*email.EmailProvider
-	emailProvidersBySlug map[string]string
-	emailTemplates       map[string]*email.EmailTemplate
-	emailTemplatesBySlug map[string]string
-	emailRoutes          map[string]*email.EmailTemplateRoute
-	emailMessages        map[string]*email.EmailMessage
-	emailEvents          map[string][]*email.EmailEvent
+	emailProviders             map[string]*email.EmailProvider
+	emailProvidersBySlug       map[string]string
+	emailTemplates             map[string]*email.EmailTemplate
+	emailTemplatesBySlug       map[string]string
+	emailRoutes                map[string]*email.EmailTemplateRoute
+	emailMessages              map[string]*email.EmailMessage
+	emailEvents                map[string][]*email.EmailEvent
+	coupons                    map[string]*CouponCode
+	couponsByCode              map[string]string
+	couponRedemptions          map[string]*CouponRedemption
+	couponRedemptionsByCoupon  map[string][]string
+	couponRedemptionsByLicense map[string][]string
+	couponRedemptionsByClient  map[string][]string
 }
 
 func NewInMemoryStorage() *InMemoryStorage {
 	return &InMemoryStorage{
-		clients:                 make(map[string]*Client),
-		clientsByEmail:          make(map[string]string),
-		clientsByUsername:       make(map[string]string),
-		licenses:                make(map[string]*License),
-		licensesByKey:           make(map[string]string),
-		activations:             make(map[string][]*ActivationRecord),
-		adminUsers:              make(map[string]*AdminUser),
-		adminByName:             make(map[string]string),
-		apiKeys:                 make(map[string]*APIKeyRecord),
-		apiKeysByHash:           make(map[string]string),
-		apiKeysByUser:           make(map[string]map[string]struct{}),
-		apiKeysByClient:         make(map[string]map[string]struct{}),
-		products:                make(map[string]*Product),
-		productsBySlug:          make(map[string]string),
-		plans:                   make(map[string]*Plan),
-		plansBySlug:             make(map[string]string),
-		features:                make(map[string]*Feature),
-		featuresBySlug:          make(map[string]string),
-		featureScopes:           make(map[string]*FeatureScope),
-		planFeatures:            make(map[string]*PlanFeature),
-		deviceTrials:            make(map[string]*DeviceTrial),
-		offlineValidationTokens: make(map[string]*OfflineValidationToken),
-		offlineValidationLogs:   make(map[string][]*OfflineValidationLog),
-		emailProviders:          make(map[string]*email.EmailProvider),
-		emailProvidersBySlug:    make(map[string]string),
-		emailTemplates:          make(map[string]*email.EmailTemplate),
-		emailTemplatesBySlug:    make(map[string]string),
-		emailRoutes:             make(map[string]*email.EmailTemplateRoute),
-		emailMessages:           make(map[string]*email.EmailMessage),
-		emailEvents:             make(map[string][]*email.EmailEvent),
-		signingKeys:             make(map[string]*SigningKey),
-		activeSigningKeyID:      "",
+		clients:                    make(map[string]*Client),
+		clientsByEmail:             make(map[string]string),
+		clientsByUsername:          make(map[string]string),
+		licenses:                   make(map[string]*License),
+		licensesByKey:              make(map[string]string),
+		activations:                make(map[string][]*ActivationRecord),
+		adminUsers:                 make(map[string]*AdminUser),
+		adminByName:                make(map[string]string),
+		apiKeys:                    make(map[string]*APIKeyRecord),
+		apiKeysByHash:              make(map[string]string),
+		apiKeysByUser:              make(map[string]map[string]struct{}),
+		apiKeysByClient:            make(map[string]map[string]struct{}),
+		products:                   make(map[string]*Product),
+		productsBySlug:             make(map[string]string),
+		plans:                      make(map[string]*Plan),
+		plansBySlug:                make(map[string]string),
+		features:                   make(map[string]*Feature),
+		featuresBySlug:             make(map[string]string),
+		featureScopes:              make(map[string]*FeatureScope),
+		planFeatures:               make(map[string]*PlanFeature),
+		deviceTrials:               make(map[string]*DeviceTrial),
+		offlineValidationTokens:    make(map[string]*OfflineValidationToken),
+		offlineValidationLogs:      make(map[string][]*OfflineValidationLog),
+		emailProviders:             make(map[string]*email.EmailProvider),
+		emailProvidersBySlug:       make(map[string]string),
+		emailTemplates:             make(map[string]*email.EmailTemplate),
+		emailTemplatesBySlug:       make(map[string]string),
+		emailRoutes:                make(map[string]*email.EmailTemplateRoute),
+		emailMessages:              make(map[string]*email.EmailMessage),
+		emailEvents:                make(map[string][]*email.EmailEvent),
+		coupons:                    make(map[string]*CouponCode),
+		couponsByCode:              make(map[string]string),
+		couponRedemptions:          make(map[string]*CouponRedemption),
+		couponRedemptionsByCoupon:  make(map[string][]string),
+		couponRedemptionsByLicense: make(map[string][]string),
+		couponRedemptionsByClient:  make(map[string][]string),
+		signingKeys:                make(map[string]*SigningKey),
+		activeSigningKeyID:         "",
 	}
 }
 
@@ -365,6 +391,8 @@ type storageSnapshot struct {
 	EmailEvents        map[string][]*email.EmailEvent       `json:"email_events,omitempty"`
 	SigningKeys        map[string]*SigningKey               `json:"signing_keys,omitempty"`
 	ActiveSigningKeyID string                               `json:"active_signing_key_id,omitempty"`
+	Coupons            map[string]*CouponCode               `json:"coupons,omitempty"`
+	CouponRedemptions  map[string]*CouponRedemption         `json:"coupon_redemptions,omitempty"`
 }
 
 func (s *InMemoryStorage) SaveClient(_ context.Context, client *Client) error {
@@ -1469,6 +1497,18 @@ func (s *InMemoryStorage) snapshot() *storageSnapshot {
 		}
 		snapshot.EmailEvents[id] = copies
 	}
+	if len(s.coupons) > 0 {
+		snapshot.Coupons = make(map[string]*CouponCode, len(s.coupons))
+		for id, coupon := range s.coupons {
+			snapshot.Coupons[id] = cloneCouponCode(coupon)
+		}
+	}
+	if len(s.couponRedemptions) > 0 {
+		snapshot.CouponRedemptions = make(map[string]*CouponRedemption, len(s.couponRedemptions))
+		for id, redemption := range s.couponRedemptions {
+			snapshot.CouponRedemptions[id] = cloneCouponRedemption(redemption)
+		}
+	}
 
 	// Include signing keys - DO NOT persist private keys in the file snapshot
 	if len(s.signingKeys) > 0 {
@@ -1563,6 +1603,24 @@ func (s *InMemoryStorage) loadSnapshot(snapshot *storageSnapshot) {
 			copies = append(copies, evt.Clone())
 		}
 		s.emailEvents[id] = copies
+	}
+	s.coupons = make(map[string]*CouponCode, len(snapshot.Coupons))
+	s.couponsByCode = make(map[string]string, len(snapshot.Coupons))
+	for id, coupon := range snapshot.Coupons {
+		cloned := cloneCouponCode(coupon)
+		s.coupons[id] = cloned
+		s.couponsByCode[normalizeCouponCode(cloned.Code)] = id
+	}
+	s.couponRedemptions = make(map[string]*CouponRedemption, len(snapshot.CouponRedemptions))
+	s.couponRedemptionsByCoupon = make(map[string][]string)
+	s.couponRedemptionsByLicense = make(map[string][]string)
+	s.couponRedemptionsByClient = make(map[string][]string)
+	for id, redemption := range snapshot.CouponRedemptions {
+		cloned := cloneCouponRedemption(redemption)
+		s.couponRedemptions[id] = cloned
+		s.couponRedemptionsByCoupon[cloned.CouponID] = append(s.couponRedemptionsByCoupon[cloned.CouponID], id)
+		s.couponRedemptionsByLicense[cloned.LicenseID] = append(s.couponRedemptionsByLicense[cloned.LicenseID], id)
+		s.couponRedemptionsByClient[cloned.ClientID] = append(s.couponRedemptionsByClient[cloned.ClientID], id)
 	}
 
 	// Load signing keys (public parts only if persisted). Private keys won't be present in snapshot.
@@ -1859,6 +1917,51 @@ func (ps *PersistentStorage) ListSubscriptionsByClient(ctx context.Context, clie
 
 func (ps *PersistentStorage) DeleteSubscription(ctx context.Context, subID string) error {
 	return ps.backend.DeleteSubscription(ctx, subID)
+}
+
+func (ps *PersistentStorage) SaveCouponCode(ctx context.Context, coupon *CouponCode) error {
+	if err := ps.backend.SaveCouponCode(ctx, coupon); err != nil {
+		return err
+	}
+	return ps.persist()
+}
+
+func (ps *PersistentStorage) UpdateCouponCode(ctx context.Context, coupon *CouponCode) error {
+	if err := ps.backend.UpdateCouponCode(ctx, coupon); err != nil {
+		return err
+	}
+	return ps.persist()
+}
+
+func (ps *PersistentStorage) GetCouponCode(ctx context.Context, couponID string) (*CouponCode, error) {
+	return ps.backend.GetCouponCode(ctx, couponID)
+}
+
+func (ps *PersistentStorage) GetCouponCodeByCode(ctx context.Context, code string) (*CouponCode, error) {
+	return ps.backend.GetCouponCodeByCode(ctx, code)
+}
+
+func (ps *PersistentStorage) ListCouponCodes(ctx context.Context) ([]*CouponCode, error) {
+	return ps.backend.ListCouponCodes(ctx)
+}
+
+func (ps *PersistentStorage) SaveCouponRedemption(ctx context.Context, redemption *CouponRedemption) error {
+	if err := ps.backend.SaveCouponRedemption(ctx, redemption); err != nil {
+		return err
+	}
+	return ps.persist()
+}
+
+func (ps *PersistentStorage) ListCouponRedemptionsByCoupon(ctx context.Context, couponID string) ([]*CouponRedemption, error) {
+	return ps.backend.ListCouponRedemptionsByCoupon(ctx, couponID)
+}
+
+func (ps *PersistentStorage) ListCouponRedemptionsByLicense(ctx context.Context, licenseID string) ([]*CouponRedemption, error) {
+	return ps.backend.ListCouponRedemptionsByLicense(ctx, licenseID)
+}
+
+func (ps *PersistentStorage) ListCouponRedemptionsByClient(ctx context.Context, clientID string) ([]*CouponRedemption, error) {
+	return ps.backend.ListCouponRedemptionsByClient(ctx, clientID)
 }
 
 // Email provider/template/message methods - proxy to backend and persist

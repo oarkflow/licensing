@@ -301,7 +301,7 @@ func (lm *LicenseManager) ensureLicenseEntitlements(ctx context.Context, license
 
 	// If we have planID and productID, compute entitlements directly
 	if productID != "" && planID != "" {
-		entitlements, err := lm.storage.ComputeLicenseEntitlements(ctx, productID, planID)
+		entitlements, err := lm.computeLicenseEntitlementsWithCoupons(ctx, license)
 		if err != nil {
 			return fmt.Errorf("failed to compute entitlements: %w", err)
 		}
@@ -337,7 +337,7 @@ func (lm *LicenseManager) ensureLicenseEntitlements(ctx context.Context, license
 	}
 
 	// Compute entitlements
-	entitlements, err := lm.storage.ComputeLicenseEntitlements(ctx, plan.ProductID, plan.ID)
+	entitlements, err := lm.computeLicenseEntitlementsWithCoupons(ctx, license)
 	if err != nil {
 		return fmt.Errorf("failed to compute entitlements: %w", err)
 	}
@@ -894,6 +894,9 @@ func (lm *LicenseManager) UpdateLicenseEntitlements(ctx context.Context, license
 	if err != nil {
 		return nil, fmt.Errorf("failed to compute entitlements: %w", err)
 	}
+	if err := lm.applyRedeemedCouponsToEntitlements(ctx, license, entitlements); err != nil {
+		return nil, fmt.Errorf("failed to apply coupon redemptions: %w", err)
+	}
 	if len(selections) > 0 {
 		applyFeatureScopeSelections(entitlements, selections)
 	}
@@ -902,6 +905,190 @@ func (lm *LicenseManager) UpdateLicenseEntitlements(ctx context.Context, license
 		return nil, fmt.Errorf("failed to persist license entitlements: %w", err)
 	}
 	return license, nil
+}
+
+func (lm *LicenseManager) computeLicenseEntitlementsWithCoupons(ctx context.Context, license *License) (*LicenseEntitlements, error) {
+	if license == nil {
+		return nil, fmt.Errorf("license is required")
+	}
+	productID := strings.TrimSpace(license.ProductID)
+	planID := strings.TrimSpace(license.PlanID)
+	if productID == "" || planID == "" {
+		return nil, fmt.Errorf("license is missing product or plan information")
+	}
+	entitlements, err := lm.storage.ComputeLicenseEntitlements(ctx, productID, planID)
+	if err != nil {
+		return nil, err
+	}
+	if err := lm.applyRedeemedCouponsToEntitlements(ctx, license, entitlements); err != nil {
+		return nil, err
+	}
+	return entitlements, nil
+}
+
+func (lm *LicenseManager) applyRedeemedCouponsToEntitlements(ctx context.Context, license *License, entitlements *LicenseEntitlements) error {
+	if license == nil || entitlements == nil {
+		return nil
+	}
+	redemptions, err := lm.storage.ListCouponRedemptionsByLicense(ctx, license.ID)
+	if err != nil {
+		return err
+	}
+	if len(redemptions) == 0 {
+		return nil
+	}
+	coupons := make([]*CouponCode, 0, len(redemptions))
+	for _, redemption := range redemptions {
+		coupon, err := lm.storage.GetCouponCode(ctx, redemption.CouponID)
+		if err != nil {
+			if errors.Is(err, errCouponMissing) {
+				continue
+			}
+			return err
+		}
+		coupons = append(coupons, coupon)
+	}
+	applyCouponPatches(entitlements, coupons)
+	return nil
+}
+
+func (lm *LicenseManager) CreateCouponCode(ctx context.Context, coupon *CouponCode) (*CouponCode, error) {
+	if coupon == nil {
+		return nil, fmt.Errorf("coupon is required")
+	}
+	coupon.Code = normalizeCouponCode(coupon.Code)
+	if coupon.Code == "" || strings.TrimSpace(coupon.Name) == "" {
+		return nil, fmt.Errorf("coupon code and name are required")
+	}
+	now := time.Now()
+	if coupon.ID == "" {
+		coupon.ID = uuid.New().String()
+	}
+	if coupon.CreatedAt.IsZero() {
+		coupon.CreatedAt = now
+	}
+	coupon.UpdatedAt = now
+	if !coupon.StartsAt.IsZero() && !coupon.ExpiresAt.IsZero() && coupon.ExpiresAt.Before(coupon.StartsAt) {
+		return nil, fmt.Errorf("expires_at must be after starts_at")
+	}
+	if err := lm.storage.SaveCouponCode(ctx, coupon); err != nil {
+		return nil, err
+	}
+	return coupon, nil
+}
+
+func (lm *LicenseManager) UpdateCouponCode(ctx context.Context, coupon *CouponCode) (*CouponCode, error) {
+	if coupon == nil || strings.TrimSpace(coupon.ID) == "" {
+		return nil, fmt.Errorf("coupon id is required")
+	}
+	existing, err := lm.storage.GetCouponCode(ctx, coupon.ID)
+	if err != nil {
+		return nil, err
+	}
+	existing.Code = normalizeCouponCode(coupon.Code)
+	existing.Name = strings.TrimSpace(coupon.Name)
+	existing.Description = strings.TrimSpace(coupon.Description)
+	existing.ProductID = strings.TrimSpace(coupon.ProductID)
+	existing.AllowedClientIDs = append([]string(nil), coupon.AllowedClientIDs...)
+	existing.MaxRedemptions = coupon.MaxRedemptions
+	existing.MaxRedemptionsPerClient = coupon.MaxRedemptionsPerClient
+	existing.IsActive = coupon.IsActive
+	existing.StartsAt = coupon.StartsAt
+	existing.ExpiresAt = coupon.ExpiresAt
+	existing.Metadata = cloneStringMap(coupon.Metadata)
+	existing.Features = cloneCouponCode(coupon).Features
+	existing.UpdatedAt = time.Now()
+	if err := lm.storage.UpdateCouponCode(ctx, existing); err != nil {
+		return nil, err
+	}
+	return existing, nil
+}
+
+func (lm *LicenseManager) ListCouponCodes(ctx context.Context) ([]*CouponCode, error) {
+	return lm.storage.ListCouponCodes(ctx)
+}
+
+func (lm *LicenseManager) RedeemCouponCode(ctx context.Context, licenseID, code, redeemedBy string) (*License, *CouponRedemption, error) {
+	if strings.TrimSpace(licenseID) == "" || strings.TrimSpace(code) == "" {
+		return nil, nil, fmt.Errorf("license_id and code are required")
+	}
+	license, err := lm.storage.GetLicense(ctx, licenseID)
+	if err != nil {
+		return nil, nil, err
+	}
+	coupon, err := lm.storage.GetCouponCodeByCode(ctx, code)
+	if err != nil {
+		return nil, nil, err
+	}
+	now := time.Now()
+	if !coupon.IsActive {
+		return nil, nil, fmt.Errorf("coupon is inactive")
+	}
+	if !coupon.StartsAt.IsZero() && now.Before(coupon.StartsAt) {
+		return nil, nil, fmt.Errorf("coupon is not active yet")
+	}
+	if !coupon.ExpiresAt.IsZero() && now.After(coupon.ExpiresAt) {
+		return nil, nil, fmt.Errorf("coupon has expired")
+	}
+	if coupon.ProductID != "" && license.ProductID != "" && coupon.ProductID != license.ProductID {
+		return nil, nil, fmt.Errorf("coupon does not apply to this product")
+	}
+	if len(coupon.AllowedClientIDs) > 0 {
+		allowed := false
+		for _, clientID := range coupon.AllowedClientIDs {
+			if strings.TrimSpace(clientID) == license.ClientID {
+				allowed = true
+				break
+			}
+		}
+		if !allowed {
+			return nil, nil, fmt.Errorf("coupon is restricted to specific clients")
+		}
+	}
+	couponRedemptions, err := lm.storage.ListCouponRedemptionsByCoupon(ctx, coupon.ID)
+	if err != nil {
+		return nil, nil, err
+	}
+	if coupon.MaxRedemptions > 0 && len(couponRedemptions) >= coupon.MaxRedemptions {
+		return nil, nil, fmt.Errorf("coupon redemption limit reached")
+	}
+	clientRedemptions, err := lm.storage.ListCouponRedemptionsByClient(ctx, license.ClientID)
+	if err != nil {
+		return nil, nil, err
+	}
+	perClientCount := 0
+	for _, redemption := range clientRedemptions {
+		if redemption.CouponID == coupon.ID {
+			perClientCount++
+		}
+		if redemption.CouponID == coupon.ID && redemption.LicenseID == license.ID {
+			return nil, nil, fmt.Errorf("coupon already redeemed for this license")
+		}
+	}
+	if coupon.MaxRedemptionsPerClient > 0 && perClientCount >= coupon.MaxRedemptionsPerClient {
+		return nil, nil, fmt.Errorf("client redemption limit reached for coupon")
+	}
+	redemption := &CouponRedemption{
+		ID:         uuid.New().String(),
+		CouponID:   coupon.ID,
+		CouponCode: coupon.Code,
+		LicenseID:  license.ID,
+		ClientID:   license.ClientID,
+		RedeemedBy: strings.TrimSpace(redeemedBy),
+		RedeemedAt: now,
+	}
+	if err := lm.storage.SaveCouponRedemption(ctx, redemption); err != nil {
+		return nil, nil, err
+	}
+	entitlements, err := lm.computeLicenseEntitlementsWithCoupons(ctx, license)
+	if err != nil {
+		return nil, nil, err
+	}
+	license.Entitlements = entitlements
+	if err := lm.storage.UpdateLicense(ctx, license); err != nil {
+		return nil, nil, err
+	}
+	return license, redemption, nil
 }
 
 func applyFeatureScopeSelections(entitlements *LicenseEntitlements, selections []FeatureScopeSelection) {

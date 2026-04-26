@@ -303,6 +303,51 @@ type ScopeSelection struct {
 	Metadata   map[string]string `json:"metadata,omitempty"`
 }
 
+type CouponCode struct {
+	ID                      string               `json:"id"`
+	Code                    string               `json:"code"`
+	Name                    string               `json:"name"`
+	Description             string               `json:"description,omitempty"`
+	ProductID               string               `json:"product_id,omitempty"`
+	AllowedClientIDs        []string             `json:"allowed_client_ids,omitempty"`
+	MaxRedemptions          int                  `json:"max_redemptions,omitempty"`
+	MaxRedemptionsPerClient int                  `json:"max_redemptions_per_client,omitempty"`
+	IsActive                bool                 `json:"is_active"`
+	StartsAt                time.Time            `json:"starts_at,omitempty"`
+	ExpiresAt               time.Time            `json:"expires_at,omitempty"`
+	Metadata                map[string]string    `json:"metadata,omitempty"`
+	Features                []CouponFeaturePatch `json:"features,omitempty"`
+	CreatedAt               time.Time            `json:"created_at"`
+	UpdatedAt               time.Time            `json:"updated_at"`
+}
+
+type CouponFeaturePatch struct {
+	FeatureID   string             `json:"feature_id,omitempty"`
+	FeatureSlug string             `json:"feature_slug,omitempty"`
+	Enabled     *bool              `json:"enabled,omitempty"`
+	Metadata    map[string]string  `json:"metadata,omitempty"`
+	Scopes      []CouponScopePatch `json:"scopes,omitempty"`
+}
+
+type CouponScopePatch struct {
+	ScopeID    string            `json:"scope_id,omitempty"`
+	ScopeSlug  string            `json:"scope_slug,omitempty"`
+	Permission ScopePermission   `json:"permission,omitempty"`
+	Limit      *int              `json:"limit,omitempty"`
+	Metadata   map[string]string `json:"metadata,omitempty"`
+}
+
+type CouponRedemption struct {
+	ID         string            `json:"id"`
+	CouponID   string            `json:"coupon_id"`
+	CouponCode string            `json:"coupon_code"`
+	LicenseID  string            `json:"license_id"`
+	ClientID   string            `json:"client_id"`
+	RedeemedBy string            `json:"redeemed_by,omitempty"`
+	RedeemedAt time.Time         `json:"redeemed_at"`
+	Metadata   map[string]string `json:"metadata,omitempty"`
+}
+
 type createLicenseRequest struct {
 	ClientID             string                  `json:"client_id"`
 	ProductID            string                  `json:"product_id,omitempty"`

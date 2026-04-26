@@ -45,6 +45,51 @@ export interface License {
     plan?: Plan;
 }
 
+export interface CouponFeaturePatch {
+    feature_id?: string;
+    feature_slug?: string;
+    enabled?: boolean;
+    metadata?: Record<string, string>;
+    scopes?: CouponScopePatch[];
+}
+
+export interface CouponScopePatch {
+    scope_id?: string;
+    scope_slug?: string;
+    permission?: ScopePermissionValue;
+    limit?: number;
+    metadata?: Record<string, string>;
+}
+
+export interface CouponCode {
+    id: string;
+    code: string;
+    name: string;
+    description?: string;
+    product_id?: string;
+    allowed_client_ids?: string[];
+    max_redemptions?: number;
+    max_redemptions_per_client?: number;
+    is_active: boolean;
+    starts_at?: string;
+    expires_at?: string;
+    metadata?: Record<string, string>;
+    features?: CouponFeaturePatch[];
+    created_at: string;
+    updated_at: string;
+}
+
+export interface CouponRedemption {
+    id: string;
+    coupon_id: string;
+    coupon_code: string;
+    license_id: string;
+    client_id: string;
+    redeemed_by?: string;
+    redeemed_at: string;
+    metadata?: Record<string, string>;
+}
+
 export interface LicenseDevice {
     fingerprint: string;
     activated_at: string;
@@ -325,6 +370,21 @@ export interface CreateScopeRequest {
     permission?: string;
     limit?: number;
     metadata?: Record<string, string>;
+}
+
+export interface SaveCouponRequest {
+    code: string;
+    name: string;
+    description?: string;
+    product_id?: string;
+    allowed_client_ids?: string[];
+    max_redemptions?: number;
+    max_redemptions_per_client?: number;
+    is_active?: boolean;
+    starts_at?: string;
+    expires_at?: string;
+    metadata?: Record<string, string>;
+    features?: CouponFeaturePatch[];
 }
 
 export interface CreateAdminUserRequest {

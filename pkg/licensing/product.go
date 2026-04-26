@@ -280,3 +280,48 @@ func clonePlanFeature(pf *PlanFeature) *PlanFeature {
 	}
 	return &clone
 }
+
+func cloneCouponCode(c *CouponCode) *CouponCode {
+	if c == nil {
+		return nil
+	}
+	clone := *c
+	if c.AllowedClientIDs != nil {
+		clone.AllowedClientIDs = append([]string(nil), c.AllowedClientIDs...)
+	}
+	clone.Metadata = cloneStringMap(c.Metadata)
+	if c.Features != nil {
+		clone.Features = make([]CouponFeaturePatch, 0, len(c.Features))
+		for _, feature := range c.Features {
+			copyFeature := feature
+			copyFeature.Metadata = cloneStringMap(feature.Metadata)
+			if feature.Scopes != nil {
+				copyFeature.Scopes = make([]CouponScopePatch, 0, len(feature.Scopes))
+				for _, scope := range feature.Scopes {
+					copyScope := scope
+					copyScope.Metadata = cloneStringMap(scope.Metadata)
+					if scope.Limit != nil {
+						value := *scope.Limit
+						copyScope.Limit = &value
+					}
+					copyFeature.Scopes = append(copyFeature.Scopes, copyScope)
+				}
+			}
+			if feature.Enabled != nil {
+				value := *feature.Enabled
+				copyFeature.Enabled = &value
+			}
+			clone.Features = append(clone.Features, copyFeature)
+		}
+	}
+	return &clone
+}
+
+func cloneCouponRedemption(r *CouponRedemption) *CouponRedemption {
+	if r == nil {
+		return nil
+	}
+	clone := *r
+	clone.Metadata = cloneStringMap(r.Metadata)
+	return &clone
+}

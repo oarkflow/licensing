@@ -12,6 +12,7 @@ import {
     Clock,
     CheckCircle,
     XCircle,
+    Ticket,
 } from 'lucide-react';
 import {
     Tooltip,
@@ -61,7 +62,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { useToast } from '@/hooks/use-toast';
-import type { FeatureScopeSelection, License, LicenseDevice } from '@/types/api';
+import type { CouponRedemption, FeatureScopeSelection, License, LicenseDevice } from '@/types/api';
 import { FeatureScopeSelector } from '@/components/licenses/FeatureScopeSelector';
 import { entitlementsToSelections, slugToLabel, groupScopesForFeature, categorizeSelections } from '@/lib/entitlements';
 
@@ -112,6 +113,7 @@ export function LicenseDetailPage() {
     const [entitlementDialogOpen, setEntitlementDialogOpen] = useState(false);
     const [editedFeatureScopes, setEditedFeatureScopes] = useState<FeatureScopeSelection[]>([]);
     const [initialFeatureScopes, setInitialFeatureScopes] = useState<FeatureScopeSelection[]>([]);
+    const [couponCode, setCouponCode] = useState('');
 
     const { data: licenseResponse, isLoading: licenseLoading } = useQuery({
         queryKey: ['license', id],
@@ -125,6 +127,11 @@ export function LicenseDetailPage() {
         queryKey: ['license-plan-entitlements', license?.product_id, license?.plan_id],
         queryFn: () => api.getPlanEntitlements(license!.product_id!, license!.plan_id!),
         enabled: entitlementDialogOpen && canEditScopes,
+    });
+    const { data: couponRedemptionsResponse } = useQuery({
+        queryKey: ['license-coupons', id],
+        queryFn: () => api.listLicenseCoupons(id!),
+        enabled: !!id,
     });
 
     const revokeMutation = useMutation({
@@ -207,6 +214,23 @@ export function LicenseDetailPage() {
         },
     });
 
+    const redeemCouponMutation = useMutation({
+        mutationFn: (code: string) => api.redeemLicenseCoupon(id!, code),
+        onSuccess: () => {
+            queryClient.invalidateQueries({ queryKey: ['license', id] });
+            queryClient.invalidateQueries({ queryKey: ['license-coupons', id] });
+            setCouponCode('');
+            toast({ title: 'Coupon redeemed successfully' });
+        },
+        onError: (error) => {
+            toast({
+                title: 'Failed to redeem coupon',
+                description: error instanceof Error ? error.message : 'Unknown error',
+                variant: 'destructive',
+            });
+        },
+    });
+
     const copyToClipboard = (text: string) => {
         navigator.clipboard.writeText(text);
         toast({ title: 'Copied to clipboard' });
@@ -251,6 +275,7 @@ export function LicenseDetailPage() {
     };
 
     const selectorLoading = planEntitlementsLoading && editedFeatureScopes.length === 0;
+    const couponRedemptions: CouponRedemption[] = couponRedemptionsResponse?.data || [];
 
     return (
         <div className="space-y-6">
@@ -679,6 +704,66 @@ export function LicenseDetailPage() {
                                 ))}
                             </TableBody>
                         </Table>
+                    )}
+                </CardContent>
+            </Card>
+
+            <Card>
+                <CardHeader>
+                    <CardTitle className="flex items-center gap-2">
+                        <Ticket className="h-5 w-5" />
+                        Coupon Extensions
+                    </CardTitle>
+                    <CardDescription>
+                        Redeem coupon codes to add custom limits, flags, settings, and scope extensions for this license.
+                    </CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                    <div className="flex flex-col gap-3 md:flex-row">
+                        <Input
+                            value={couponCode}
+                            onChange={(e) => setCouponCode(e.target.value.toUpperCase())}
+                            placeholder="ENTER-COUPON-CODE"
+                            className="font-mono"
+                        />
+                        <Button
+                            onClick={() => redeemCouponMutation.mutate(couponCode.trim())}
+                            disabled={redeemCouponMutation.isPending || !couponCode.trim()}
+                        >
+                            {redeemCouponMutation.isPending ? 'Redeeming...' : 'Redeem Coupon'}
+                        </Button>
+                    </div>
+                    {couponRedemptions.length === 0 ? (
+                        <div className="rounded-md border border-dashed p-6 text-sm text-muted-foreground">
+                            No coupon extensions have been redeemed for this license yet.
+                        </div>
+                    ) : (
+                        <div className="space-y-3">
+                            {couponRedemptions.map((redemption) => (
+                                <div key={redemption.id} className="rounded-xl border p-4">
+                                    <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
+                                        <div className="space-y-1">
+                                            <div className="flex items-center gap-2">
+                                                <Badge variant="outline" className="font-mono">
+                                                    {redemption.coupon_code}
+                                                </Badge>
+                                                {redemption.redeemed_by && (
+                                                    <Badge variant="secondary">
+                                                        by {redemption.redeemed_by}
+                                                    </Badge>
+                                                )}
+                                            </div>
+                                            <p className="text-sm text-muted-foreground">
+                                                Redeemed {new Date(redemption.redeemed_at).toLocaleString()}
+                                            </p>
+                                        </div>
+                                        <div className="text-sm text-muted-foreground">
+                                            Client: <span className="font-medium text-foreground">{redemption.client_id}</span>
+                                        </div>
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
                     )}
                 </CardContent>
             </Card>

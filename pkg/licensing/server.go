@@ -3147,6 +3147,36 @@ func (s *Server) handleLicenseActions(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		s.respondJSON(w, http.StatusOK, license)
+	case "coupons":
+		if r.Method == http.MethodGet {
+			items, err := s.lm.storage.ListCouponRedemptionsByLicense(r.Context(), licenseID)
+			if err != nil {
+				s.respondError(w, http.StatusInternalServerError, err.Error())
+				return
+			}
+			if items == nil {
+				items = []*CouponRedemption{}
+			}
+			s.respondJSON(w, http.StatusOK, items)
+			return
+		}
+		if r.Method != http.MethodPost {
+			s.respondError(w, http.StatusMethodNotAllowed, "Method not allowed")
+			return
+		}
+		var req redeemCouponRequest
+		if !s.decodeJSONBody(w, r, &req, maxAdminPayloadBytes) {
+			return
+		}
+		license, redemption, err := s.lm.RedeemCouponCode(r.Context(), licenseID, req.Code, req.RedeemedBy)
+		if err != nil {
+			s.respondError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		s.respondJSON(w, http.StatusOK, map[string]any{
+			"license":    license,
+			"redemption": redemption,
+		})
 	default:
 		http.NotFound(w, r)
 	}
@@ -3163,6 +3193,8 @@ func (s *Server) Start() error {
 	mux.HandleFunc("/api/trial/check", s.handleTrialCheck)
 	mux.HandleFunc("/api/subscribe", s.handleSubscribe)
 	mux.HandleFunc("/api/subscriptions", s.handleSubscriptions)
+	mux.HandleFunc("/api/coupons", s.handleCoupons)
+	mux.HandleFunc("/api/coupons/", s.handleCouponActions)
 	mux.HandleFunc("/api/licenses/", s.handleLicenseActions)
 	mux.HandleFunc("/api/clients", s.handleClients)
 	mux.HandleFunc("/api/clients/", s.handleClientActions)

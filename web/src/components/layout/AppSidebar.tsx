@@ -74,6 +74,10 @@ const adminNavItems = [
         title: 'Signing Keys',
         url: '/admin/signing-keys',
     },
+    {
+        title: 'Coupons',
+        url: '/admin/coupons',
+    },
 ];
 
 const messagingNavItems = [
