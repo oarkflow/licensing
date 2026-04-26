@@ -76,15 +76,26 @@ func (p *Plan) TrialDuration() time.Duration {
 
 // Feature represents a capability or functionality that can be gated by plans.
 type Feature struct {
-	ID          string    `json:"id"`
-	ProductID   string    `json:"product_id"`
-	Name        string    `json:"name"`
-	Slug        string    `json:"slug"`
-	Description string    `json:"description,omitempty"`
-	Category    string    `json:"category,omitempty"` // e.g., "gui", "cli", "api"
-	CreatedAt   time.Time `json:"created_at"`
-	UpdatedAt   time.Time `json:"updated_at"`
+	ID          string            `json:"id"`
+	ProductID   string            `json:"product_id"`
+	Name        string            `json:"name"`
+	Slug        string            `json:"slug"`
+	Description string            `json:"description,omitempty"`
+	Type        FeatureType       `json:"type,omitempty"`
+	Category    string            `json:"category,omitempty"` // e.g., "gui", "cli", "api"
+	Metadata    map[string]string `json:"metadata,omitempty"`
+	CreatedAt   time.Time         `json:"created_at"`
+	UpdatedAt   time.Time         `json:"updated_at"`
 }
+
+// FeatureType defines the behavior of a feature grant.
+type FeatureType string
+
+const (
+	FeatureTypeBoolean FeatureType = "boolean"
+	FeatureTypeMetered FeatureType = "metered"
+	FeatureTypeScoped  FeatureType = "scoped"
+)
 
 // FeatureScope defines specific operations/permissions within a feature.
 type FeatureScope struct {
@@ -144,20 +155,40 @@ type LicenseEntitlements struct {
 type FeatureGrant struct {
 	FeatureID   string                `json:"feature_id"`
 	FeatureSlug string                `json:"feature_slug"`
+	Type        FeatureType           `json:"type,omitempty"`
 	Category    string                `json:"category,omitempty"`
 	Enabled     bool                  `json:"enabled"`
+	Metadata    map[string]string     `json:"metadata,omitempty"`
+	Flags       map[string]bool       `json:"flags,omitempty"`
+	Settings    map[string]string     `json:"settings,omitempty"`
+	Limits      map[string]int        `json:"limits,omitempty"`
+	Usage       map[string]UsageGrant `json:"usage,omitempty"`
 	Scopes      map[string]ScopeGrant `json:"scopes,omitempty"`
 }
 
 // ScopeGrant represents a specific scope permission granted to a license.
 type ScopeGrant struct {
-	ScopeID    string            `json:"scope_id"`
-	ScopeSlug  string            `json:"scope_slug"`
-	Permission ScopePermission   `json:"permission"`
-	Limit      int               `json:"limit,omitempty"`
-	Metadata   map[string]string `json:"metadata,omitempty"`
+	ScopeID    string                `json:"scope_id"`
+	ScopeSlug  string                `json:"scope_slug"`
+	Permission ScopePermission       `json:"permission"`
+	Limit      int                   `json:"limit,omitempty"`
+	Metadata   map[string]string     `json:"metadata,omitempty"`
+	Flags      map[string]bool       `json:"flags,omitempty"`
+	Settings   map[string]string     `json:"settings,omitempty"`
+	Limits     map[string]int        `json:"limits,omitempty"`
+	Usage      map[string]UsageGrant `json:"usage,omitempty"`
 	// Restrictions express usage-limiting constraints intended for clients to enforce.
 	Restrictions []ScopeRestriction `json:"restrictions,omitempty"`
+}
+
+// UsageGrant describes a metered or quota-based allowance emitted as part of an entitlement.
+type UsageGrant struct {
+	Limit         int               `json:"limit,omitempty"`
+	WindowSeconds int               `json:"window_seconds,omitempty"`
+	Current       int               `json:"current,omitempty"`
+	ResetAt       time.Time         `json:"reset_at,omitempty"`
+	Strategy      string            `json:"strategy,omitempty"`
+	Metadata      map[string]string `json:"metadata,omitempty"`
 }
 
 // UsageRestrictionType enumerates supported restriction kinds.
@@ -206,6 +237,12 @@ func cloneFeature(f *Feature) *Feature {
 		return nil
 	}
 	clone := *f
+	if f.Metadata != nil {
+		clone.Metadata = make(map[string]string, len(f.Metadata))
+		for k, v := range f.Metadata {
+			clone.Metadata[k] = v
+		}
+	}
 	return &clone
 }
 

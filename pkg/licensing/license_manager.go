@@ -17,7 +17,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -909,12 +908,39 @@ func applyFeatureScopeSelections(entitlements *LicenseEntitlements, selections [
 	if entitlements == nil || len(selections) == 0 {
 		return
 	}
-	for _, feature := range selections {
-		slug := strings.TrimSpace(feature.FeatureSlug)
-		if slug == "" {
-			continue
+
+	findFeature := func(selection FeatureScopeSelection) (string, FeatureGrant, bool) {
+		if slug := strings.TrimSpace(selection.FeatureSlug); slug != "" {
+			grant, ok := entitlements.Features[slug]
+			return slug, grant, ok
 		}
-		grant, ok := entitlements.Features[slug]
+		if id := strings.TrimSpace(selection.FeatureID); id != "" {
+			for slug, grant := range entitlements.Features {
+				if grant.FeatureID == id {
+					return slug, grant, true
+				}
+			}
+		}
+		return "", FeatureGrant{}, false
+	}
+
+	findScope := func(grant FeatureGrant, selection ScopeSelection) (string, ScopeGrant, bool) {
+		if slug := strings.TrimSpace(selection.ScopeSlug); slug != "" {
+			scopeGrant, ok := grant.Scopes[slug]
+			return slug, scopeGrant, ok
+		}
+		if id := strings.TrimSpace(selection.ScopeID); id != "" {
+			for slug, scopeGrant := range grant.Scopes {
+				if scopeGrant.ScopeID == id {
+					return slug, scopeGrant, true
+				}
+			}
+		}
+		return "", ScopeGrant{}, false
+	}
+
+	for _, feature := range selections {
+		slug, grant, ok := findFeature(feature)
 		if !ok {
 			continue
 		}
@@ -923,16 +949,23 @@ func applyFeatureScopeSelections(entitlements *LicenseEntitlements, selections [
 			grant.Scopes = make(map[string]ScopeGrant)
 		}
 		for _, scope := range feature.Scopes {
-			scopeSlug := strings.TrimSpace(scope.ScopeSlug)
-			if scopeSlug == "" {
-				continue
-			}
-			scopeGrant, exists := grant.Scopes[scopeSlug]
+			scopeSlug, scopeGrant, exists := findScope(grant, scope)
 			if !exists {
 				continue
 			}
-			scopeGrant.Permission = scope.Permission
+			scopeGrant.Permission = normalizeScopePermission(scope.Permission)
 			scopeGrant.Limit = scope.Limit
+			if scope.Metadata != nil {
+				scopeGrant.Metadata = mergeStringMaps(scopeGrant.Metadata, scope.Metadata)
+				flags, settings, limits, usage, restrictions := parseEntitlementDecorations(scopeGrant.Metadata)
+				scopeGrant.Flags = flags
+				scopeGrant.Settings = settings
+				scopeGrant.Limits = limits
+				scopeGrant.Usage = usage
+				if len(restrictions) > 0 {
+					scopeGrant.Restrictions = restrictions
+				}
+			}
 			grant.Scopes[scopeSlug] = scopeGrant
 		}
 		if !feature.Enabled {
@@ -1121,43 +1154,14 @@ func (lm *LicenseManager) computeTrialEntitlements(ctx context.Context, productI
 			continue
 		}
 
-		scopeGrants := make(map[string]ScopeGrant)
+		featureGrant := buildFeatureGrant(feature)
 		for _, scope := range scopes {
-			scopeGrants[scope.Slug] = ScopeGrant{
-				ScopeID:    scope.ID,
-				ScopeSlug:  scope.Slug,
-				Permission: ScopePermissionAllow, // Allow all for trial
-				Metadata:   scope.Metadata,
-			}
-
-			// Populate optional Restrictions from scope metadata for trial entitlements as well
-			if scope.Metadata != nil {
-				if t, ok := scope.Metadata["restriction_type"]; ok && strings.TrimSpace(t) != "" {
-					sr := ScopeRestriction{Type: UsageRestrictionType(strings.TrimSpace(t))}
-					if v, ok := scope.Metadata["restriction_limit"]; ok {
-						if n, err := strconv.Atoi(strings.TrimSpace(v)); err == nil {
-							sr.Limit = n
-						}
-					}
-					if v, ok := scope.Metadata["restriction_window_seconds"]; ok {
-						if n, err := strconv.Atoi(strings.TrimSpace(v)); err == nil {
-							sr.WindowSeconds = n
-						}
-					}
-					sg := scopeGrants[scope.Slug]
-					sg.Restrictions = append(sg.Restrictions, sr)
-					scopeGrants[scope.Slug] = sg
-				}
-			}
+			scopeGrant := buildScopeGrant(scope, nil)
+			scopeGrant.Permission = ScopePermissionAllow
+			featureGrant.Scopes[scope.Slug] = scopeGrant
 		}
-
-		entitlements.Features[feature.Slug] = FeatureGrant{
-			FeatureID:   feature.ID,
-			FeatureSlug: feature.Slug,
-			Category:    feature.Category,
-			Enabled:     true, // All features enabled for trial
-			Scopes:      scopeGrants,
-		}
+		featureGrant.Enabled = true
+		entitlements.Features[feature.Slug] = featureGrant
 	}
 
 	return entitlements, nil

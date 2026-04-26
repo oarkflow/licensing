@@ -3,7 +3,6 @@ package licensing
 import (
 	"context"
 	"fmt"
-	"strconv"
 	"strings"
 )
 
@@ -226,6 +225,7 @@ func (s *InMemoryStorage) SaveFeature(_ context.Context, feature *Feature) error
 	if feature == nil {
 		return fmt.Errorf("feature is nil")
 	}
+	feature.Type = normalizeFeatureType(feature.Type)
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if _, exists := s.features[feature.ID]; exists {
@@ -246,6 +246,7 @@ func (s *InMemoryStorage) UpdateFeature(_ context.Context, feature *Feature) err
 	if feature == nil {
 		return fmt.Errorf("feature is nil")
 	}
+	feature.Type = normalizeFeatureType(feature.Type)
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	current, exists := s.features[feature.ID]
@@ -495,13 +496,7 @@ func (s *InMemoryStorage) ComputeLicenseEntitlements(_ context.Context, productI
 			continue
 		}
 
-		featureGrant := FeatureGrant{
-			FeatureID:   feature.ID,
-			FeatureSlug: feature.Slug,
-			Category:    feature.Category,
-			Enabled:     true,
-			Scopes:      make(map[string]ScopeGrant),
-		}
+		featureGrant := buildFeatureGrant(feature)
 
 		// Collect all scopes for this feature
 		for _, scope := range s.featureScopes {
@@ -510,45 +505,17 @@ func (s *InMemoryStorage) ComputeLicenseEntitlements(_ context.Context, productI
 			}
 
 			// Check for scope override in plan feature
-			scopeGrant := ScopeGrant{
-				ScopeID:    scope.ID,
-				ScopeSlug:  scope.Slug,
-				Permission: scope.Permission,
-				Limit:      scope.Limit,
-				Metadata:   scope.Metadata,
+			var override *ScopeOverride
+			if value, hasOverride := pf.ScopeOverrides[scope.ID]; hasOverride {
+				override = &value
+			} else if value, hasOverride := pf.ScopeOverrides[scope.Slug]; hasOverride {
+				override = &value
 			}
-
-			// Apply override if exists
-			if override, hasOverride := pf.ScopeOverrides[scope.ID]; hasOverride {
-				scopeGrant.Permission = override.Permission
-				scopeGrant.Limit = override.Limit
-				if override.Metadata != nil {
-					scopeGrant.Metadata = override.Metadata
-				}
-			}
+			scopeGrant := buildScopeGrant(scope, override)
 
 			// Final safety net: enforce plan/feature matrix even if overrides are missing
 			if !IsScopeAllowedForPlan(feature.Slug, scope.Slug, plan.Slug) {
 				scopeGrant.Permission = ScopePermissionDeny
-			}
-
-			// Populate optional Restrictions from scope metadata. Server may emit
-			// keys like restriction_type, restriction_limit, restriction_window_seconds
-			if scope.Metadata != nil {
-				if t, ok := scope.Metadata["restriction_type"]; ok && strings.TrimSpace(t) != "" {
-					sr := ScopeRestriction{Type: UsageRestrictionType(strings.TrimSpace(t))}
-					if v, ok := scope.Metadata["restriction_limit"]; ok {
-						if n, err := strconv.Atoi(strings.TrimSpace(v)); err == nil {
-							sr.Limit = n
-						}
-					}
-					if v, ok := scope.Metadata["restriction_window_seconds"]; ok {
-						if n, err := strconv.Atoi(strings.TrimSpace(v)); err == nil {
-							sr.WindowSeconds = n
-						}
-					}
-					scopeGrant.Restrictions = append(scopeGrant.Restrictions, sr)
-				}
 			}
 
 			featureGrant.Scopes[scope.Slug] = scopeGrant

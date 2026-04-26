@@ -296,10 +296,11 @@ type FeatureScopeSelection struct {
 
 // ScopeSelection represents the desired permission for a scope.
 type ScopeSelection struct {
-	ScopeID    string          `json:"scope_id,omitempty"`
-	ScopeSlug  string          `json:"scope_slug"`
-	Permission ScopePermission `json:"permission"`
-	Limit      int             `json:"limit,omitempty"`
+	ScopeID    string            `json:"scope_id,omitempty"`
+	ScopeSlug  string            `json:"scope_slug"`
+	Permission ScopePermission   `json:"permission"`
+	Limit      int               `json:"limit,omitempty"`
+	Metadata   map[string]string `json:"metadata,omitempty"`
 }
 
 type createLicenseRequest struct {

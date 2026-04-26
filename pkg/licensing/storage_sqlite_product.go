@@ -70,7 +70,9 @@ func ensureProductSchema(db *squealx.DB) error {
 			slug TEXT NOT NULL,
 			slug_key TEXT NOT NULL UNIQUE,
 			description TEXT,
+			type TEXT NOT NULL DEFAULT 'boolean',
 			category TEXT,
+			metadata TEXT,
 			created_at TIMESTAMP NOT NULL,
 			updated_at TIMESTAMP NOT NULL,
 			FOREIGN KEY(product_id) REFERENCES products(id) ON DELETE CASCADE
@@ -144,6 +146,8 @@ func ensureProductSchema(db *squealx.DB) error {
 	hasMaxDevicesColumn := false
 	hasDurationDaysColumn := false
 	hasPricePerDeviceColumn := false
+	hasFeatureTypeColumn := false
+	hasFeatureMetadataColumn := false
 	for rows.Next() {
 		var cid int
 		var name, ctype string
@@ -167,6 +171,12 @@ func ensureProductSchema(db *squealx.DB) error {
 		}
 		if name == "price_per_device" {
 			hasPricePerDeviceColumn = true
+		}
+		if name == "type" {
+			hasFeatureTypeColumn = true
+		}
+		if name == "metadata" {
+			hasFeatureMetadataColumn = true
 		}
 	}
 	rows.Close()
@@ -202,6 +212,39 @@ func ensureProductSchema(db *squealx.DB) error {
 	if !hasPricePerDeviceColumn {
 		if _, err := db.Exec(`ALTER TABLE plans ADD COLUMN price_per_device INTEGER NOT NULL DEFAULT 0;`); err != nil {
 			return fmt.Errorf("failed to add price_per_device column: %w", err)
+		}
+	}
+
+	rows, err = db.Query("PRAGMA table_info(features);")
+	if err != nil {
+		return fmt.Errorf("failed to check features table info: %w", err)
+	}
+	for rows.Next() {
+		var cid int
+		var name, ctype string
+		var notnull, pk int
+		var dfltValue interface{}
+		if err := rows.Scan(&cid, &name, &ctype, &notnull, &dfltValue, &pk); err != nil {
+			rows.Close()
+			return fmt.Errorf("failed to scan features table info: %w", err)
+		}
+		if name == "type" {
+			hasFeatureTypeColumn = true
+		}
+		if name == "metadata" {
+			hasFeatureMetadataColumn = true
+		}
+	}
+	rows.Close()
+
+	if !hasFeatureTypeColumn {
+		if _, err := db.Exec(`ALTER TABLE features ADD COLUMN type TEXT NOT NULL DEFAULT 'boolean';`); err != nil {
+			return fmt.Errorf("failed to add features.type column: %w", err)
+		}
+	}
+	if !hasFeatureMetadataColumn {
+		if _, err := db.Exec(`ALTER TABLE features ADD COLUMN metadata TEXT;`); err != nil {
+			return fmt.Errorf("failed to add features.metadata column: %w", err)
 		}
 	}
 
@@ -543,13 +586,18 @@ func (s *SQLiteStorage) SaveFeature(ctx context.Context, feature *Feature) error
 		feature.CreatedAt = now
 	}
 	feature.UpdatedAt = now
+	feature.Type = normalizeFeatureType(feature.Type)
 	slugKey := feature.ProductID + ":" + strings.ToLower(feature.Slug)
+	metadataJSON, err := json.Marshal(feature.Metadata)
+	if err != nil {
+		return err
+	}
 
-	query := `INSERT INTO features (id, product_id, name, slug, slug_key, description, category, created_at, updated_at)
-			  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
-	_, err := s.db.ExecContext(ctx, query,
+	query := `INSERT INTO features (id, product_id, name, slug, slug_key, description, type, category, metadata, created_at, updated_at)
+			  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+	_, err = s.db.ExecContext(ctx, query,
 		feature.ID, feature.ProductID, feature.Name, feature.Slug, slugKey,
-		feature.Description, feature.Category,
+		feature.Description, feature.Type, feature.Category, string(metadataJSON),
 		feature.CreatedAt, feature.UpdatedAt)
 	if err != nil {
 		if strings.Contains(err.Error(), "UNIQUE constraint failed") {
@@ -565,12 +613,17 @@ func (s *SQLiteStorage) UpdateFeature(ctx context.Context, feature *Feature) err
 		return fmt.Errorf("feature is nil")
 	}
 	feature.UpdatedAt = time.Now()
+	feature.Type = normalizeFeatureType(feature.Type)
 	slugKey := feature.ProductID + ":" + strings.ToLower(feature.Slug)
+	metadataJSON, err := json.Marshal(feature.Metadata)
+	if err != nil {
+		return err
+	}
 
-	query := `UPDATE features SET product_id=?, name=?, slug=?, slug_key=?, description=?, category=?, updated_at=? WHERE id=?`
+	query := `UPDATE features SET product_id=?, name=?, slug=?, slug_key=?, description=?, type=?, category=?, metadata=?, updated_at=? WHERE id=?`
 	result, err := s.db.ExecContext(ctx, query,
 		feature.ProductID, feature.Name, feature.Slug, slugKey,
-		feature.Description, feature.Category,
+		feature.Description, feature.Type, feature.Category, string(metadataJSON),
 		feature.UpdatedAt, feature.ID)
 	if err != nil {
 		if strings.Contains(err.Error(), "UNIQUE constraint failed") {
@@ -586,12 +639,12 @@ func (s *SQLiteStorage) UpdateFeature(ctx context.Context, feature *Feature) err
 }
 
 func (s *SQLiteStorage) GetFeature(ctx context.Context, featureID string) (*Feature, error) {
-	query := `SELECT id, product_id, name, slug, description, category, created_at, updated_at FROM features WHERE id=?`
+	query := `SELECT id, product_id, name, slug, description, type, category, metadata, created_at, updated_at FROM features WHERE id=?`
 	row := s.db.QueryRowContext(ctx, query, featureID)
 	feature := &Feature{}
-	var description, category sql.NullString
+	var description, featureType, category, metadataJSON sql.NullString
 	var createdAt, updatedAt sqliteTimeValue
-	err := row.Scan(&feature.ID, &feature.ProductID, &feature.Name, &feature.Slug, &description, &category, &createdAt, &updatedAt)
+	err := row.Scan(&feature.ID, &feature.ProductID, &feature.Name, &feature.Slug, &description, &featureType, &category, &metadataJSON, &createdAt, &updatedAt)
 	if err == sql.ErrNoRows {
 		return nil, errFeatureMissing
 	}
@@ -599,7 +652,11 @@ func (s *SQLiteStorage) GetFeature(ctx context.Context, featureID string) (*Feat
 		return nil, err
 	}
 	feature.Description = description.String
+	feature.Type = normalizeFeatureType(FeatureType(featureType.String))
 	feature.Category = category.String
+	if metadataJSON.Valid && metadataJSON.String != "" {
+		_ = json.Unmarshal([]byte(metadataJSON.String), &feature.Metadata)
+	}
 	feature.CreatedAt = createdAt.Time
 	feature.UpdatedAt = updatedAt.Time
 	return feature, nil
@@ -607,12 +664,12 @@ func (s *SQLiteStorage) GetFeature(ctx context.Context, featureID string) (*Feat
 
 func (s *SQLiteStorage) GetFeatureBySlug(ctx context.Context, productID, slug string) (*Feature, error) {
 	slugKey := productID + ":" + strings.ToLower(slug)
-	query := `SELECT id, product_id, name, slug, description, category, created_at, updated_at FROM features WHERE slug_key=?`
+	query := `SELECT id, product_id, name, slug, description, type, category, metadata, created_at, updated_at FROM features WHERE slug_key=?`
 	row := s.db.QueryRowContext(ctx, query, slugKey)
 	feature := &Feature{}
-	var description, category sql.NullString
+	var description, featureType, category, metadataJSON sql.NullString
 	var createdAt, updatedAt sqliteTimeValue
-	err := row.Scan(&feature.ID, &feature.ProductID, &feature.Name, &feature.Slug, &description, &category, &createdAt, &updatedAt)
+	err := row.Scan(&feature.ID, &feature.ProductID, &feature.Name, &feature.Slug, &description, &featureType, &category, &metadataJSON, &createdAt, &updatedAt)
 	if err == sql.ErrNoRows {
 		return nil, errFeatureMissing
 	}
@@ -620,14 +677,18 @@ func (s *SQLiteStorage) GetFeatureBySlug(ctx context.Context, productID, slug st
 		return nil, err
 	}
 	feature.Description = description.String
+	feature.Type = normalizeFeatureType(FeatureType(featureType.String))
 	feature.Category = category.String
+	if metadataJSON.Valid && metadataJSON.String != "" {
+		_ = json.Unmarshal([]byte(metadataJSON.String), &feature.Metadata)
+	}
 	feature.CreatedAt = createdAt.Time
 	feature.UpdatedAt = updatedAt.Time
 	return feature, nil
 }
 
 func (s *SQLiteStorage) ListFeaturesByProduct(ctx context.Context, productID string) ([]*Feature, error) {
-	query := `SELECT id, product_id, name, slug, description, category, created_at, updated_at FROM features WHERE product_id=? ORDER BY category, name`
+	query := `SELECT id, product_id, name, slug, description, type, category, metadata, created_at, updated_at FROM features WHERE product_id=? ORDER BY category, name`
 	rows, err := s.db.QueryContext(ctx, query, productID)
 	if err != nil {
 		return nil, err
@@ -636,13 +697,17 @@ func (s *SQLiteStorage) ListFeaturesByProduct(ctx context.Context, productID str
 	features := make([]*Feature, 0)
 	for rows.Next() {
 		feature := &Feature{}
-		var description, category sql.NullString
+		var description, featureType, category, metadataJSON sql.NullString
 		var createdAt, updatedAt sqliteTimeValue
-		if err := rows.Scan(&feature.ID, &feature.ProductID, &feature.Name, &feature.Slug, &description, &category, &createdAt, &updatedAt); err != nil {
+		if err := rows.Scan(&feature.ID, &feature.ProductID, &feature.Name, &feature.Slug, &description, &featureType, &category, &metadataJSON, &createdAt, &updatedAt); err != nil {
 			return nil, err
 		}
 		feature.Description = description.String
+		feature.Type = normalizeFeatureType(FeatureType(featureType.String))
 		feature.Category = category.String
+		if metadataJSON.Valid && metadataJSON.String != "" {
+			_ = json.Unmarshal([]byte(metadataJSON.String), &feature.Metadata)
+		}
 		feature.CreatedAt = createdAt.Time
 		feature.UpdatedAt = updatedAt.Time
 		features = append(features, feature)
@@ -978,13 +1043,7 @@ func (s *SQLiteStorage) ComputeLicenseEntitlements(ctx context.Context, productI
 			continue
 		}
 
-		featureGrant := FeatureGrant{
-			FeatureID:   feature.ID,
-			FeatureSlug: feature.Slug,
-			Category:    feature.Category,
-			Enabled:     true,
-			Scopes:      make(map[string]ScopeGrant),
-		}
+		featureGrant := buildFeatureGrant(feature)
 
 		// Get all scopes for this feature
 		scopes, err := s.ListFeatureScopes(ctx, feature.ID)
@@ -993,22 +1052,13 @@ func (s *SQLiteStorage) ComputeLicenseEntitlements(ctx context.Context, productI
 		}
 
 		for _, scope := range scopes {
-			scopeGrant := ScopeGrant{
-				ScopeID:    scope.ID,
-				ScopeSlug:  scope.Slug,
-				Permission: scope.Permission,
-				Limit:      scope.Limit,
-				Metadata:   scope.Metadata,
+			var override *ScopeOverride
+			if value, hasOverride := pf.ScopeOverrides[scope.ID]; hasOverride {
+				override = &value
+			} else if value, hasOverride := pf.ScopeOverrides[scope.Slug]; hasOverride {
+				override = &value
 			}
-
-			// Apply override if exists
-			if override, hasOverride := pf.ScopeOverrides[scope.ID]; hasOverride {
-				scopeGrant.Permission = override.Permission
-				scopeGrant.Limit = override.Limit
-				if override.Metadata != nil {
-					scopeGrant.Metadata = override.Metadata
-				}
-			}
+			scopeGrant := buildScopeGrant(scope, override)
 
 			// Final safety net: enforce plan/feature matrix even if overrides are missing
 			if !IsScopeAllowedForPlan(feature.Slug, scope.Slug, plan.Slug) {

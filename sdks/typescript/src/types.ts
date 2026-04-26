@@ -40,8 +40,21 @@ export interface ScopeGrant {
     permission: ScopePermission;
     limit?: number;
     metadata?: Record<string, unknown>;
+    flags?: Record<string, boolean>;
+    settings?: Record<string, string>;
+    limits?: Record<string, number>;
+    usage?: Record<string, UsageGrant>;
     // Optional usage restrictions emitted by the server
     restrictions?: ScopeRestriction[];
+}
+
+export interface UsageGrant {
+    limit?: number;
+    window_seconds?: number;
+    current?: number;
+    reset_at?: string;
+    strategy?: string;
+    metadata?: Record<string, unknown>;
 }
 
 export type UsageRestrictionType = 'storage' | 'user' | 'device';
@@ -64,8 +77,14 @@ export interface UsageContext {
 export interface FeatureGrant {
     feature_id: string;
     feature_slug: string;
+    type?: 'boolean' | 'metered' | 'scoped';
     category?: string;
     enabled: boolean;
+    metadata?: Record<string, string>;
+    flags?: Record<string, boolean>;
+    settings?: Record<string, string>;
+    limits?: Record<string, number>;
+    usage?: Record<string, UsageGrant>;
     scopes?: Record<string, ScopeGrant>;
 }
 

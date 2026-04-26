@@ -46,6 +46,7 @@ import {
 } from '@/components/ui/alert-dialog';
 import { useToast } from '@/hooks/use-toast';
 import type { FeatureScope } from '@/types/api';
+import { summarizeMetadata } from '@/lib/featureMetadata';
 
 export function FeatureDetailPage() {
     const { productId, featureId } = useParams<{
@@ -113,6 +114,7 @@ export function FeatureDetailPage() {
 
     const feature = featureResponse?.data;
     const scopes: FeatureScope[] = scopesResponse?.data || [];
+    const metadataSummary = summarizeMetadata(feature?.metadata);
 
     if (!feature) {
         return (
@@ -193,6 +195,12 @@ export function FeatureDetailPage() {
                             <p className="font-mono font-medium">{feature.slug}</p>
                         </div>
                         <div>
+                            <Label className="text-muted-foreground">Type</Label>
+                            <div className="mt-1">
+                                <Badge variant="secondary">{feature.type || 'boolean'}</Badge>
+                            </div>
+                        </div>
+                        <div>
                             <Label className="text-muted-foreground">Category</Label>
                             <div className="mt-1">
                                 <Badge variant="outline">{feature.category || 'uncategorized'}</Badge>
@@ -211,6 +219,59 @@ export function FeatureDetailPage() {
                             </p>
                         </div>
                     </div>
+                    {(Object.keys(metadataSummary.flags).length > 0 ||
+                        Object.keys(metadataSummary.settings).length > 0 ||
+                        Object.keys(metadataSummary.limits).length > 0 ||
+                        metadataSummary.usage.length > 0) && (
+                        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+                            {Object.keys(metadataSummary.flags).length > 0 && (
+                                <div>
+                                    <Label className="text-muted-foreground">Flags</Label>
+                                    <div className="mt-1 flex flex-wrap gap-2">
+                                        {Object.entries(metadataSummary.flags).map(([key, value]) => (
+                                            <Badge key={key} variant={value ? 'default' : 'secondary'}>
+                                                {key}: {value ? 'on' : 'off'}
+                                            </Badge>
+                                        ))}
+                                    </div>
+                                </div>
+                            )}
+                            {Object.keys(metadataSummary.settings).length > 0 && (
+                                <div>
+                                    <Label className="text-muted-foreground">Settings</Label>
+                                    <div className="mt-1 space-y-1 text-sm">
+                                        {Object.entries(metadataSummary.settings).map(([key, value]) => (
+                                            <p key={key}><span className="font-medium">{key}</span>: {value}</p>
+                                        ))}
+                                    </div>
+                                </div>
+                            )}
+                            {Object.keys(metadataSummary.limits).length > 0 && (
+                                <div>
+                                    <Label className="text-muted-foreground">Limits</Label>
+                                    <div className="mt-1 space-y-1 text-sm">
+                                        {Object.entries(metadataSummary.limits).map(([key, value]) => (
+                                            <p key={key}><span className="font-medium">{key}</span>: {value}</p>
+                                        ))}
+                                    </div>
+                                </div>
+                            )}
+                            {metadataSummary.usage.length > 0 && (
+                                <div>
+                                    <Label className="text-muted-foreground">Usage</Label>
+                                    <div className="mt-1 space-y-1 text-sm">
+                                        {metadataSummary.usage.map((entry) => (
+                                            <p key={entry.name}>
+                                                <span className="font-medium">{entry.name}</span>
+                                                {entry.limit ? `: ${entry.limit}` : ''}
+                                                {entry.windowSeconds ? ` / ${entry.windowSeconds}s` : ''}
+                                            </p>
+                                        ))}
+                                    </div>
+                                </div>
+                            )}
+                        </div>
+                    )}
                 </CardContent>
             </Card>
 

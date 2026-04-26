@@ -242,13 +242,15 @@ export const FeatureScopeSelector = memo(function FeatureScopeSelector({
 
     const handleFeatureToggle = useCallback((slug: string, enabled: boolean) => {
         onChange(
-            selections.map((feature) => {
+            selections.map<FeatureScopeSelection>((feature) => {
                 if (feature.feature_slug !== slug) {
                     return feature;
                 }
-                const scopes = (feature.scopes || []).map((scope) => ({
+                const scopes = (feature.scopes || []).map<ScopeSelection>((scope) => ({
                     ...scope,
-                    permission: enabled ? (scope.permission === 'limit' ? 'limit' : 'allow') : 'deny',
+                    permission: enabled
+                        ? (scope.permission === 'limit' ? 'limit' : 'allow')
+                        : 'deny',
                 }));
                 return { ...feature, enabled, scopes };
             })

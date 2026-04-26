@@ -65,6 +65,10 @@ import type { FeatureScopeSelection, License, LicenseDevice } from '@/types/api'
 import { FeatureScopeSelector } from '@/components/licenses/FeatureScopeSelector';
 import { entitlementsToSelections, slugToLabel, groupScopesForFeature, categorizeSelections } from '@/lib/entitlements';
 
+function hasDetailContent(record?: Record<string, unknown>) {
+    return Boolean(record && Object.keys(record).length > 0);
+}
+
 function getLicenseStatusBadge(license: License) {
     if (license.is_revoked) {
         return <Badge variant="destructive">Revoked</Badge>;
@@ -730,10 +734,73 @@ export function LicenseDetailPage() {
                                                                                 <XCircle className="h-4 w-4 text-destructive" />
                                                                             )}
                                                                             <span className="font-medium">{slugToLabel(feature.feature_slug)}</span>
+                                                                            {'type' in (license.entitlements?.features?.[feature.feature_slug] || {}) && (
+                                                                                <Badge variant="secondary">
+                                                                                    {(license.entitlements?.features?.[feature.feature_slug]?.type || 'boolean').toString()}
+                                                                                </Badge>
+                                                                            )}
                                                                             {feature.feature_slug && (
                                                                                 <Badge variant="outline" className="ml-auto">{feature.feature_slug}</Badge>
                                                                             )}
                                                                         </div>
+                                                                        {(() => {
+                                                                            const grant = license.entitlements?.features?.[feature.feature_slug];
+                                                                            if (!grant) return null;
+                                                                            return (
+                                                                                <>
+                                                                                    {(hasDetailContent(grant.flags) || hasDetailContent(grant.settings) || hasDetailContent(grant.limits) || hasDetailContent(grant.usage)) && (
+                                                                                        <div className="mt-3 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+                                                                                            {hasDetailContent(grant.flags) && (
+                                                                                                <div className="rounded-md border bg-muted/20 p-3">
+                                                                                                    <p className="text-xs uppercase text-muted-foreground">Flags</p>
+                                                                                                    <div className="mt-2 flex flex-wrap gap-2">
+                                                                                                        {Object.entries(grant.flags || {}).map(([key, value]) => (
+                                                                                                            <Badge key={key} variant={value ? 'default' : 'secondary'}>
+                                                                                                                {key}: {value ? 'on' : 'off'}
+                                                                                                            </Badge>
+                                                                                                        ))}
+                                                                                                    </div>
+                                                                                                </div>
+                                                                                            )}
+                                                                                            {hasDetailContent(grant.settings) && (
+                                                                                                <div className="rounded-md border bg-muted/20 p-3">
+                                                                                                    <p className="text-xs uppercase text-muted-foreground">Settings</p>
+                                                                                                    <div className="mt-2 space-y-1 text-sm">
+                                                                                                        {Object.entries(grant.settings || {}).map(([key, value]) => (
+                                                                                                            <p key={key}><span className="font-medium">{key}</span>: {value}</p>
+                                                                                                        ))}
+                                                                                                    </div>
+                                                                                                </div>
+                                                                                            )}
+                                                                                            {hasDetailContent(grant.limits) && (
+                                                                                                <div className="rounded-md border bg-muted/20 p-3">
+                                                                                                    <p className="text-xs uppercase text-muted-foreground">Limits</p>
+                                                                                                    <div className="mt-2 space-y-1 text-sm">
+                                                                                                        {Object.entries(grant.limits || {}).map(([key, value]) => (
+                                                                                                            <p key={key}><span className="font-medium">{key}</span>: {value}</p>
+                                                                                                        ))}
+                                                                                                    </div>
+                                                                                                </div>
+                                                                                            )}
+                                                                                            {hasDetailContent(grant.usage) && (
+                                                                                                <div className="rounded-md border bg-muted/20 p-3">
+                                                                                                    <p className="text-xs uppercase text-muted-foreground">Usage</p>
+                                                                                                    <div className="mt-2 space-y-1 text-sm">
+                                                                                                        {Object.entries(grant.usage || {}).map(([key, value]) => (
+                                                                                                            <p key={key}>
+                                                                                                                <span className="font-medium">{key}</span>
+                                                                                                                {value.limit ? `: ${value.limit}` : ''}
+                                                                                                                {value.window_seconds ? ` / ${value.window_seconds}s` : ''}
+                                                                                                            </p>
+                                                                                                        ))}
+                                                                                                    </div>
+                                                                                                </div>
+                                                                                            )}
+                                                                                        </div>
+                                                                                    )}
+                                                                                </>
+                                                                            );
+                                                                        })()}
                                                                         {groups.length === 0 ? (
                                                                             <p className="mt-2 text-sm italic text-muted-foreground">No scopes defined for this feature yet.</p>
                                                                         ) : (
@@ -746,9 +813,35 @@ export function LicenseDetailPage() {
                                                                                         </div>
                                                                                         <div className="mt-2 flex flex-wrap gap-2">
                                                                                             {g.scopes.map(({ selection, definition }) => (
-                                                                                                <Badge key={selection.scope_slug} variant={selection.permission === 'deny' ? 'destructive' : selection.permission === 'limit' ? 'outline' : 'default'} className="uppercase text-[11px]">
-                                                                                                    {slugToLabel(definition?.slug ?? selection.scope_slug)}{selection.permission === 'limit' && selection.limit ? ` (${selection.limit})` : ''}
-                                                                                                </Badge>
+                                                                                                <div key={selection.scope_slug} className="rounded-xl border bg-background p-2">
+                                                                                                    <Badge variant={selection.permission === 'deny' ? 'destructive' : selection.permission === 'limit' ? 'outline' : 'default'} className="uppercase text-[11px]">
+                                                                                                        {slugToLabel(definition?.slug ?? selection.scope_slug)}{selection.permission === 'limit' && selection.limit ? ` (${selection.limit})` : ''}
+                                                                                                    </Badge>
+                                                                                                    {(() => {
+                                                                                                        const scopeGrant = license.entitlements?.features?.[feature.feature_slug]?.scopes?.[selection.scope_slug];
+                                                                                                        if (!scopeGrant) return null;
+                                                                                                        return (
+                                                                                                            <>
+                                                                                                                {(hasDetailContent(scopeGrant.flags) || hasDetailContent(scopeGrant.settings) || hasDetailContent(scopeGrant.limits) || hasDetailContent(scopeGrant.usage)) && (
+                                                                                                                    <div className="mt-2 space-y-1 text-xs text-muted-foreground">
+                                                                                                                        {Object.entries(scopeGrant.flags || {}).map(([key, value]) => (
+                                                                                                                            <p key={`flag-${key}`}>flag {key}: {value ? 'on' : 'off'}</p>
+                                                                                                                        ))}
+                                                                                                                        {Object.entries(scopeGrant.settings || {}).map(([key, value]) => (
+                                                                                                                            <p key={`setting-${key}`}>setting {key}: {value}</p>
+                                                                                                                        ))}
+                                                                                                                        {Object.entries(scopeGrant.limits || {}).map(([key, value]) => (
+                                                                                                                            <p key={`limit-${key}`}>limit {key}: {value}</p>
+                                                                                                                        ))}
+                                                                                                                        {Object.entries(scopeGrant.usage || {}).map(([key, value]) => (
+                                                                                                                            <p key={`usage-${key}`}>usage {key}: {value.limit ?? 'unlimited'}{value.window_seconds ? ` / ${value.window_seconds}s` : ''}</p>
+                                                                                                                        ))}
+                                                                                                                    </div>
+                                                                                                                )}
+                                                                                                            </>
+                                                                                                        );
+                                                                                                    })()}
+                                                                                                </div>
                                                                                             ))}
                                                                                         </div>
                                                                                     </div>

@@ -430,7 +430,7 @@ class ApiService {
         return this.request<Plan>(`/api/products/${productId}/plans/${planId}`);
     }
 
-    async createPlan(productId: string, data: Omit<CreatePlanRequest, 'productId'>): Promise<ApiResponse<Plan>> {
+    async createPlan(productId: string, data: Omit<CreatePlanRequest, 'product_id'>): Promise<ApiResponse<Plan>> {
         return this.request<Plan>(`/api/products/${productId}/plans`, {
             method: 'POST',
             body: JSON.stringify(data),
@@ -512,7 +512,7 @@ class ApiService {
 
     async createFeature(
         productId: string,
-        data: Omit<CreateFeatureRequest, 'productId'>
+        data: Omit<CreateFeatureRequest, 'product_id'>
     ): Promise<ApiResponse<Feature>> {
         return this.request<Feature>(`/api/products/${productId}/features`, {
             method: 'POST',
@@ -547,7 +547,7 @@ class ApiService {
     async createScope(
         productId: string,
         featureId: string,
-        data: Omit<CreateScopeRequest, 'featureId'>
+        data: Omit<CreateScopeRequest, 'feature_id'>
     ): Promise<ApiResponse<FeatureScope>> {
         return this.request<FeatureScope>(
             `/api/products/${productId}/features/${featureId}/scopes`,

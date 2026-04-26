@@ -285,8 +285,14 @@ type LicenseEntitlements struct {
 type FeatureGrant struct {
 	FeatureID   string                `json:"feature_id"`
 	FeatureSlug string                `json:"feature_slug"`
+	Type        string                `json:"type,omitempty"`
 	Category    string                `json:"category,omitempty"`
 	Enabled     bool                  `json:"enabled"`
+	Metadata    map[string]string     `json:"metadata,omitempty"`
+	Flags       map[string]bool       `json:"flags,omitempty"`
+	Settings    map[string]string     `json:"settings,omitempty"`
+	Limits      map[string]int        `json:"limits,omitempty"`
+	Usage       map[string]UsageGrant `json:"usage,omitempty"`
 	Scopes      map[string]ScopeGrant `json:"scopes,omitempty"`
 }
 
@@ -297,9 +303,22 @@ type ScopeGrant struct {
 	Permission ScopePermission        `json:"permission"`
 	Limit      int                    `json:"limit,omitempty"`
 	Metadata   map[string]interface{} `json:"metadata,omitempty"`
+	Flags      map[string]bool        `json:"flags,omitempty"`
+	Settings   map[string]string      `json:"settings,omitempty"`
+	Limits     map[string]int         `json:"limits,omitempty"`
+	Usage      map[string]UsageGrant  `json:"usage,omitempty"`
 	// Restrictions express usage-limiting constraints evaluated by the client.
 	// Optional and backward-compatible: absence preserves prior behavior.
 	Restrictions []ScopeRestriction `json:"restrictions,omitempty"`
+}
+
+type UsageGrant struct {
+	Limit         int               `json:"limit,omitempty"`
+	WindowSeconds int               `json:"window_seconds,omitempty"`
+	Current       int               `json:"current,omitempty"`
+	ResetAt       time.Time         `json:"reset_at,omitempty"`
+	Strategy      string            `json:"strategy,omitempty"`
+	Metadata      map[string]string `json:"metadata,omitempty"`
 }
 
 // UsageRestrictionType enumerates supported restriction kinds.

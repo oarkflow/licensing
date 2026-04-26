@@ -73,7 +73,6 @@ export function PlanNewPage() {
         if (formData.is_trial) {
             // For trial plans, only send trial-related fields
             createMutation.mutate({
-                product_id: productId!,
                 name: formData.name,
                 slug,
                 description: formData.description,

@@ -2,6 +2,7 @@ import type { FeatureScopeSelection, LicenseEntitlements, ScopeSelection, ScopeP
 import { cliScopes, guiScopes, apiScopes, type CategorizedScopes, type ScopeDefinition } from '@/data/menuData';
 
 const WORD_BOUNDARY = /[-_]/g;
+type ScopeGroup = { title: string; scopes: Array<{ selection: ScopeSelection; definition?: ScopeDefinition }> };
 
 export function slugToLabel(slug: string): string {
     if (!slug) return '';
@@ -24,6 +25,7 @@ export function entitlementsToSelections(entitlements?: LicenseEntitlements | nu
                 scope_slug: scopeSlug,
                 permission: normalizePermission(scope.permission),
                 limit: scope.limit,
+                metadata: scope.metadata,
             }))
             : [];
         return {
@@ -43,8 +45,8 @@ export function normalizePermission(permission?: ScopePermissionValue): ScopePer
 }
 
 // Build grouped scopes for a feature using the catalog (cli/gui/api)
-export function groupScopesForFeature(featureSlug: string, scopes?: ScopeSelection[]) {
-    if (!scopes || scopes.length === 0) return [] as { title: string; scopes: Array<{ selection: ScopeSelection; definition?: ScopeDefinition }> }[];
+export function groupScopesForFeature(featureSlug: string, scopes?: ScopeSelection[]): ScopeGroup[] {
+    if (!scopes || scopes.length === 0) return [];
     const catalogMap: Record<string, CategorizedScopes | undefined> = {
         cli: cliScopes,
         gui: guiScopes,
@@ -62,7 +64,7 @@ export function groupScopesForFeature(featureSlug: string, scopes?: ScopeSelecti
     }
     const scopeMap = new Map(scopes.map((s) => [s.scope_slug, s]));
     const consumed = new Set<string>();
-    const groups: { title: string; scopes: Array<{ selection: ScopeSelection; definition?: ScopeDefinition }> }[] = [];
+    const groups: ScopeGroup[] = [];
     Object.entries(catalog).forEach(([groupTitle, defs]) => {
         const matches: Array<{ selection: ScopeSelection; definition?: ScopeDefinition }> = [];
         defs.forEach((def) => {

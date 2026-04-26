@@ -23,14 +23,20 @@ import {
 } from '@/components/ui/dialog';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { useToast } from '@/hooks/use-toast';
-import type { CreateAPIKeyRequest } from '@/types/api';
+import { useAuth } from '@/contexts/AuthContext';
+
+type CreateAPIKeyFormState = {
+    name: string;
+    expiresAt: string;
+};
 
 export function AdminAPIKeyNewPage() {
     const navigate = useNavigate();
     const queryClient = useQueryClient();
     const { toast } = useToast();
+    const { user } = useAuth();
 
-    const [formData, setFormData] = useState<CreateAPIKeyRequest>({
+    const [formData, setFormData] = useState<CreateAPIKeyFormState>({
         name: '',
         expiresAt: '',
     });
@@ -39,11 +45,11 @@ export function AdminAPIKeyNewPage() {
     const [newKeyValue, setNewKeyValue] = useState('');
 
     const createMutation = useMutation({
-        mutationFn: (data: CreateAPIKeyRequest) => api.createAPIKey(data),
+        mutationFn: () => api.createAPIKey(user!.id),
         onSuccess: (response) => {
-            queryClient.invalidateQueries({ queryKey: ['api-keys'] });
-            if (response.data?.rawKey) {
-                setNewKeyValue(response.data.rawKey);
+            queryClient.invalidateQueries({ queryKey: ['api-keys', user?.id] });
+            if (response.data?.token) {
+                setNewKeyValue(response.data.token);
                 setShowKeyDialog(true);
             } else {
                 toast({ title: 'API key created successfully' });
@@ -61,7 +67,7 @@ export function AdminAPIKeyNewPage() {
 
     const handleSubmit = (e: React.FormEvent) => {
         e.preventDefault();
-        createMutation.mutate(formData);
+        createMutation.mutate();
     };
 
     const copyToClipboard = (text: string) => {

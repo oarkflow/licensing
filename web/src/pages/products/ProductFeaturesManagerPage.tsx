@@ -66,6 +66,7 @@ import {
 import { Skeleton } from '@/components/ui/skeleton';
 import { Separator } from '@/components/ui/separator';
 import { useToast } from '@/hooks/use-toast';
+import { parseMetadataText, summarizeMetadata } from '@/lib/featureMetadata';
 import { cn } from '@/lib/utils';
 
 const suggestedCategories = ['cli', 'gui', 'api'];
@@ -92,8 +93,10 @@ interface ScopeFormState {
 const defaultFeatureForm: FeatureFormState = {
     name: '',
     slug: '',
+    type: 'scoped',
     description: '',
     category: 'cli',
+    metadata: {},
 };
 
 const defaultScopeForm: ScopeFormState = {
@@ -121,6 +124,7 @@ export function ProductFeaturesManagerPage() {
     const [scopeSearchTerm, setScopeSearchTerm] = useState('');
     const [scopePermissionFilter, setScopePermissionFilter] = useState<'all' | 'allow' | 'deny' | 'limit'>('all');
     const [featureForm, setFeatureForm] = useState<FeatureFormState>(defaultFeatureForm);
+    const [featureMetadataText, setFeatureMetadataText] = useState('');
     const [scopeForm, setScopeForm] = useState<ScopeFormState>(defaultScopeForm);
     const [editingScopeId, setEditingScopeId] = useState<string | null>(null);
     const [showAddScopeForm, setShowAddScopeForm] = useState(false);
@@ -192,6 +196,7 @@ export function ProductFeaturesManagerPage() {
     useEffect(() => {
         if (!featureDialogOpen) {
             setFeatureForm(defaultFeatureForm);
+            setFeatureMetadataText('');
         }
     }, [featureDialogOpen]);
 
@@ -217,6 +222,10 @@ export function ProductFeaturesManagerPage() {
     }, [selectedFeatureId]);
 
     const selectedFeature = features.find((feature) => feature.id === selectedFeatureId) || null;
+    const selectedFeatureMetadata = useMemo(
+        () => summarizeMetadata(selectedFeature?.metadata),
+        [selectedFeature?.metadata]
+    );
 
     const filteredScopes = useMemo(() => {
         const normalizedScopeSearch = scopeSearchTerm.trim().toLowerCase();
@@ -237,9 +246,11 @@ export function ProductFeaturesManagerPage() {
             api.createFeature(productId!, {
                 name: payload.name.trim(),
                 slug: payload.slug.trim(),
+                type: payload.type,
                 description: payload.description?.trim(),
                 category: payload.category?.trim(),
-            } as any),
+                metadata: parseMetadataText(featureMetadataText),
+            }),
         onSuccess: (response) => {
             if (!response.success) {
                 toast({
@@ -559,6 +570,24 @@ export function ProductFeaturesManagerPage() {
                                     </div>
                                 </div>
                                 <div className="space-y-2">
+                                    <Label htmlFor="feature-type">Type</Label>
+                                    <Select
+                                        value={featureForm.type || 'scoped'}
+                                        onValueChange={(value: 'boolean' | 'metered' | 'scoped') =>
+                                            setFeatureForm((prev) => ({ ...prev, type: value }))
+                                        }
+                                    >
+                                        <SelectTrigger id="feature-type">
+                                            <SelectValue />
+                                        </SelectTrigger>
+                                        <SelectContent>
+                                            <SelectItem value="boolean">Boolean</SelectItem>
+                                            <SelectItem value="metered">Metered</SelectItem>
+                                            <SelectItem value="scoped">Scoped</SelectItem>
+                                        </SelectContent>
+                                    </Select>
+                                </div>
+                                <div className="space-y-2">
                                     <Label htmlFor="feature-description">Description</Label>
                                     <Textarea
                                         id="feature-description"
@@ -569,6 +598,20 @@ export function ProductFeaturesManagerPage() {
                                         placeholder="Short summary for teammates"
                                         rows={3}
                                     />
+                                </div>
+                                <div className="space-y-2">
+                                    <Label htmlFor="feature-metadata">Metadata</Label>
+                                    <Textarea
+                                        id="feature-metadata"
+                                        value={featureMetadataText}
+                                        onChange={(e) => setFeatureMetadataText(e.target.value)}
+                                        placeholder={`flag:beta=true\nsetting:theme=team\nlimit:projects=25\nusage:events:limit=1000`}
+                                        rows={5}
+                                        className="font-mono text-xs"
+                                    />
+                                    <p className="text-xs text-muted-foreground">
+                                        Add one `key=value` pair per line for advanced flags, settings, limits, and usage grants.
+                                    </p>
                                 </div>
                                 <DialogFooter>
                                     <Button
@@ -740,6 +783,12 @@ export function ProductFeaturesManagerPage() {
                                             <p className="font-mono text-sm">{selectedFeature.slug}</p>
                                         </div>
                                         <div>
+                                            <Label className="text-xs uppercase text-muted-foreground">Type</Label>
+                                            <Badge variant="secondary" className="mt-1 uppercase">
+                                                {selectedFeature.type || 'boolean'}
+                                            </Badge>
+                                        </div>
+                                        <div>
                                             <Label className="text-xs uppercase text-muted-foreground">Category</Label>
                                             <Badge variant="outline" className="mt-1">
                                                 {(selectedFeature.category || 'uncategorized').toUpperCase()}
@@ -752,6 +801,59 @@ export function ProductFeaturesManagerPage() {
                                             </p>
                                         </div>
                                     </div>
+                                    {(Object.keys(selectedFeatureMetadata.flags).length > 0 ||
+                                        Object.keys(selectedFeatureMetadata.settings).length > 0 ||
+                                        Object.keys(selectedFeatureMetadata.limits).length > 0 ||
+                                        selectedFeatureMetadata.usage.length > 0) && (
+                                        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+                                            {Object.keys(selectedFeatureMetadata.flags).length > 0 && (
+                                                <div>
+                                                    <Label className="text-xs uppercase text-muted-foreground">Flags</Label>
+                                                    <div className="mt-2 flex flex-wrap gap-2">
+                                                        {Object.entries(selectedFeatureMetadata.flags).map(([key, value]) => (
+                                                            <Badge key={key} variant={value ? 'default' : 'secondary'}>
+                                                                {key}: {value ? 'on' : 'off'}
+                                                            </Badge>
+                                                        ))}
+                                                    </div>
+                                                </div>
+                                            )}
+                                            {Object.keys(selectedFeatureMetadata.settings).length > 0 && (
+                                                <div>
+                                                    <Label className="text-xs uppercase text-muted-foreground">Settings</Label>
+                                                    <div className="mt-2 space-y-1 text-sm">
+                                                        {Object.entries(selectedFeatureMetadata.settings).map(([key, value]) => (
+                                                            <p key={key}><span className="font-medium">{key}</span>: {value}</p>
+                                                        ))}
+                                                    </div>
+                                                </div>
+                                            )}
+                                            {Object.keys(selectedFeatureMetadata.limits).length > 0 && (
+                                                <div>
+                                                    <Label className="text-xs uppercase text-muted-foreground">Limits</Label>
+                                                    <div className="mt-2 space-y-1 text-sm">
+                                                        {Object.entries(selectedFeatureMetadata.limits).map(([key, value]) => (
+                                                            <p key={key}><span className="font-medium">{key}</span>: {value}</p>
+                                                        ))}
+                                                    </div>
+                                                </div>
+                                            )}
+                                            {selectedFeatureMetadata.usage.length > 0 && (
+                                                <div>
+                                                    <Label className="text-xs uppercase text-muted-foreground">Usage</Label>
+                                                    <div className="mt-2 space-y-1 text-sm">
+                                                        {selectedFeatureMetadata.usage.map((entry) => (
+                                                            <p key={entry.name}>
+                                                                <span className="font-medium">{entry.name}</span>
+                                                                {entry.limit ? `: ${entry.limit}` : ''}
+                                                                {entry.windowSeconds ? ` / ${entry.windowSeconds}s` : ''}
+                                                            </p>
+                                                        ))}
+                                                    </div>
+                                                </div>
+                                            )}
+                                        </div>
+                                    )}
                                     <Separator />
                                     <div className="flex items-center justify-between">
                                         <div>

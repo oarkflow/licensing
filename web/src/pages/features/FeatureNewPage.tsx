@@ -23,6 +23,7 @@ import {
 } from '@/components/ui/select';
 import { useToast } from '@/hooks/use-toast';
 import type { CreateFeatureRequest } from '@/types/api';
+import { parseMetadataText } from '@/lib/featureMetadata';
 
 export function FeatureNewPage() {
     const { productId } = useParams<{ productId: string }>();
@@ -30,15 +31,18 @@ export function FeatureNewPage() {
     const queryClient = useQueryClient();
     const { toast } = useToast();
 
-    const [formData, setFormData] = useState<Omit<CreateFeatureRequest, 'productId'>>({
+    const [formData, setFormData] = useState<Omit<CreateFeatureRequest, 'product_id'>>({
         name: '',
         slug: '',
         description: '',
         type: 'boolean',
+        category: '',
+        metadata: {},
     });
+    const [metadataText, setMetadataText] = useState('');
 
     const createMutation = useMutation({
-        mutationFn: (data: Omit<CreateFeatureRequest, 'productId'>) =>
+        mutationFn: (data: Omit<CreateFeatureRequest, 'product_id'>) =>
             api.createFeature(productId!, data),
         onSuccess: (response) => {
             queryClient.invalidateQueries({ queryKey: ['features', productId] });
@@ -60,7 +64,10 @@ export function FeatureNewPage() {
 
     const handleSubmit = (e: React.FormEvent) => {
         e.preventDefault();
-        createMutation.mutate(formData);
+        createMutation.mutate({
+            ...formData,
+            metadata: parseMetadataText(metadataText),
+        });
     };
 
     const generateSlug = () => {
@@ -169,6 +176,21 @@ export function FeatureNewPage() {
                                 placeholder="What this feature enables..."
                                 rows={3}
                             />
+                        </div>
+
+                        <div className="space-y-2">
+                            <Label htmlFor="metadata">Metadata</Label>
+                            <Textarea
+                                id="metadata"
+                                value={metadataText}
+                                onChange={(e) => setMetadataText(e.target.value)}
+                                placeholder={`flag:beta=true\nsetting:theme=enterprise\nlimit:projects=25\nusage:events:limit=1000`}
+                                rows={6}
+                                className="font-mono text-xs"
+                            />
+                            <p className="text-xs text-muted-foreground">
+                                Use one `key=value` pair per line for flags, settings, limits, and usage descriptors.
+                            </p>
                         </div>
 
                         <div className="flex gap-4">

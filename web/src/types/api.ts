@@ -69,8 +69,21 @@ export interface LicenseEntitlements {
 export interface FeatureGrant {
     feature_id?: string;
     feature_slug: string;
+    type?: 'boolean' | 'metered' | 'scoped';
     category?: string;
     enabled: boolean;
+    metadata?: Record<string, string>;
+    flags?: Record<string, boolean>;
+    settings?: Record<string, string>;
+    limits?: Record<string, number>;
+    usage?: Record<string, {
+        limit?: number;
+        window_seconds?: number;
+        current?: number;
+        reset_at?: string;
+        strategy?: string;
+        metadata?: Record<string, string>;
+    }>;
     scopes?: Record<string, ScopeGrant>;
 }
 
@@ -80,6 +93,17 @@ export interface ScopeGrant {
     permission: ScopePermissionValue;
     limit?: number;
     metadata?: Record<string, string>;
+    flags?: Record<string, boolean>;
+    settings?: Record<string, string>;
+    limits?: Record<string, number>;
+    usage?: Record<string, {
+        limit?: number;
+        window_seconds?: number;
+        current?: number;
+        reset_at?: string;
+        strategy?: string;
+        metadata?: Record<string, string>;
+    }>;
 }
 
 export type ScopePermissionValue = 'allow' | 'deny' | 'limit';
@@ -134,7 +158,9 @@ export interface Feature {
     name: string;
     slug: string;
     description?: string;
+    type?: 'boolean' | 'metered' | 'scoped';
     category?: string;
+    metadata?: Record<string, string>;
     created_at: string;
     updated_at: string;
 }
@@ -251,6 +277,7 @@ export interface ScopeSelection {
     scope_slug: string;
     permission: ScopePermissionValue;
     limit?: number;
+    metadata?: Record<string, string>;
 }
 
 export interface CreateClientRequest {
@@ -286,7 +313,9 @@ export interface CreateFeatureRequest {
     name: string;
     slug: string;
     description?: string;
+    type?: 'boolean' | 'metered' | 'scoped';
     category?: string;
+    metadata?: Record<string, string>;
 }
 
 export interface CreateScopeRequest {

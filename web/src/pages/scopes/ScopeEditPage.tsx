@@ -24,6 +24,19 @@ import {
 import { Skeleton } from '@/components/ui/skeleton';
 import { useToast } from '@/hooks/use-toast';
 import type { CreateScopeRequest, FeatureScope } from '@/types/api';
+import { mergeMetadata, parseMetadataText, stringifyMetadata } from '@/lib/featureMetadata';
+
+type ScopeEditFormState = {
+    name: string;
+    slug: string;
+    permission: 'allow' | 'deny' | 'limit';
+    limit: string;
+    description: string;
+    restrictionType: string;
+    restrictionLimit: string;
+    restrictionWindow: string;
+    advancedMetadata: string;
+};
 
 export function ScopeEditPage() {
     const { productId, featureId, scopeId } = useParams<{
@@ -43,7 +56,7 @@ export function ScopeEditPage() {
 
     const scope = scopesResponse?.data?.find((s: FeatureScope) => s.id === scopeId);
 
-    const [formData, setFormData] = useState({
+    const [formData, setFormData] = useState<ScopeEditFormState>({
         name: '',
         slug: '',
         permission: 'allow',
@@ -52,6 +65,7 @@ export function ScopeEditPage() {
         restrictionType: '',
         restrictionLimit: '',
         restrictionWindow: '',
+        advancedMetadata: '',
     });
 
     useEffect(() => {
@@ -59,7 +73,7 @@ export function ScopeEditPage() {
             setFormData({
                 name: scope.name,
                 slug: scope.slug,
-                permission: scope.permission,
+                permission: (scope.permission as 'allow' | 'deny' | 'limit') || 'allow',
                 limit:
                     scope.permission === 'limit' && typeof scope.limit === 'number'
                         ? String(scope.limit)
@@ -68,6 +82,13 @@ export function ScopeEditPage() {
                 restrictionType: scope.metadata?.restriction_type || '',
                 restrictionLimit: scope.metadata?.restriction_limit || '',
                 restrictionWindow: scope.metadata?.restriction_window_seconds || '',
+                advancedMetadata: stringifyMetadata(
+                    Object.fromEntries(
+                        Object.entries(scope.metadata || {}).filter(([key]) =>
+                            !['description', 'restriction_type', 'restriction_limit', 'restriction_window_seconds'].includes(key)
+                        )
+                    )
+                ),
             });
         }
     }, [scope]);
@@ -101,8 +122,13 @@ export function ScopeEditPage() {
                 if (formData.restrictionType) newMetadata.restriction_type = formData.restrictionType;
                 if (formData.restrictionLimit !== '' && formData.restrictionLimit !== undefined) newMetadata.restriction_limit = String(formData.restrictionLimit);
                 if (formData.restrictionWindow !== '' && formData.restrictionWindow !== undefined) newMetadata.restriction_window_seconds = String(formData.restrictionWindow);
+                const merged = mergeMetadata(
+                    parseMetadataText(formData.advancedMetadata),
+                    newMetadata,
+                    ['description', 'restriction_type', 'restriction_limit', 'restriction_window_seconds']
+                );
                 // If user cleared all metadata-related fields, newMetadata will be empty which signals clearing metadata
-                payload.metadata = newMetadata;
+                payload.metadata = merged;
             }
             return api.updateScope(productId!, featureId!, scopeId!, payload);
         },
@@ -205,7 +231,7 @@ export function ScopeEditPage() {
                                 <Label htmlFor="permission">Permission</Label>
                                 <Select
                                     value={formData.permission}
-                                    onValueChange={(value) =>
+                                    onValueChange={(value: 'allow' | 'deny' | 'limit') =>
                                         setFormData((prev) => ({ ...prev, permission: value }))
                                     }
                                 >
@@ -296,6 +322,23 @@ export function ScopeEditPage() {
                                     }
                                 />
                             </div>
+                        </div>
+
+                        <div className="space-y-2">
+                            <Label htmlFor="advanced_metadata">Advanced Metadata</Label>
+                            <Textarea
+                                id="advanced_metadata"
+                                value={formData.advancedMetadata}
+                                onChange={(e) =>
+                                    setFormData((prev) => ({ ...prev, advancedMetadata: e.target.value }))
+                                }
+                                placeholder={`flag:beta=true\nsetting:format=json\nlimit:rows=5000\nusage:exports:limit=25`}
+                                rows={5}
+                                className="font-mono text-xs"
+                            />
+                            <p className="text-xs text-muted-foreground">
+                                Optional extra `key=value` lines for flags, settings, custom limits, and usage grants.
+                            </p>
                         </div>
 
                         <div className="flex gap-4">

@@ -23,6 +23,19 @@ import {
 } from '@/components/ui/select';
 import { useToast } from '@/hooks/use-toast';
 import type { CreateScopeRequest } from '@/types/api';
+import { mergeMetadata, parseMetadataText } from '@/lib/featureMetadata';
+
+type ScopeNewFormState = {
+    name: string;
+    slug: string;
+    permission: 'allow' | 'deny' | 'limit';
+    limit: string;
+    description: string;
+    restrictionType: string;
+    restrictionLimit: string;
+    restrictionWindow: string;
+    advancedMetadata: string;
+};
 
 export function ScopeNewPage() {
     const { productId, featureId } = useParams<{
@@ -33,7 +46,7 @@ export function ScopeNewPage() {
     const queryClient = useQueryClient();
     const { toast } = useToast();
 
-    const [formData, setFormData] = useState({
+    const [formData, setFormData] = useState<ScopeNewFormState>({
         name: '',
         slug: '',
         permission: 'allow',
@@ -42,6 +55,7 @@ export function ScopeNewPage() {
         restrictionType: '',
         restrictionLimit: '',
         restrictionWindow: '',
+        advancedMetadata: '',
     });
 
     const createMutation = useMutation({
@@ -68,8 +82,13 @@ export function ScopeNewPage() {
             if (formData.restrictionWindow !== '' && formData.restrictionWindow !== undefined) {
                 metadata.restriction_window_seconds = String(formData.restrictionWindow);
             }
-            if (Object.keys(metadata).length > 0) {
-                payload.metadata = metadata;
+            const mergedMetadata = mergeMetadata(
+                parseMetadataText(formData.advancedMetadata),
+                metadata,
+                ['description', 'restriction_type', 'restriction_limit', 'restriction_window_seconds']
+            );
+            if (Object.keys(mergedMetadata).length > 0) {
+                payload.metadata = mergedMetadata;
             }
             return api.createScope(productId!, featureId!, payload);
         },
@@ -166,7 +185,7 @@ export function ScopeNewPage() {
                                 <Label htmlFor="permission">Permission</Label>
                                 <Select
                                     value={formData.permission}
-                                    onValueChange={(value) =>
+                                    onValueChange={(value: 'allow' | 'deny' | 'limit') =>
                                         setFormData((prev) => ({ ...prev, permission: value }))
                                     }
                                 >
@@ -192,7 +211,7 @@ export function ScopeNewPage() {
                                         const value = e.target.value;
                                         setFormData((prev) => ({
                                             ...prev,
-                                            limit: value === '' ? undefined : parseInt(value, 10),
+                                            limit: value,
                                         }));
                                     }}
                                     onBlur={(e) => {
@@ -200,7 +219,7 @@ export function ScopeNewPage() {
                                         if (formData.permission === 'limit' && (value === '' || isNaN(parseInt(value, 10)))) {
                                             setFormData((prev) => ({
                                                 ...prev,
-                                                limit: 0,
+                                                limit: '0',
                                             }));
                                         }
                                     }}
@@ -270,6 +289,23 @@ export function ScopeNewPage() {
                                     }
                                 />
                             </div>
+                        </div>
+
+                        <div className="space-y-2">
+                            <Label htmlFor="advanced_metadata">Advanced Metadata</Label>
+                            <Textarea
+                                id="advanced_metadata"
+                                value={formData.advancedMetadata}
+                                onChange={(e) =>
+                                    setFormData((prev) => ({ ...prev, advancedMetadata: e.target.value }))
+                                }
+                                placeholder={`flag:beta=true\nsetting:format=json\nlimit:rows=5000\nusage:exports:limit=25`}
+                                rows={5}
+                                className="font-mono text-xs"
+                            />
+                            <p className="text-xs text-muted-foreground">
+                                Optional extra `key=value` lines for flags, settings, custom limits, and usage grants.
+                            </p>
                         </div>
 
                         <div className="flex gap-4">

@@ -56,17 +56,21 @@ type updatePlanRequest struct {
 }
 
 type createFeatureRequest struct {
-	Name        string `json:"name"`
-	Slug        string `json:"slug"`
-	Description string `json:"description,omitempty"`
-	Category    string `json:"category,omitempty"`
+	Name        string            `json:"name"`
+	Slug        string            `json:"slug"`
+	Description string            `json:"description,omitempty"`
+	Type        string            `json:"type,omitempty"`
+	Category    string            `json:"category,omitempty"`
+	Metadata    map[string]string `json:"metadata,omitempty"`
 }
 
 type updateFeatureRequest struct {
-	Name        string `json:"name,omitempty"`
-	Slug        string `json:"slug,omitempty"`
-	Description string `json:"description,omitempty"`
-	Category    string `json:"category,omitempty"`
+	Name        string            `json:"name,omitempty"`
+	Slug        string            `json:"slug,omitempty"`
+	Description string            `json:"description,omitempty"`
+	Type        string            `json:"type,omitempty"`
+	Category    string            `json:"category,omitempty"`
+	Metadata    map[string]string `json:"metadata,omitempty"`
 }
 
 type createFeatureScopeRequest struct {
@@ -473,7 +477,9 @@ func (s *Server) handleProductFeatures(w http.ResponseWriter, r *http.Request, p
 				Name:        name,
 				Slug:        slug,
 				Description: strings.TrimSpace(req.Description),
+				Type:        normalizeFeatureType(FeatureType(req.Type)),
 				Category:    strings.TrimSpace(req.Category),
+				Metadata:    req.Metadata,
 				CreatedAt:   now,
 				UpdatedAt:   now,
 			}
@@ -536,8 +542,14 @@ func (s *Server) handleProductFeatures(w http.ResponseWriter, r *http.Request, p
 		if req.Description != "" {
 			feature.Description = strings.TrimSpace(req.Description)
 		}
+		if featureType := strings.TrimSpace(req.Type); featureType != "" {
+			feature.Type = normalizeFeatureType(FeatureType(featureType))
+		}
 		if req.Category != "" {
 			feature.Category = strings.TrimSpace(req.Category)
+		}
+		if req.Metadata != nil {
+			feature.Metadata = req.Metadata
 		}
 		feature.UpdatedAt = time.Now()
 		if err := s.lm.storage.UpdateFeature(r.Context(), feature); err != nil {

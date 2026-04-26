@@ -24,6 +24,7 @@ import {
 import { Skeleton } from '@/components/ui/skeleton';
 import { useToast } from '@/hooks/use-toast';
 import type { CreateFeatureRequest } from '@/types/api';
+import { parseMetadataText, stringifyMetadata } from '@/lib/featureMetadata';
 
 export function FeatureEditPage() {
     const { productId, featureId } = useParams<{
@@ -45,7 +46,10 @@ export function FeatureEditPage() {
         slug: '',
         description: '',
         type: 'boolean',
+        category: '',
+        metadata: {},
     });
+    const [metadataText, setMetadataText] = useState('');
 
     useEffect(() => {
         if (featureResponse?.data) {
@@ -54,7 +58,10 @@ export function FeatureEditPage() {
                 slug: featureResponse.data.slug,
                 description: featureResponse.data.description || '',
                 type: featureResponse.data.type,
+                category: featureResponse.data.category || '',
+                metadata: featureResponse.data.metadata || {},
             });
+            setMetadataText(stringifyMetadata(featureResponse.data.metadata));
         }
     }, [featureResponse?.data]);
 
@@ -80,7 +87,10 @@ export function FeatureEditPage() {
 
     const handleSubmit = (e: React.FormEvent) => {
         e.preventDefault();
-        updateMutation.mutate(formData);
+        updateMutation.mutate({
+            ...formData,
+            metadata: parseMetadataText(metadataText),
+        });
     };
 
     if (isLoading) {
@@ -176,6 +186,21 @@ export function FeatureEditPage() {
                                 placeholder="What this feature enables..."
                                 rows={3}
                             />
+                        </div>
+
+                        <div className="space-y-2">
+                            <Label htmlFor="metadata">Metadata</Label>
+                            <Textarea
+                                id="metadata"
+                                value={metadataText}
+                                onChange={(e) => setMetadataText(e.target.value)}
+                                placeholder={`flag:beta=true\nsetting:theme=enterprise\nlimit:projects=25\nusage:events:limit=1000`}
+                                rows={6}
+                                className="font-mono text-xs"
+                            />
+                            <p className="text-xs text-muted-foreground">
+                                One `key=value` per line. Supports `flag:*`, `setting:*`, `limit:*`, and `usage:*:*`.
+                            </p>
                         </div>
 
                         <div className="flex gap-4">
