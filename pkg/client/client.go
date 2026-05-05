@@ -125,6 +125,21 @@ type DeviceChallengeResponse struct {
 	ExpiresAt   time.Time `json:"expires_at"`
 }
 
+// DeviceIdentity describes the stable local identity used for device proof.
+// Fingerprint is derived from the registered device public key and is therefore
+// stable as long as the device key persists. HardwareFingerprint is diagnostic
+// only and is not trusted as proof of possession.
+type DeviceIdentity struct {
+	Fingerprint         string `json:"fingerprint"`
+	KeyID               string `json:"key_id"`
+	KeyProvider         string `json:"key_provider"`
+	PublicKeyAlgorithm  string `json:"public_key_alg"`
+	HardwareFingerprint string `json:"hardware_fingerprint,omitempty"`
+	Platform            string `json:"platform,omitempty"`
+	Label               string `json:"label,omitempty"`
+	IsContainer         bool   `json:"is_container,omitempty"`
+}
+
 // StoredLicense is the encrypted payload persisted locally.
 type StoredLicense struct {
 	EncryptedData     []byte    `json:"encrypted_data"`
@@ -761,11 +776,13 @@ func (lc *Client) Activate(email, clientID, licenseKey string) error {
 		return fmt.Errorf("client ID is required for activation")
 	}
 
-	fmt.Println("🔍 Generating device fingerprint...")
-	fingerprint, err := lc.generateDeviceFingerprint()
+	keyProvider, err := newDeviceKeyProvider(lc.config)
 	if err != nil {
-		return fmt.Errorf("failed to generate fingerprint: %w", err)
+		return fmt.Errorf("failed to prepare device key: %w", err)
 	}
+	defer closeDeviceKeyProvider(keyProvider)
+	fmt.Println("🔍 Preparing device proof identity...")
+	fingerprint := deviceFingerprintFromProvider(keyProvider)
 	fmt.Printf("   Device ID: %s...\n", truncateFingerprint(fingerprint))
 
 	activationReq := ActivationRequest{
@@ -775,11 +792,6 @@ func (lc *Client) Activate(email, clientID, licenseKey string) error {
 		DeviceFingerprint: fingerprint,
 		ProductID:         lc.productID,
 	}
-	keyProvider, err := newDeviceKeyProvider(lc.config)
-	if err != nil {
-		return fmt.Errorf("failed to prepare device key: %w", err)
-	}
-	defer closeDeviceKeyProvider(keyProvider)
 	challenge, err := lc.requestDeviceChallenge(context.Background(), licensingcore.DeviceProofPurposeActivate)
 	if err != nil {
 		return fmt.Errorf("failed to obtain device proof challenge: %w", err)
@@ -1280,7 +1292,10 @@ func (lc *Client) CheckTrialEligibility(productID string) (*TrialCheckResponse, 
 	if err != nil {
 		return nil, fmt.Errorf("failed to generate fingerprint: %w", err)
 	}
+	return lc.checkTrialEligibilityWithFingerprint(productID, fingerprint)
+}
 
+func (lc *Client) checkTrialEligibilityWithFingerprint(productID, fingerprint string) (*TrialCheckResponse, error) {
 	checkReq := TrialCheckRequest{
 		DeviceFingerprint: fingerprint,
 		ProductID:         productID,
@@ -1334,16 +1349,19 @@ func (lc *Client) RequestTrial(email, productID, planID string, trialDays int) (
 	fmt.Println("\n🔐 Starting trial activation...")
 	email = strings.TrimSpace(email)
 
-	fmt.Println("🔍 Generating device fingerprint...")
-	fingerprint, err := lc.generateDeviceFingerprint()
+	keyProvider, err := newDeviceKeyProvider(lc.config)
 	if err != nil {
-		return nil, fmt.Errorf("failed to generate fingerprint: %w", err)
+		return nil, fmt.Errorf("failed to prepare device key: %w", err)
 	}
+	defer closeDeviceKeyProvider(keyProvider)
+
+	fmt.Println("🔍 Preparing device proof identity...")
+	fingerprint := deviceFingerprintFromProvider(keyProvider)
 	fmt.Printf("   Device ID: %s...\n", truncateFingerprint(fingerprint))
 
 	// Check eligibility first
 	fmt.Println("📋 Checking trial eligibility...")
-	eligibility, err := lc.CheckTrialEligibility(productID)
+	eligibility, err := lc.checkTrialEligibilityWithFingerprint(productID, fingerprint)
 	if err != nil {
 		return nil, fmt.Errorf("failed to check trial eligibility: %w", err)
 	}
@@ -1364,11 +1382,6 @@ func (lc *Client) RequestTrial(email, productID, planID string, trialDays int) (
 		DeviceFingerprint: fingerprint,
 		ProductID:         productID,
 	}
-	keyProvider, err := newDeviceKeyProvider(lc.config)
-	if err != nil {
-		return nil, fmt.Errorf("failed to prepare device key: %w", err)
-	}
-	defer closeDeviceKeyProvider(keyProvider)
 	challenge, err := lc.requestDeviceChallenge(context.Background(), licensingcore.DeviceProofPurposeTrial)
 	if err != nil {
 		return nil, fmt.Errorf("failed to obtain device proof challenge: %w", err)
@@ -1454,6 +1467,16 @@ func (lc *Client) RequestTrial(email, productID, planID string, trialDays int) (
 // This can be used to display to users or for debugging purposes.
 func (lc *Client) GetDeviceFingerprint() (string, error) {
 	return lc.generateDeviceFingerprint()
+}
+
+// CurrentDeviceIdentity returns the proof-key-backed identity used by the SDK.
+func (lc *Client) CurrentDeviceIdentity() (*DeviceIdentity, error) {
+	keyProvider, err := newDeviceKeyProvider(lc.config)
+	if err != nil {
+		return nil, fmt.Errorf("failed to prepare device key: %w", err)
+	}
+	defer closeDeviceKeyProvider(keyProvider)
+	return lc.deviceIdentityFromProvider(keyProvider), nil
 }
 
 func (lc *Client) decryptLicense(stored *StoredLicense) (*LicenseData, error) {
@@ -1549,11 +1572,44 @@ func (lc *Client) deriveTransportKey(fingerprint string, nonce []byte) ([]byte, 
 // Device fingerprinting helpers -------------------------------------------------
 
 func (lc *Client) generateDeviceFingerprint() (string, error) {
-	device, err := device.GetInfo()
+	keyProvider, err := newDeviceKeyProvider(lc.config)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("failed to prepare device key: %w", err)
 	}
-	return device.Fingerprint, nil
+	defer closeDeviceKeyProvider(keyProvider)
+	return deviceFingerprintFromProvider(keyProvider), nil
+}
+
+func (lc *Client) deviceIdentityFromProvider(provider deviceKeyProvider) *DeviceIdentity {
+	fingerprint := deviceFingerprintFromProvider(provider)
+	identity := &DeviceIdentity{
+		Fingerprint:        fingerprint,
+		KeyID:              fingerprint,
+		KeyProvider:        provider.KeyProvider(),
+		PublicKeyAlgorithm: provider.PublicKeyAlgorithm(),
+		Platform:           runtime.GOOS,
+	}
+	if info, err := device.GetInfo(); err == nil && info != nil {
+		identity.HardwareFingerprint = info.Fingerprint
+		identity.Platform = info.Platform
+		identity.IsContainer = info.IsContainer
+		if strings.TrimSpace(info.Name) != "" {
+			identity.Label = fmt.Sprintf("%s-%s", strings.TrimSpace(info.Name), truncateFingerprint(fingerprint))
+		} else if strings.TrimSpace(info.Label) != "" {
+			identity.Label = info.Label
+		}
+	}
+	if identity.Label == "" {
+		identity.Label = fmt.Sprintf("%s-%s", identity.KeyProvider, truncateFingerprint(fingerprint))
+	}
+	return identity
+}
+
+func deviceFingerprintFromProvider(provider deviceKeyProvider) string {
+	if provider == nil {
+		return ""
+	}
+	return licensingcore.DeviceProofPublicKeyID(provider.PublicKeyBytes())
 }
 
 func truncateFingerprint(fp string) string {

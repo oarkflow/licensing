@@ -97,3 +97,45 @@ func TestOSKeystoreDeviceKeyProviderUsesKeyring(t *testing.T) {
 		t.Fatalf("expected os keyring provider to reload same key, got %s want %s", got, want)
 	}
 }
+
+func TestDeviceFingerprintIsDerivedFromStableProofKey(t *testing.T) {
+	cfg := Config{
+		ConfigDir:         t.TempDir(),
+		DeviceKeyProvider: "software",
+	}
+	client, err := New(cfg)
+	if err != nil {
+		t.Fatalf("New failed: %v", err)
+	}
+	first, err := client.GetDeviceFingerprint()
+	if err != nil {
+		t.Fatalf("GetDeviceFingerprint first failed: %v", err)
+	}
+	second, err := client.GetDeviceFingerprint()
+	if err != nil {
+		t.Fatalf("GetDeviceFingerprint second failed: %v", err)
+	}
+	if first != second {
+		t.Fatalf("expected fingerprint to remain stable across calls, got %s then %s", first, second)
+	}
+
+	provider, err := newDeviceKeyProvider(client.config)
+	if err != nil {
+		t.Fatalf("newDeviceKeyProvider failed: %v", err)
+	}
+	defer closeDeviceKeyProvider(provider)
+	if want := licensingcore.DeviceProofPublicKeyID(provider.PublicKeyBytes()); first != want {
+		t.Fatalf("expected fingerprint to be proof key id, got %s want %s", first, want)
+	}
+
+	identity, err := client.CurrentDeviceIdentity()
+	if err != nil {
+		t.Fatalf("CurrentDeviceIdentity failed: %v", err)
+	}
+	if identity.Fingerprint != first || identity.KeyID != first {
+		t.Fatalf("identity did not report stable proof-key fingerprint: %+v", identity)
+	}
+	if identity.KeyProvider != "software-file" {
+		t.Fatalf("unexpected provider: %+v", identity)
+	}
+}

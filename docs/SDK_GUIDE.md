@@ -200,18 +200,21 @@ $configDir = getenv('LICENSE_CLIENT_CONFIG_DIR') ?: $_SERVER['HOME'] . '/.licens
 
 ## Core Concepts
 
-### Device Fingerprinting
+### Device Identity And Fingerprinting
 
-Every SDK generates a deterministic hardware fingerprint that uniquely identifies the device. The fingerprint is computed as:
+The Go SDK uses Device Proof v2 for the licensing fingerprint. The fingerprint sent to the server is:
 
 ```
-fingerprint = SHA256("HOST:<hostname>|OS:<os>|ARCH:<arch>|MAC:<mac>|CPU:<cpu_hash>")
+fingerprint = SHA256(device_proof_public_key)
 ```
 
-This ensures:
-- Licenses cannot be copied between machines
-- The same machine always generates the same fingerprint
-- Cross-platform consistency (Go, Node.js, PHP all produce identical fingerprints)
+The device private key is selected in this order:
+
+1. TPM 2.0 hardware key when available.
+2. OS keyring/keychain key when available.
+3. Software Ed25519 key file with `0600` permissions.
+
+This means the fingerprint stays identical across restarts and time as long as the device key is preserved. Host hardware identifiers are still collected as diagnostic labels, but they are not trusted as proof of possession and are not used as the authorization root. A copied license without the registered private key fails verification.
 
 ### Transport Encryption
 
