@@ -3,12 +3,15 @@ package licensing
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
 	"testing"
 	"time"
+
+	_ "modernc.org/sqlite"
 )
 
 func TestComputeLicenseEntitlementsIncludesDecorationsAndSlugOverrides(t *testing.T) {
@@ -232,6 +235,7 @@ func TestSQLiteAndServerFeatureEnhancements(t *testing.T) {
 		t.Fatalf("expected sqlite restrictions to match in-memory behavior, got %+v", scopeGrant.Restrictions)
 	}
 
+	t.Setenv("HOME", t.TempDir())
 	lm, err := NewLicenseManager(NewInMemoryStorage())
 	if err != nil {
 		t.Fatalf("NewLicenseManager failed: %v", err)
@@ -273,5 +277,82 @@ func TestSQLiteAndServerFeatureEnhancements(t *testing.T) {
 	}
 	if created.Type != FeatureTypeMetered || created.Metadata["setting:burst"] != "high" {
 		t.Fatalf("expected feature type+metadata in API response, got %+v", created)
+	}
+}
+
+func TestSQLiteProductSchemaAddsFeatureMetadataToExistingTable(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "licensing.db")
+	db, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatalf("open sqlite fixture failed: %v", err)
+	}
+	for _, stmt := range []string{
+		`CREATE TABLE plans (
+			id TEXT PRIMARY KEY,
+			product_id TEXT NOT NULL,
+			name TEXT NOT NULL,
+			slug TEXT NOT NULL,
+			slug_key TEXT NOT NULL UNIQUE,
+			description TEXT,
+			price INTEGER NOT NULL DEFAULT 0,
+			min_devices INTEGER NOT NULL DEFAULT 1,
+			price_per_device INTEGER NOT NULL DEFAULT 0,
+			currency TEXT NOT NULL DEFAULT 'USD',
+			billing_cycle TEXT NOT NULL DEFAULT 'monthly',
+			trial_days INTEGER NOT NULL DEFAULT 0,
+			is_trial INTEGER NOT NULL DEFAULT 0,
+			is_active INTEGER NOT NULL DEFAULT 1,
+			display_order INTEGER NOT NULL DEFAULT 0,
+			metadata TEXT,
+			created_at TIMESTAMP NOT NULL,
+			updated_at TIMESTAMP NOT NULL
+		);`,
+		`CREATE TABLE features (
+			id TEXT PRIMARY KEY,
+			product_id TEXT NOT NULL,
+			name TEXT NOT NULL,
+			slug TEXT NOT NULL,
+			slug_key TEXT NOT NULL UNIQUE,
+			description TEXT,
+			type TEXT NOT NULL DEFAULT 'boolean',
+			category TEXT,
+			created_at TIMESTAMP NOT NULL,
+			updated_at TIMESTAMP NOT NULL
+		);`,
+	} {
+		if _, err := db.Exec(stmt); err != nil {
+			t.Fatalf("create legacy schema failed: %v", err)
+		}
+	}
+	if err := db.Close(); err != nil {
+		t.Fatalf("close sqlite fixture failed: %v", err)
+	}
+
+	storage, err := NewSQLiteStorage(dbPath)
+	if err != nil {
+		t.Fatalf("NewSQLiteStorage failed: %v", err)
+	}
+	defer storage.db.Close()
+
+	exists, err := sqliteColumnExists(storage.db, "features", "metadata")
+	if err != nil {
+		t.Fatalf("sqliteColumnExists failed: %v", err)
+	}
+	if !exists {
+		t.Fatalf("expected features.metadata to be added to existing features table")
+	}
+
+	ctx := context.Background()
+	if err := storage.SaveProduct(ctx, &Product{ID: "prod-1", Name: "Product", Slug: "product"}); err != nil {
+		t.Fatalf("SaveProduct failed: %v", err)
+	}
+	if err := storage.SaveFeature(ctx, &Feature{
+		ID:        "feature-1",
+		ProductID: "prod-1",
+		Name:      "CLI",
+		Slug:      "cli",
+		Metadata:  map[string]string{"flag:core": "true"},
+	}); err != nil {
+		t.Fatalf("SaveFeature failed after schema migration: %v", err)
 	}
 }

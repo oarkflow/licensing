@@ -181,8 +181,6 @@ func ensureProductSchema(db *squealx.DB) error {
 	hasMaxDevicesColumn := false
 	hasDurationDaysColumn := false
 	hasPricePerDeviceColumn := false
-	hasFeatureTypeColumn := false
-	hasFeatureMetadataColumn := false
 	for rows.Next() {
 		var cid int
 		var name, ctype string
@@ -206,12 +204,6 @@ func ensureProductSchema(db *squealx.DB) error {
 		}
 		if name == "price_per_device" {
 			hasPricePerDeviceColumn = true
-		}
-		if name == "type" {
-			hasFeatureTypeColumn = true
-		}
-		if name == "metadata" {
-			hasFeatureMetadataColumn = true
 		}
 	}
 	rows.Close()
@@ -254,6 +246,8 @@ func ensureProductSchema(db *squealx.DB) error {
 	if err != nil {
 		return fmt.Errorf("failed to check features table info: %w", err)
 	}
+	hasFeatureTypeColumn := false
+	hasFeatureMetadataColumn := false
 	for rows.Next() {
 		var cid int
 		var name, ctype string

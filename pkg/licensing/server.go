@@ -139,7 +139,7 @@ func NewServer(lm *LicenseManager, port string, apiKeys []string, limiter *RateL
 		limiter = NewRateLimiter(60, time.Minute)
 	}
 	if !allowInsecure && (strings.TrimSpace(tlsCertPath) == "" || strings.TrimSpace(tlsKeyPath) == "") {
-		return nil, fmt.Errorf("tls cert/key required unless allowInsecure HTTP is enabled")
+		return nil, fmt.Errorf("tls cert/key required unless insecure HTTP is enabled for local development; set LICENSE_SERVER_ALLOW_INSECURE_HTTP=1 or pass --allow-insecure-http")
 	}
 	// Initialize email template loader with embedded templates
 	// This allows the server to run as a standalone binary

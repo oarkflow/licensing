@@ -19,6 +19,10 @@ import (
 // ==================== Main ====================
 
 func main() {
+	if err := loadDotEnvConfig(); err != nil {
+		log.Fatalf("Failed to load dotenv configuration: %v", err)
+	}
+
 	// Check for help flag in any position
 	for _, arg := range os.Args[1:] {
 		if arg == "--help" || arg == "-h" || arg == "help" {
