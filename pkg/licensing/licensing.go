@@ -1,7 +1,15 @@
 package licensing
 
 import (
+	"crypto"
+	"crypto/ed25519"
+	"crypto/rsa"
+	"crypto/sha256"
+	"crypto/x509"
+	"encoding/base64"
+	"encoding/hex"
 	"errors"
+	"fmt"
 	"regexp"
 	"strings"
 	"time"
@@ -118,13 +126,14 @@ type LicenseIdentity struct {
 }
 
 type ActivationRequest struct {
-	Email             string `json:"email"`
-	ClientID          string `json:"client_id,omitempty"`
-	LicenseKey        string `json:"license_key"`
-	DeviceFingerprint string `json:"device_fingerprint"`
-	ProductID         string `json:"product_id,omitempty"` // Product ID or slug to validate license against
-	IPAddress         string `json:"-"`
-	UserAgent         string `json:"-"`
+	Email             string       `json:"email"`
+	ClientID          string       `json:"client_id,omitempty"`
+	LicenseKey        string       `json:"license_key"`
+	DeviceFingerprint string       `json:"device_fingerprint"`
+	ProductID         string       `json:"product_id,omitempty"` // Product ID or slug to validate license against
+	DeviceProof       *DeviceProof `json:"device_proof,omitempty"`
+	IPAddress         string       `json:"-"`
+	UserAgent         string       `json:"-"`
 }
 
 type ActivationResponse struct {
@@ -145,10 +154,136 @@ const (
 )
 
 type LicenseDevice struct {
-	Fingerprint  string    `json:"fingerprint"`
-	ActivatedAt  time.Time `json:"activated_at"`
-	LastSeenAt   time.Time `json:"last_seen_at"`
-	TransportKey []byte    `json:"-"`
+	Fingerprint        string    `json:"fingerprint"`
+	ActivatedAt        time.Time `json:"activated_at"`
+	LastSeenAt         time.Time `json:"last_seen_at"`
+	TransportKey       []byte    `json:"-"`
+	ProofVersion       int       `json:"proof_version,omitempty"`
+	DeviceKeyID        string    `json:"device_key_id,omitempty"`
+	DevicePublicKey    []byte    `json:"device_public_key,omitempty"`
+	PublicKeyAlgorithm string    `json:"public_key_algorithm,omitempty"`
+	KeyProvider        string    `json:"key_provider,omitempty"`
+	AttestationType    string    `json:"attestation_type,omitempty"`
+	AttestationStatus  string    `json:"attestation_status,omitempty"`
+	LastProofAt        time.Time `json:"last_proof_at,omitempty"`
+}
+
+const (
+	DeviceProofVersionV2             = 2
+	DeviceProofAlgorithmEd25519      = "ed25519"
+	DeviceProofAlgorithmRSAPSSSHA256 = "rsa-pss-sha256"
+	DeviceProofPurposeActivate       = "activate"
+	DeviceProofPurposeVerify         = "verify"
+	DeviceProofPurposeTrial          = "trial"
+)
+
+type DeviceProof struct {
+	Version            int               `json:"version"`
+	Purpose            string            `json:"purpose"`
+	ChallengeID        string            `json:"challenge_id"`
+	Nonce              string            `json:"nonce"`
+	Fingerprint        string            `json:"fingerprint"`
+	KeyID              string            `json:"key_id"`
+	KeyProvider        string            `json:"key_provider"`
+	PublicKeyAlgorithm string            `json:"public_key_alg"`
+	PublicKey          string            `json:"public_key"`
+	Signature          string            `json:"signature"`
+	Attestation        map[string]string `json:"attestation,omitempty"`
+}
+
+type DeviceProofPayload struct {
+	Purpose     string
+	ChallengeID string
+	Nonce       string
+	LicenseKey  string
+	ClientID    string
+	Email       string
+	ProductID   string
+	Fingerprint string
+	PublicKey   []byte
+}
+
+func DeviceProofPublicKeyID(publicKey []byte) string {
+	sum := sha256.Sum256(publicKey)
+	return hex.EncodeToString(sum[:])
+}
+
+func EncodeDeviceProofBytes(data []byte) string {
+	return base64.RawURLEncoding.EncodeToString(data)
+}
+
+func DecodeDeviceProofBytes(value string) ([]byte, error) {
+	return base64.RawURLEncoding.DecodeString(strings.TrimSpace(value))
+}
+
+func CanonicalDeviceProofPayload(payload DeviceProofPayload) []byte {
+	publicKeyHash := DeviceProofPublicKeyID(payload.PublicKey)
+	parts := []string{
+		"v=2",
+		"purpose=" + strings.ToLower(strings.TrimSpace(payload.Purpose)),
+		"challenge_id=" + strings.TrimSpace(payload.ChallengeID),
+		"nonce=" + strings.TrimSpace(payload.Nonce),
+		"license_key=" + normalizeLicenseKey(payload.LicenseKey),
+		"client_id=" + strings.TrimSpace(payload.ClientID),
+		"email=" + normalizeEmail(payload.Email),
+		"product_id=" + strings.TrimSpace(payload.ProductID),
+		"fingerprint=" + strings.TrimSpace(payload.Fingerprint),
+		"public_key_sha256=" + publicKeyHash,
+	}
+	return []byte(strings.Join(parts, "\n"))
+}
+
+func VerifyDeviceProofSignature(proof *DeviceProof, payload DeviceProofPayload) ([]byte, error) {
+	if proof == nil {
+		return nil, fmt.Errorf("device proof required")
+	}
+	if proof.Version != DeviceProofVersionV2 {
+		return nil, fmt.Errorf("unsupported device proof version")
+	}
+	algorithm := strings.ToLower(strings.TrimSpace(proof.PublicKeyAlgorithm))
+	if algorithm != DeviceProofAlgorithmEd25519 && algorithm != DeviceProofAlgorithmRSAPSSSHA256 {
+		return nil, fmt.Errorf("unsupported device proof public key algorithm")
+	}
+	publicKey, err := DecodeDeviceProofBytes(proof.PublicKey)
+	if err != nil {
+		return nil, fmt.Errorf("invalid device proof public key: %w", err)
+	}
+	signature, err := DecodeDeviceProofBytes(proof.Signature)
+	if err != nil {
+		return nil, fmt.Errorf("invalid device proof signature: %w", err)
+	}
+	payload.PublicKey = publicKey
+	canonicalPayload := CanonicalDeviceProofPayload(payload)
+	switch algorithm {
+	case DeviceProofAlgorithmEd25519:
+		if len(publicKey) != ed25519.PublicKeySize {
+			return nil, fmt.Errorf("invalid device proof public key size")
+		}
+		if len(signature) != ed25519.SignatureSize {
+			return nil, fmt.Errorf("invalid device proof signature size")
+		}
+		if !ed25519.Verify(ed25519.PublicKey(publicKey), canonicalPayload, signature) {
+			return nil, fmt.Errorf("device proof signature invalid")
+		}
+	case DeviceProofAlgorithmRSAPSSSHA256:
+		parsed, err := x509.ParsePKIXPublicKey(publicKey)
+		if err != nil {
+			return nil, fmt.Errorf("invalid rsa device proof public key: %w", err)
+		}
+		rsaPublicKey, ok := parsed.(*rsa.PublicKey)
+		if !ok {
+			return nil, fmt.Errorf("device proof public key is not RSA")
+		}
+		digest := sha256.Sum256(canonicalPayload)
+		if err := rsa.VerifyPSS(rsaPublicKey, crypto.SHA256, digest[:], signature, nil); err != nil {
+			return nil, fmt.Errorf("device proof signature invalid")
+		}
+	}
+	expectedKeyID := DeviceProofPublicKeyID(publicKey)
+	if strings.TrimSpace(proof.KeyID) != "" && !strings.EqualFold(strings.TrimSpace(proof.KeyID), expectedKeyID) {
+		return nil, fmt.Errorf("device proof key id mismatch")
+	}
+	return publicKey, nil
 }
 
 type ActivationRecord struct {
@@ -185,6 +320,9 @@ func cloneLicense(license *License) *License {
 			copyDev := *dev
 			if len(dev.TransportKey) > 0 {
 				copyDev.TransportKey = append([]byte(nil), dev.TransportKey...)
+			}
+			if len(dev.DevicePublicKey) > 0 {
+				copyDev.DevicePublicKey = append([]byte(nil), dev.DevicePublicKey...)
 			}
 			clone.Devices[fp] = &copyDev
 		}
@@ -382,6 +520,7 @@ type trialLicenseAPIRequest struct {
 	TrialDurationDays int               `json:"trial_duration_days,omitempty"`
 	SubscriptionURL   string            `json:"subscription_url,omitempty"`
 	Metadata          map[string]string `json:"metadata,omitempty"`
+	DeviceProof       *DeviceProof      `json:"device_proof,omitempty"`
 }
 
 type provisionLicenseRequest struct {

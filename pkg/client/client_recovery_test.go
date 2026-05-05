@@ -62,7 +62,8 @@ func (f *licenseResponseFactory) buildArtifacts(t *testing.T, licenseData *Licen
 		t.Fatalf("failed to create gcm: %v", err)
 	}
 	encrypted := gcm.Seal(nil, nonce, payload, nil)
-	hash := sha256.Sum256(encrypted)
+	combined := append(encrypted, []byte(fingerprint)...)
+	hash := sha256.Sum256(combined)
 	signature, err := rsa.SignPSS(rand.Reader, f.priv, crypto.SHA256, hash[:], nil)
 	if err != nil {
 		t.Fatalf("failed to sign: %v", err)
@@ -142,6 +143,16 @@ func TestVerifyRecoversMissingChecksumViaServer(t *testing.T) {
 
 	verifyCalled := make(chan struct{}, 1)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/device/challenge" {
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(DeviceChallengeResponse{
+				ChallengeID: "test-challenge",
+				Nonce:       "test-nonce",
+				Purpose:     "verify",
+				ExpiresAt:   time.Now().Add(5 * time.Minute),
+			})
+			return
+		}
 		if r.URL.Path != "/api/verify" {
 			w.WriteHeader(http.StatusNotFound)
 			return

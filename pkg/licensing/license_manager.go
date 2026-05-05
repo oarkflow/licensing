@@ -1,6 +1,7 @@
 package licensing
 
 import (
+	"bytes"
 	"context"
 	"crypto/aes"
 	"crypto/cipher"
@@ -1172,6 +1173,7 @@ type TrialLicenseRequest struct {
 	ProductID         string
 	TrialDurationDays int
 	SubscriptionURL   string
+	DeviceProof       *DeviceProof
 }
 
 // TrialLicenseResponse contains the result of a trial license request.
@@ -1201,6 +1203,15 @@ func (lm *LicenseManager) GenerateTrialLicense(ctx context.Context, req *TrialLi
 	fingerprint := strings.TrimSpace(req.DeviceFingerprint)
 	if !fingerprintRegex.MatchString(fingerprint) {
 		return nil, fmt.Errorf("invalid device fingerprint format")
+	}
+	proofReq := &ActivationRequest{
+		Email:             email,
+		DeviceFingerprint: fingerprint,
+		ProductID:         req.ProductID,
+		DeviceProof:       req.DeviceProof,
+	}
+	if _, err := verifyRequestDeviceProof(proofReq, DeviceProofPurposeTrial, nil); err != nil {
+		return nil, err
 	}
 
 	// Check if device has already used a trial
@@ -1505,6 +1516,53 @@ func (lm *LicenseManager) randomBytes(numBytes int) ([]byte, error) {
 	return buf, nil
 }
 
+func verifyRequestDeviceProof(req *ActivationRequest, purpose string, existing *LicenseDevice) ([]byte, error) {
+	if req == nil {
+		return nil, fmt.Errorf("activation request missing")
+	}
+	proof := req.DeviceProof
+	if proof == nil {
+		return nil, fmt.Errorf("device proof required")
+	}
+	if strings.TrimSpace(proof.Fingerprint) != strings.TrimSpace(req.DeviceFingerprint) {
+		return nil, fmt.Errorf("device proof fingerprint mismatch")
+	}
+	payload := DeviceProofPayload{
+		Purpose:     purpose,
+		ChallengeID: proof.ChallengeID,
+		Nonce:       proof.Nonce,
+		LicenseKey:  req.LicenseKey,
+		ClientID:    req.ClientID,
+		Email:       req.Email,
+		ProductID:   req.ProductID,
+		Fingerprint: req.DeviceFingerprint,
+	}
+	publicKey, err := VerifyDeviceProofSignature(proof, payload)
+	if err != nil {
+		return nil, err
+	}
+	if existing != nil && len(existing.DevicePublicKey) > 0 && !bytes.Equal(existing.DevicePublicKey, publicKey) {
+		return nil, fmt.Errorf("device proof public key mismatch")
+	}
+	return publicKey, nil
+}
+
+func applyDeviceProof(device *LicenseDevice, proof *DeviceProof, publicKey []byte, now time.Time) {
+	if device == nil || proof == nil || len(publicKey) == 0 {
+		return
+	}
+	device.ProofVersion = DeviceProofVersionV2
+	device.DeviceKeyID = DeviceProofPublicKeyID(publicKey)
+	device.DevicePublicKey = append([]byte(nil), publicKey...)
+	device.PublicKeyAlgorithm = strings.ToLower(strings.TrimSpace(proof.PublicKeyAlgorithm))
+	device.KeyProvider = strings.TrimSpace(proof.KeyProvider)
+	if proof.Attestation != nil {
+		device.AttestationType = strings.TrimSpace(proof.Attestation["type"])
+		device.AttestationStatus = strings.TrimSpace(proof.Attestation["status"])
+	}
+	device.LastProofAt = now
+}
+
 func (lm *LicenseManager) ActivateLicense(ctx context.Context, req *ActivationRequest) (*ActivationResponse, error) {
 	req.LicenseKey = normalizeLicenseKey(req.LicenseKey)
 	license, err := lm.storage.GetLicenseByKey(ctx, req.LicenseKey)
@@ -1580,6 +1638,12 @@ func (lm *LicenseManager) ActivateLicense(ctx context.Context, req *ActivationRe
 	}
 
 	device, exists := license.Devices[req.DeviceFingerprint]
+	proofPublicKey, err := verifyRequestDeviceProof(req, DeviceProofPurposeActivate, device)
+	if err != nil {
+		message := err.Error()
+		lm.recordActivationAttempt(ctx, license, req, false, message)
+		return &ActivationResponse{Success: false, Message: message}, nil
+	}
 	if !exists {
 		if license.MaxDevices > 0 && len(license.Devices) >= license.MaxDevices {
 			message := fmt.Sprintf("Maximum devices (%d) reached", license.MaxDevices)
@@ -1608,6 +1672,7 @@ func (lm *LicenseManager) ActivateLicense(ctx context.Context, req *ActivationRe
 			device.TransportKey = transportKey
 		}
 	}
+	applyDeviceProof(device, req.DeviceProof, proofPublicKey, now)
 
 	license.IsActivated = true
 	license.LastActivatedAt = now
@@ -1775,6 +1840,13 @@ func (lm *LicenseManager) VerifyLicense(ctx context.Context, req *ActivationRequ
 		lm.recordActivationAttempt(ctx, license, req, false, message)
 		return &ActivationResponse{Success: false, Message: message}, nil
 	}
+	proofPublicKey, err := verifyRequestDeviceProof(req, DeviceProofPurposeVerify, device)
+	if err != nil {
+		message := err.Error()
+		phusluLog.Error().Str("operation", "verify_license").Str("message", message).Str("licenseID", license.ID).Str("deviceFingerprint", req.DeviceFingerprint).Msg("")
+		lm.recordActivationAttempt(ctx, license, req, false, message)
+		return &ActivationResponse{Success: false, Message: message}, nil
+	}
 	if len(device.TransportKey) != 32 {
 		transportKey, err := lm.randomBytes(32)
 		if err != nil {
@@ -1783,6 +1855,7 @@ func (lm *LicenseManager) VerifyLicense(ctx context.Context, req *ActivationRequ
 		device.TransportKey = transportKey
 	}
 	device.LastSeenAt = now
+	applyDeviceProof(device, req.DeviceProof, proofPublicKey, now)
 	license.LastActivatedAt = now
 	refreshLicenseDeviceStats(license)
 	lm.markServerCheck(license, now)

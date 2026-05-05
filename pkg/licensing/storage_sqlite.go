@@ -105,6 +105,14 @@ func ensureSQLiteSchema(db *squealx.DB) error {
             activated_at TIMESTAMP NOT NULL,
             last_seen_at TIMESTAMP NOT NULL,
             transport_key BLOB NOT NULL,
+			proof_version INTEGER NOT NULL DEFAULT 0,
+			device_key_id TEXT,
+			device_public_key BLOB,
+			public_key_algorithm TEXT,
+			key_provider TEXT,
+			attestation_type TEXT,
+			attestation_status TEXT,
+			last_proof_at TIMESTAMP,
             PRIMARY KEY(license_id, fingerprint),
             FOREIGN KEY(license_id) REFERENCES licenses(id) ON DELETE CASCADE
         );`,
@@ -337,6 +345,23 @@ func ensureSQLiteSchema(db *squealx.DB) error {
 	}
 	if err := ensureSQLiteColumn(db, "licenses", "trial_device_fingerprint", "TEXT"); err != nil {
 		return err
+	}
+	for _, col := range []struct {
+		name string
+		def  string
+	}{
+		{"proof_version", "INTEGER NOT NULL DEFAULT 0"},
+		{"device_key_id", "TEXT"},
+		{"device_public_key", "BLOB"},
+		{"public_key_algorithm", "TEXT"},
+		{"key_provider", "TEXT"},
+		{"attestation_type", "TEXT"},
+		{"attestation_status", "TEXT"},
+		{"last_proof_at", "TIMESTAMP"},
+	} {
+		if err := ensureSQLiteColumn(db, "license_devices", col.name, col.def); err != nil {
+			return err
+		}
 	}
 	// Create device_trials table to track devices that have used trial licenses
 	_, err = db.Exec(`CREATE TABLE IF NOT EXISTS device_trials (
@@ -978,8 +1003,11 @@ func (s *SQLiteStorage) replaceDevices(ctx context.Context, tx squealx.SQLTx, li
 	if len(devices) == 0 {
 		return nil
 	}
-	stmt, err := tx.PrepareContext(ctx, `INSERT INTO license_devices (license_id, fingerprint, activated_at, last_seen_at, transport_key)
-        VALUES (?, ?, ?, ?, ?)`)
+	stmt, err := tx.PrepareContext(ctx, `INSERT INTO license_devices (
+		license_id, fingerprint, activated_at, last_seen_at, transport_key,
+		proof_version, device_key_id, device_public_key, public_key_algorithm, key_provider,
+		attestation_type, attestation_status, last_proof_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
 	if err != nil {
 		return err
 	}
@@ -989,7 +1017,13 @@ func (s *SQLiteStorage) replaceDevices(ctx context.Context, tx squealx.SQLTx, li
 			continue
 		}
 		transport := append([]byte(nil), device.TransportKey...)
-		if _, err := stmt.ExecContext(ctx, licenseID, fingerprint, device.ActivatedAt, device.LastSeenAt, transport); err != nil {
+		devicePublicKey := append([]byte(nil), device.DevicePublicKey...)
+		if _, err := stmt.ExecContext(ctx,
+			licenseID, fingerprint, device.ActivatedAt, device.LastSeenAt, transport,
+			device.ProofVersion, nullString(device.DeviceKeyID), devicePublicKey,
+			nullString(device.PublicKeyAlgorithm), nullString(device.KeyProvider),
+			nullString(device.AttestationType), nullString(device.AttestationStatus), nullTime(device.LastProofAt),
+		); err != nil {
 			return err
 		}
 	}
@@ -997,7 +1031,9 @@ func (s *SQLiteStorage) replaceDevices(ctx context.Context, tx squealx.SQLTx, li
 }
 
 func (s *SQLiteStorage) loadDevices(ctx context.Context, license *License) error {
-	rows, err := s.db.QueryContext(ctx, `SELECT fingerprint, activated_at, last_seen_at, transport_key
+	rows, err := s.db.QueryContext(ctx, `SELECT fingerprint, activated_at, last_seen_at, transport_key,
+		proof_version, device_key_id, device_public_key, public_key_algorithm, key_provider,
+		attestation_type, attestation_status, last_proof_at
         FROM license_devices WHERE license_id = ?`, license.ID)
 	if err != nil {
 		return err
@@ -1006,14 +1042,39 @@ func (s *SQLiteStorage) loadDevices(ctx context.Context, license *License) error
 	license.Devices = make(map[string]*LicenseDevice)
 	for rows.Next() {
 		var device LicenseDevice
-		var transport []byte
+		var transport, publicKey []byte
 		var activatedAt, lastSeen sqliteTimeValue
-		if err := rows.Scan(&device.Fingerprint, &activatedAt, &lastSeen, &transport); err != nil {
+		var deviceKeyID, publicKeyAlg, keyProvider, attestationType, attestationStatus sql.NullString
+		var lastProofAt sqliteNullTime
+		if err := rows.Scan(
+			&device.Fingerprint, &activatedAt, &lastSeen, &transport,
+			&device.ProofVersion, &deviceKeyID, &publicKey, &publicKeyAlg, &keyProvider,
+			&attestationType, &attestationStatus, &lastProofAt,
+		); err != nil {
 			return err
 		}
 		device.ActivatedAt = activatedAt.Time
 		device.LastSeenAt = lastSeen.Time
 		device.TransportKey = append([]byte(nil), transport...)
+		device.DevicePublicKey = append([]byte(nil), publicKey...)
+		if deviceKeyID.Valid {
+			device.DeviceKeyID = deviceKeyID.String
+		}
+		if publicKeyAlg.Valid {
+			device.PublicKeyAlgorithm = publicKeyAlg.String
+		}
+		if keyProvider.Valid {
+			device.KeyProvider = keyProvider.String
+		}
+		if attestationType.Valid {
+			device.AttestationType = attestationType.String
+		}
+		if attestationStatus.Valid {
+			device.AttestationStatus = attestationStatus.String
+		}
+		if lastProofAt.Valid {
+			device.LastProofAt = lastProofAt.Time
+		}
 		license.Devices[device.Fingerprint] = &device
 	}
 	if err := rows.Err(); err != nil {

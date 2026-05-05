@@ -60,18 +60,10 @@ export function decryptStoredLicense(stored: StoredLicenseFile, currentFingerpri
     const publicKeyDer = Buffer.from(stored.public_key, "base64");
     const publicKey = createPublicKey({ key: publicKeyDer, format: "der", type: "spki" });
 
-    // Prefer verification that includes device fingerprint (new servers
-    // sign SHA256(encrypted || device_fingerprint)). Fall back to legacy
-    // verification over the encrypted payload only for compatibility.
+    // Servers sign SHA256(encrypted || device_fingerprint).
     const combined = Buffer.concat([encrypted, Buffer.from(stored.device_fingerprint || '', 'utf8')]);
     if (!verifySignature(combined, signature, publicKey)) {
-        if (!verifySignature(encrypted, signature, publicKey)) {
-            throw new Error("stored license signature invalid");
-        } else {
-            // Signature valid using legacy method; warn the consumer.
-            // eslint-disable-next-line no-console
-            console.warn('Activation signature validated using legacy method; device fingerprint is not bound by signature');
-        }
+        throw new Error("stored license signature invalid");
     }
 
     // If caller provided a current device fingerprint, ensure it matches

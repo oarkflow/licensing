@@ -16,7 +16,7 @@ import (
 
 // tpmDeviceKeyProvider communicates with a hardware TPM 2.0 device through the
 // go-tpm library. It lazily creates a primary RSA key for signing
-// (TPM_ALG_RSASSA + SHA256) and keeps the handle until Close is invoked.
+// (TPM_ALG_RSAPSS + SHA256) and keeps the handle until Close is invoked.
 type tpmDeviceKeyProvider struct {
 	path   string
 	rwc    io.ReadWriteCloser
@@ -37,7 +37,7 @@ func NewTPMDeviceKeyProvider(device string) (SigningProvider, error) {
 	if path == "" {
 		path = defaultTPMDevice()
 	}
-	rwc, err := tpm2.OpenTPM(path)
+	rwc, err := openTPM(path)
 	if err != nil {
 		return nil, fmt.Errorf("open tpm at %s: %w", path, err)
 	}
@@ -46,7 +46,7 @@ func NewTPMDeviceKeyProvider(device string) (SigningProvider, error) {
 		NameAlg:    tpm2.AlgSHA256,
 		Attributes: tpm2.FlagSignerDefault,
 		RSAParameters: &tpm2.RSAParams{
-			Sign:        &tpm2.SigScheme{Alg: tpm2.AlgRSASSA, Hash: tpm2.AlgSHA256},
+			Sign:        &tpm2.SigScheme{Alg: tpm2.AlgRSAPSS, Hash: tpm2.AlgSHA256},
 			KeyBits:     2048,
 			ExponentRaw: 0,
 		},
@@ -81,7 +81,7 @@ func (p *tpmDeviceKeyProvider) Sign(digest []byte) ([]byte, error) {
 	}
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	sig, err := tpm2.Sign(p.rwc, p.handle, "", digest, nil, &tpm2.SigScheme{Alg: tpm2.AlgRSASSA, Hash: tpm2.AlgSHA256})
+	sig, err := tpm2.Sign(p.rwc, p.handle, "", digest, nil, &tpm2.SigScheme{Alg: tpm2.AlgRSAPSS, Hash: tpm2.AlgSHA256})
 	if err != nil {
 		return nil, fmt.Errorf("tpm sign failed: %w", err)
 	}

@@ -123,7 +123,8 @@ func buildFixtureBundle() (*fixtureBundle, error) {
 		return nil, err
 	}
 
-	digest := sha256.Sum256(encrypted)
+	combined := append(encrypted, []byte(fingerprint)...)
+	digest := sha256.Sum256(combined)
 	signature, err := rsa.SignPSS(newDeterministicReader(13371337), priv, crypto.SHA256, digest[:], nil)
 	if err != nil {
 		return nil, err

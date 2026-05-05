@@ -20,6 +20,10 @@ const (
 	EnvHTTPTimeout        = "LICENSE_CLIENT_HTTP_TIMEOUT"
 	EnvCACertPath         = "LICENSE_CLIENT_CA_CERT"
 	EnvAllowInsecureHTTP  = "LICENSE_CLIENT_ALLOW_INSECURE_HTTP"
+	EnvDeviceKeyProvider  = "LICENSE_CLIENT_DEVICE_KEY_PROVIDER"
+	EnvDeviceKeyFile      = "LICENSE_CLIENT_DEVICE_KEY_FILE"
+	EnvDeviceKeyName      = "LICENSE_CLIENT_DEVICE_KEY_NAME"
+	EnvTPMDevice          = "LICENSE_CLIENT_TPM_DEVICE"
 	defaultActivationMode = "auto"
 )
 
@@ -32,6 +36,10 @@ var (
 	httpTimeoutFlag     = flag.Duration("http-timeout", 0, fmt.Sprintf("HTTP timeout (e.g. 15s). Defaults to internal value or $%s", EnvHTTPTimeout))
 	caCertFlag          = flag.String("ca-cert", "", fmt.Sprintf("Path to PEM CA bundle for server validation (default $%s)", EnvCACertPath))
 	allowInsecureFlag   = flag.Bool("allow-insecure-http", false, fmt.Sprintf("Allow HTTP URLs or skip TLS verification for development (default $%s)", EnvAllowInsecureHTTP))
+	deviceKeyProvider   = flag.String("device-key-provider", "", fmt.Sprintf("Device proof key provider: auto, tpm, os, software (default $%s or auto)", EnvDeviceKeyProvider))
+	deviceKeyFile       = flag.String("device-key-file", "", fmt.Sprintf("Software device key file (default $%s or client config dir)", EnvDeviceKeyFile))
+	deviceKeyName       = flag.String("device-key-name", "", fmt.Sprintf("OS keyring account/key label (default $%s or app/product derived)", EnvDeviceKeyName))
+	tpmDevice           = flag.String("tpm-device", "", fmt.Sprintf("TPM device path for device proof (default $%s or platform default)", EnvTPMDevice))
 )
 
 func resolveClientConfig() client.Config {
@@ -76,6 +84,26 @@ func resolveClientConfig() client.Config {
 		cfg.CACertPath = value
 	} else if env := envOrEmpty(EnvCACertPath); env != "" {
 		cfg.CACertPath = env
+	}
+	if value := strings.TrimSpace(*deviceKeyProvider); value != "" {
+		cfg.DeviceKeyProvider = value
+	} else if env := envOrEmpty(EnvDeviceKeyProvider); env != "" {
+		cfg.DeviceKeyProvider = env
+	}
+	if value := strings.TrimSpace(*deviceKeyFile); value != "" {
+		cfg.DeviceKeyFile = value
+	} else if env := envOrEmpty(EnvDeviceKeyFile); env != "" {
+		cfg.DeviceKeyFile = env
+	}
+	if value := strings.TrimSpace(*deviceKeyName); value != "" {
+		cfg.DeviceKeyName = value
+	} else if env := envOrEmpty(EnvDeviceKeyName); env != "" {
+		cfg.DeviceKeyName = env
+	}
+	if value := strings.TrimSpace(*tpmDevice); value != "" {
+		cfg.TPMDevice = value
+	} else if env := envOrEmpty(EnvTPMDevice); env != "" {
+		cfg.TPMDevice = env
 	}
 
 	return cfg

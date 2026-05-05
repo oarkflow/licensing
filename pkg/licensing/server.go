@@ -48,12 +48,14 @@ type Server struct {
 	sessionValidator    SessionValidator // Optional session validator for cookie-based auth
 	emailTemplateLoader *EmailTemplateLoader
 	// In-memory client sessions (for client authentication). Persist via storage in future.
-	clientSessions   map[string]*ClientSession
-	clientSessionsMu sync.RWMutex
-	metrics          *serverMetrics
-	auditLogger      *audit.AuditLogger
-	auditIncludePing bool
-	auditDB          *sql.DB
+	clientSessions    map[string]*ClientSession
+	clientSessionsMu  sync.RWMutex
+	deviceChallenges  map[string]*DeviceChallenge
+	deviceChallengeMu sync.Mutex
+	metrics           *serverMetrics
+	auditLogger       *audit.AuditLogger
+	auditIncludePing  bool
+	auditDB           *sql.DB
 }
 
 type serverMetrics struct {
@@ -98,6 +100,18 @@ type emailDispatchResult struct {
 	Sent      bool   `json:"sent,omitempty"`
 	MessageID string `json:"message_id,omitempty"`
 	Error     string `json:"error,omitempty"`
+}
+
+type DeviceChallenge struct {
+	ID        string    `json:"challenge_id"`
+	Nonce     string    `json:"nonce"`
+	Purpose   string    `json:"purpose"`
+	ExpiresAt time.Time `json:"expires_at"`
+	Used      bool      `json:"-"`
+}
+
+type deviceChallengeRequest struct {
+	Purpose string `json:"purpose"`
 }
 
 func newAdminUserResponse(user *AdminUser) adminUserResponse {
@@ -159,6 +173,7 @@ func NewServer(lm *LicenseManager, port string, apiKeys []string, limiter *RateL
 		allowInsecureHTTP:   allowInsecure,
 		emailTemplateLoader: emailTemplateLoader,
 		clientSessions:      map[string]*ClientSession{},
+		deviceChallenges:    map[string]*DeviceChallenge{},
 		metrics:             &serverMetrics{startedAt: time.Now()},
 	}
 	if err := server.initAuditLogger(); err != nil {
@@ -805,6 +820,98 @@ func (s *Server) decodeClientJSONBody(w http.ResponseWriter, r *http.Request, ds
 	return transportKey, true
 }
 
+func normalizeDeviceProofPurpose(purpose string) string {
+	switch strings.ToLower(strings.TrimSpace(purpose)) {
+	case DeviceProofPurposeActivate:
+		return DeviceProofPurposeActivate
+	case DeviceProofPurposeVerify:
+		return DeviceProofPurposeVerify
+	case DeviceProofPurposeTrial:
+		return DeviceProofPurposeTrial
+	default:
+		return ""
+	}
+}
+
+func (s *Server) handleDeviceChallenge(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		s.respondClientError(w, http.StatusMethodNotAllowed, "Method not allowed", nil)
+		return
+	}
+	if !s.enforceClientRateLimit(w, r) {
+		return
+	}
+	var req deviceChallengeRequest
+	if !s.decodeJSONBody(w, r, &req, 8<<10) {
+		return
+	}
+	purpose := normalizeDeviceProofPurpose(req.Purpose)
+	if purpose == "" {
+		s.respondError(w, http.StatusBadRequest, "invalid device challenge purpose")
+		return
+	}
+	nonce := make([]byte, 32)
+	if _, err := rand.Read(nonce); err != nil {
+		s.respondError(w, http.StatusInternalServerError, "failed to generate device challenge")
+		return
+	}
+	challenge := &DeviceChallenge{
+		ID:        uuid.New().String(),
+		Nonce:     EncodeDeviceProofBytes(nonce),
+		Purpose:   purpose,
+		ExpiresAt: time.Now().Add(5 * time.Minute),
+	}
+	s.deviceChallengeMu.Lock()
+	if s.deviceChallenges == nil {
+		s.deviceChallenges = map[string]*DeviceChallenge{}
+	}
+	now := time.Now()
+	for id, existing := range s.deviceChallenges {
+		if existing == nil || existing.Used || now.After(existing.ExpiresAt) {
+			delete(s.deviceChallenges, id)
+		}
+	}
+	s.deviceChallenges[challenge.ID] = challenge
+	s.deviceChallengeMu.Unlock()
+
+	s.respondJSON(w, http.StatusCreated, challenge)
+}
+
+func (s *Server) consumeDeviceChallenge(proof *DeviceProof, purpose string) error {
+	if proof == nil {
+		return fmt.Errorf("device proof required")
+	}
+	purpose = normalizeDeviceProofPurpose(purpose)
+	if purpose == "" {
+		return fmt.Errorf("invalid device proof purpose")
+	}
+	if normalizeDeviceProofPurpose(proof.Purpose) != purpose {
+		return fmt.Errorf("device proof purpose mismatch")
+	}
+	s.deviceChallengeMu.Lock()
+	defer s.deviceChallengeMu.Unlock()
+	challenge, ok := s.deviceChallenges[strings.TrimSpace(proof.ChallengeID)]
+	if !ok || challenge == nil {
+		return fmt.Errorf("device challenge not found")
+	}
+	if challenge.Used {
+		return fmt.Errorf("device challenge already used")
+	}
+	if time.Now().After(challenge.ExpiresAt) {
+		delete(s.deviceChallenges, challenge.ID)
+		return fmt.Errorf("device challenge expired")
+	}
+	if challenge.Purpose != purpose {
+		return fmt.Errorf("device challenge purpose mismatch")
+	}
+	if challenge.Nonce != strings.TrimSpace(proof.Nonce) {
+		return fmt.Errorf("device challenge nonce mismatch")
+	}
+	challenge.Used = true
+	delete(s.deviceChallenges, challenge.ID)
+	return nil
+}
+
 func (s *Server) withSecurityHeaders(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		setSecurityHeaders(w)
@@ -1178,6 +1285,10 @@ func (s *Server) handleActivate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := validateActivationRequest(&req); err != nil {
+		s.respondClientError(w, http.StatusBadRequest, err.Error(), transportKey)
+		return
+	}
+	if err := s.consumeDeviceChallenge(req.DeviceProof, DeviceProofPurposeActivate); err != nil {
 		s.respondClientError(w, http.StatusBadRequest, err.Error(), transportKey)
 		return
 	}
@@ -1989,6 +2100,10 @@ func (s *Server) handleVerify(w http.ResponseWriter, r *http.Request) {
 		s.respondClientError(w, http.StatusBadRequest, err.Error(), transportKey)
 		return
 	}
+	if err := s.consumeDeviceChallenge(req.DeviceProof, DeviceProofPurposeVerify); err != nil {
+		s.respondClientError(w, http.StatusBadRequest, err.Error(), transportKey)
+		return
+	}
 	req.LicenseKey = normalizeLicenseKey(req.LicenseKey)
 	req.IPAddress = clientIP(r)
 	req.UserAgent = r.UserAgent()
@@ -2013,6 +2128,10 @@ func (s *Server) handleTrial(w http.ResponseWriter, r *http.Request) {
 	if !s.decodeJSONBody(w, r, &req, maxActivationPayloadBytes) {
 		return
 	}
+	if err := s.consumeDeviceChallenge(req.DeviceProof, DeviceProofPurposeTrial); err != nil {
+		s.respondError(w, http.StatusBadRequest, err.Error())
+		return
+	}
 
 	trialReq := &TrialLicenseRequest{
 		Email:             req.Email,
@@ -2020,6 +2139,7 @@ func (s *Server) handleTrial(w http.ResponseWriter, r *http.Request) {
 		ProductID:         req.ProductID,
 		TrialDurationDays: req.TrialDurationDays,
 		SubscriptionURL:   req.SubscriptionURL,
+		DeviceProof:       req.DeviceProof,
 	}
 
 	resp, err := s.lm.GenerateTrialLicense(r.Context(), trialReq)
@@ -3186,6 +3306,7 @@ func (s *Server) Start() error {
 	mux := http.NewServeMux()
 
 	// API routes
+	mux.HandleFunc("/api/device/challenge", s.handleDeviceChallenge)
 	mux.HandleFunc("/api/activate", s.handleActivate)
 	mux.HandleFunc("/api/licenses", s.handleLicenses)
 	mux.HandleFunc("/api/verify", s.handleVerify)

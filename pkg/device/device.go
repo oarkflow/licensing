@@ -8,7 +8,6 @@ import (
 	"runtime"
 	"sort"
 	"strings"
-	"syscall"
 )
 
 // NIST SP 800-57: Device fingerprint is not a cryptographic key, but is used to bind
@@ -155,17 +154,17 @@ func hasSufficientEntropy(ids map[string]string) bool {
 	if totalEntropy >= 32 && highPriorityCount >= 1 {
 		return true // Full security requirements met
 	}
-	
+
 	// Relaxed requirements for development/limited environments
 	if totalEntropy >= 16 && (highPriorityCount >= 1 || stableCount >= 2) {
 		return true // Minimum viable security
 	}
-	
+
 	// Absolute minimum: some identifiers with basic entropy
 	if totalEntropy >= 8 && stableCount >= 1 {
 		return true // Basic functionality (for development/testing)
 	}
-	
+
 	return false
 }
 
@@ -596,12 +595,8 @@ func getDockerVolumeID() string {
 		if stat, err := os.Stat(path); err == nil && stat.IsDir() {
 			// Generate a stable volume ID based on the persistent directory properties
 			// This will be the same for containers using the same volume
-			if stat.Sys() != nil {
-				if sysStat, ok := stat.Sys().(*syscall.Stat_t); ok {
-					// Use device and inode numbers for better stability
-					volID := fmt.Sprintf("vol-%x-%x-%s", sysStat.Dev, sysStat.Ino, path)
-					return volID
-				}
+			if volID := volumeIDFromFileInfo(stat, path); volID != "" {
+				return volID
 			}
 			// Fallback to size-based but consistent generation
 			volID := fmt.Sprintf("vol-%x-%s", stat.Size(), path)

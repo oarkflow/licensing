@@ -16,7 +16,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log"
 	"net/http"
 	"net/url"
 	"os"
@@ -26,6 +25,7 @@ import (
 	"time"
 
 	"github.com/oarkflow/licensing/pkg/device"
+	licensingcore "github.com/oarkflow/licensing/pkg/licensing"
 	"github.com/oarkflow/licensing/pkg/utils"
 )
 
@@ -77,6 +77,10 @@ type Config struct {
 	HTTPTimeout       time.Duration
 	CACertPath        string
 	AllowInsecureHTTP bool
+	DeviceKeyFile     string
+	DeviceKeyProvider string // auto, tpm, os, or software
+	DeviceKeyName     string // stable OS keyring account/key label
+	TPMDevice         string
 }
 
 // Client manages license activation and verification for Go applications.
@@ -95,11 +99,12 @@ type Client struct {
 
 // ActivationRequest is sent to the licensing server.
 type ActivationRequest struct {
-	Email             string `json:"email"`
-	ClientID          string `json:"client_id,omitempty"`
-	LicenseKey        string `json:"license_key"`
-	DeviceFingerprint string `json:"device_fingerprint"`
-	ProductID         string `json:"product_id,omitempty"` // Product ID or slug to validate license against
+	Email             string                     `json:"email"`
+	ClientID          string                     `json:"client_id,omitempty"`
+	LicenseKey        string                     `json:"license_key"`
+	DeviceFingerprint string                     `json:"device_fingerprint"`
+	ProductID         string                     `json:"product_id,omitempty"` // Product ID or slug to validate license against
+	DeviceProof       *licensingcore.DeviceProof `json:"device_proof,omitempty"`
 }
 
 // ActivationResponse is returned by the licensing server.
@@ -111,6 +116,13 @@ type ActivationResponse struct {
 	Signature        string    `json:"signature,omitempty"`
 	PublicKey        string    `json:"public_key,omitempty"`
 	ExpiresAt        time.Time `json:"expires_at,omitempty"`
+}
+
+type DeviceChallengeResponse struct {
+	ChallengeID string    `json:"challenge_id"`
+	Nonce       string    `json:"nonce"`
+	Purpose     string    `json:"purpose"`
+	ExpiresAt   time.Time `json:"expires_at"`
 }
 
 // StoredLicense is the encrypted payload persisted locally.
@@ -492,11 +504,12 @@ type CredentialsFile struct {
 
 // TrialRequest is sent to the licensing server to request a trial license.
 type TrialRequest struct {
-	Email             string `json:"email"`
-	DeviceFingerprint string `json:"device_fingerprint"`
-	ProductID         string `json:"product_id,omitempty"`
-	PlanID            string `json:"plan_id,omitempty"`
-	TrialDays         int    `json:"trial_days,omitempty"`
+	Email             string                     `json:"email"`
+	DeviceFingerprint string                     `json:"device_fingerprint"`
+	ProductID         string                     `json:"product_id,omitempty"`
+	PlanID            string                     `json:"plan_id,omitempty"`
+	TrialDays         int                        `json:"trial_days,omitempty"`
+	DeviceProof       *licensingcore.DeviceProof `json:"device_proof,omitempty"`
 }
 
 // TrialCheckRequest is sent to check if a device is eligible for trial.
@@ -627,6 +640,13 @@ func normalizeConfig(cfg Config) (Config, error) {
 			return Config{}, fmt.Errorf("failed to access CA certificate: %w", err)
 		}
 	}
+	cfg.DeviceKeyFile = strings.TrimSpace(cfg.DeviceKeyFile)
+	if cfg.DeviceKeyFile != "" && !filepath.IsAbs(cfg.DeviceKeyFile) {
+		cfg.DeviceKeyFile = filepath.Join(cfg.ConfigDir, cfg.DeviceKeyFile)
+	}
+	cfg.DeviceKeyProvider = strings.ToLower(strings.TrimSpace(cfg.DeviceKeyProvider))
+	cfg.DeviceKeyName = strings.TrimSpace(cfg.DeviceKeyName)
+	cfg.TPMDevice = strings.TrimSpace(cfg.TPMDevice)
 
 	return cfg, nil
 }
@@ -692,6 +712,39 @@ func (lc *Client) userAgent() string {
 	return fmt.Sprintf("%s/%s", lc.config.AppName, lc.config.AppVersion)
 }
 
+func (lc *Client) requestDeviceChallenge(ctx context.Context, purpose string) (*DeviceChallengeResponse, error) {
+	body, err := json.Marshal(map[string]string{"purpose": purpose})
+	if err != nil {
+		return nil, err
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, lc.apiURL("/api/device/challenge"), bytes.NewReader(body))
+	if err != nil {
+		return nil, fmt.Errorf("failed to build device challenge request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("User-Agent", lc.userAgent())
+	resp, err := lc.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %v", ErrServerUnavailable, err)
+	}
+	defer resp.Body.Close()
+	plaintext, err := lc.readSecureResponse(resp)
+	if err != nil {
+		return nil, err
+	}
+	var challenge DeviceChallengeResponse
+	if err := json.Unmarshal(plaintext, &challenge); err != nil {
+		return nil, fmt.Errorf("failed to decode device challenge: %w", err)
+	}
+	if challenge.ChallengeID == "" || challenge.Nonce == "" {
+		return nil, fmt.Errorf("device challenge missing cryptographic material")
+	}
+	return &challenge, nil
+}
+
 // IsActivated reports whether a license file already exists locally.
 func (lc *Client) IsActivated() bool {
 	_, err := os.Stat(lc.licensePath)
@@ -722,6 +775,20 @@ func (lc *Client) Activate(email, clientID, licenseKey string) error {
 		DeviceFingerprint: fingerprint,
 		ProductID:         lc.productID,
 	}
+	keyProvider, err := newDeviceKeyProvider(lc.config)
+	if err != nil {
+		return fmt.Errorf("failed to prepare device key: %w", err)
+	}
+	defer closeDeviceKeyProvider(keyProvider)
+	challenge, err := lc.requestDeviceChallenge(context.Background(), licensingcore.DeviceProofPurposeActivate)
+	if err != nil {
+		return fmt.Errorf("failed to obtain device proof challenge: %w", err)
+	}
+	proof, err := buildDeviceProof(context.Background(), keyProvider, challenge, licensingcore.DeviceProofPurposeActivate, activationReq)
+	if err != nil {
+		return fmt.Errorf("failed to build device proof: %w", err)
+	}
+	activationReq.DeviceProof = proof
 
 	reqBody, err := json.Marshal(activationReq)
 	if err != nil {
@@ -921,20 +988,11 @@ func (lc *Client) buildStoredLicenseFromResponse(resp *ActivationResponse, finge
 	if !ok {
 		return nil, fmt.Errorf("not an RSA public key")
 	}
-	// Verify signature. Prefer the new format where the server signed
-	// SHA256(encryptedData || fingerprint). Fall back to the legacy
-	// SHA256(encryptedData) verification for older servers.
+	// Verify the fingerprint-bound signature format.
 	combined := append(encryptedData, []byte(strings.TrimSpace(fingerprint))...)
 	combinedHash := sha256.Sum256(combined)
 	if err := rsa.VerifyPSS(publicKey, crypto.SHA256, combinedHash[:], signature, nil); err != nil {
-		// Try legacy verification for backward compatibility
-		legacyHash := sha256.Sum256(encryptedData)
-		if err2 := rsa.VerifyPSS(publicKey, crypto.SHA256, legacyHash[:], signature, nil); err2 != nil {
-			return nil, fmt.Errorf("signature verification failed (tried combined and legacy): %w / %v", err, err2)
-		}
-		// If legacy verification passed, warn that server did not include
-		// the device fingerprint in the signed material (old server).
-		log.Printf("Warning: activation signature verified with legacy method; consider updating server to sign device fingerprint")
+		return nil, fmt.Errorf("signature verification failed: %w", err)
 	}
 	lc.publicKey = publicKey
 	storedLicense := &StoredLicense{
@@ -972,20 +1030,11 @@ func (lc *Client) validateStoredLicenseSignature(stored *StoredLicense) error {
 		return fmt.Errorf("invalid public key type")
 	}
 	lc.publicKey = publicKey
-	// Verify signature. Prefer the new format where the server signed
-	// SHA256(encryptedData || fingerprint). Fall back to the legacy
-	// SHA256(encryptedData) verification for older servers.
+	// Verify the fingerprint-bound signature format.
 	combined := append(stored.EncryptedData, []byte(strings.TrimSpace(stored.DeviceFingerprint))...)
 	combinedHash := sha256.Sum256(combined)
 	if err := rsa.VerifyPSS(publicKey, crypto.SHA256, combinedHash[:], stored.Signature, nil); err != nil {
-		// Try legacy verification for backward compatibility
-		legacyHash := sha256.Sum256(stored.EncryptedData)
-		if err2 := rsa.VerifyPSS(publicKey, crypto.SHA256, legacyHash[:], stored.Signature, nil); err2 != nil {
-			return fmt.Errorf("signature verification failed - license may be tampered (%w / %v)", err, err2)
-		}
-		// If legacy verification passed, warn that server did not include
-		// the device fingerprint in the signed material (old server).
-		log.Printf("Warning: stored license signature validated with legacy method; consider updating server to sign device fingerprint")
+		return fmt.Errorf("signature verification failed - license may be tampered: %w", err)
 	}
 	return nil
 }
@@ -1013,6 +1062,20 @@ func (lc *Client) refreshLicenseFromServer(ctx context.Context, stored *StoredLi
 		ClientID:          strings.TrimSpace(licenseData.ClientID),
 		ProductID:         lc.productID,
 	}
+	keyProvider, err := newDeviceKeyProvider(lc.config)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to prepare device key: %w", err)
+	}
+	defer closeDeviceKeyProvider(keyProvider)
+	challenge, err := lc.requestDeviceChallenge(ctx, licensingcore.DeviceProofPurposeVerify)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to obtain device proof challenge: %w", err)
+	}
+	proof, err := buildDeviceProof(ctx, keyProvider, challenge, licensingcore.DeviceProofPurposeVerify, verificationReq)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to build device proof: %w", err)
+	}
+	verificationReq.DeviceProof = proof
 	body, err := json.Marshal(verificationReq)
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to marshal verification request: %w", err)
@@ -1296,6 +1359,25 @@ func (lc *Client) RequestTrial(email, productID, planID string, trialDays int) (
 		PlanID:            planID,
 		TrialDays:         trialDays,
 	}
+	trialActivationReq := ActivationRequest{
+		Email:             email,
+		DeviceFingerprint: fingerprint,
+		ProductID:         productID,
+	}
+	keyProvider, err := newDeviceKeyProvider(lc.config)
+	if err != nil {
+		return nil, fmt.Errorf("failed to prepare device key: %w", err)
+	}
+	defer closeDeviceKeyProvider(keyProvider)
+	challenge, err := lc.requestDeviceChallenge(context.Background(), licensingcore.DeviceProofPurposeTrial)
+	if err != nil {
+		return nil, fmt.Errorf("failed to obtain device proof challenge: %w", err)
+	}
+	proof, err := buildDeviceProof(context.Background(), keyProvider, challenge, licensingcore.DeviceProofPurposeTrial, trialActivationReq)
+	if err != nil {
+		return nil, fmt.Errorf("failed to build device proof: %w", err)
+	}
+	trialReq.DeviceProof = proof
 
 	reqBody, err := json.Marshal(trialReq)
 	if err != nil {
