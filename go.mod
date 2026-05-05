@@ -1,6 +1,6 @@
 module github.com/oarkflow/licensing
 
-go 1.26.0
+go 1.26.2
 
 require (
 	github.com/google/go-tpm v0.9.8
