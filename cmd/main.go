@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"log"
@@ -10,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	licensingclient "github.com/oarkflow/licensing/pkg/client"
 	"github.com/oarkflow/licensing/pkg/email"
 	"github.com/oarkflow/licensing/pkg/licensing"
 	"github.com/oarkflow/licensing/pkg/utils"
@@ -48,6 +50,8 @@ func main() {
 
 	// Execute command
 	switch command {
+	case "device-fingerprint", "fingerprint", "device":
+		runDeviceFingerprintCommand()
 	case "seed":
 		runSeedCommand()
 	case "reset":
@@ -64,11 +68,66 @@ func main() {
 func printUsage() {
 	fmt.Println("Usage:")
 	fmt.Println("  licensing-server server    - Start the license server")
+	fmt.Println("  licensing-server device-fingerprint - Print local device fingerprint info")
 	fmt.Println("  licensing-server seed      - Seed the database with plans, features, and scopes")
 	fmt.Println("  licensing-server reset     - Reset and reseed the database")
 	fmt.Println()
 	fmt.Println("Server options:")
 	flag.PrintDefaults()
+}
+
+func runDeviceFingerprintCommand() {
+	configDir := flag.String("config-dir", "", fmt.Sprintf("Directory for local licensing data (default $HOME/%s)", licensingclient.DefaultConfigDir))
+	deviceKeyProvider := flag.String("device-key-provider", "software", "Device proof key provider: software, os, tpm, or auto")
+	deviceKeyFile := flag.String("device-key-file", "", "Software device proof key file; use a persistent mounted path for containers")
+	deviceKeyName := flag.String("device-key-name", "", "OS keyring account/key label")
+	tpmDevice := flag.String("tpm-device", "", "TPM device path for device proof")
+	jsonOutput := flag.Bool("json", false, "Print device identity as JSON")
+	flag.Parse()
+
+	client, err := licensingclient.New(licensingclient.Config{
+		ConfigDir:         strings.TrimSpace(*configDir),
+		DeviceKeyProvider: strings.TrimSpace(*deviceKeyProvider),
+		DeviceKeyFile:     strings.TrimSpace(*deviceKeyFile),
+		DeviceKeyName:     strings.TrimSpace(*deviceKeyName),
+		TPMDevice:         strings.TrimSpace(*tpmDevice),
+	})
+	if err != nil {
+		log.Fatalf("Failed to prepare device identity: %v", err)
+	}
+	identity, err := client.CurrentDeviceIdentity()
+	if err != nil {
+		log.Fatalf("Failed to read device identity: %v", err)
+	}
+
+	if *jsonOutput {
+		encoded, err := json.MarshalIndent(identity, "", "  ")
+		if err != nil {
+			log.Fatalf("Failed to encode device identity: %v", err)
+		}
+		fmt.Println(string(encoded))
+		return
+	}
+
+	fmt.Println("Device Fingerprint Info")
+	fmt.Println("-----------------------")
+	fmt.Printf("Fingerprint:          %s\n", identity.Fingerprint)
+	fmt.Printf("Key ID:               %s\n", identity.KeyID)
+	fmt.Printf("Key provider:         %s\n", identity.KeyProvider)
+	fmt.Printf("Proof algorithm:      %s\n", identity.PublicKeyAlgorithm)
+	if strings.TrimSpace(identity.HardwareFingerprint) != "" {
+		fmt.Printf("Hardware fingerprint: %s\n", identity.HardwareFingerprint)
+	}
+	if strings.TrimSpace(identity.HardwareConfidence) != "" {
+		fmt.Printf("Hardware confidence:  %s\n", identity.HardwareConfidence)
+	}
+	if strings.TrimSpace(identity.Platform) != "" {
+		fmt.Printf("Platform:             %s\n", identity.Platform)
+	}
+	if strings.TrimSpace(identity.Label) != "" {
+		fmt.Printf("Label:                %s\n", identity.Label)
+	}
+	fmt.Printf("Container:            %t\n", identity.IsContainer)
 }
 
 func runServerCommand() {

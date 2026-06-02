@@ -57,21 +57,23 @@ Failure responses set `success=false` (or omit the field) and describe the error
 
 ## 2. Device Fingerprint Contract
 
-Every SDK must derive identical fingerprints for the same machine to keep licenses portable across language runtimes. The current Go implementation concatenates the following identifiers (best-effort on each platform):
-
-1. Hostname (`HOST:<name>`)
-2. OS (`OS:<runtime.GOOS>`)
-3. Architecture (`ARCH:<runtime.GOARCH>`)
-4. Primary MAC address (`MAC:<xx:xx:...>`); fall back to `NO_MAC_ADDR`
-5. CPU brand hash (`CPU:<sha256(name)>` truncated to 16 bytes hex); fall back to `NO_CPU_INFO`
-
-The identifiers are joined with `|`, hashed with SHA-256, and expressed as lowercase hex.
+Every SDK must derive the authorization fingerprint from the device proof public key:
 
 ```text
-fingerprint = hex( SHA256( "HOST:mybox|OS:linux|ARCH:amd64|MAC:4a:...|CPU:1f2e..." ) )
+fingerprint = "fp:v2:" + public_key_algorithm + ":" + lowercase_hex( SHA256(device_proof_public_key_bytes) )
 ```
 
-Any SDK that cannot retrieve one of the components must insert the corresponding sentinel (e.g., `NO_CPU_INFO`) to preserve determinism.
+This key-based fingerprint is the canonical device identity used in `X-Device-Fingerprint`, activation, verification, encrypted transport, offline tokens, and device replacement. The client must keep the private key stable across restarts using the best provider available: TPM/hardware key first, OS keystore second, software key file only as fallback.
+
+Hardware identifiers such as DMI UUID, serial numbers, machine IDs, persistent volume IDs, and configured container IDs may still be collected as diagnostic or risk metadata. They are not the authorization root and must not be required to reproduce the canonical fingerprint. Hardware diagnostic fingerprints are versioned separately:
+
+```text
+hardware_fingerprint = "hw:v1:" + lowercase_hex( SHA256(stable_hardware_components) )
+```
+
+Unstable identifiers such as hostname, MAC address, IP address, CPU brand, container ID, Kubernetes pod UID, Kubernetes pod name, and environment-provided device IDs must not be part of the canonical authorization fingerprint. Container deployments should prefer a mounted persistent device key first, then mounted persistent volume IDs or Kubernetes PVC marker files for diagnostics. TPM-backed keys should only be used in containers when the TPM is intentionally exposed.
+
+Device proof attestations may include diagnostic fields such as `hardware_fingerprint`, `hardware_confidence`, `label`, `platform`, and `is_container`. Servers may store these for audit, support, and suspicious-drift analysis, but authorization must continue to be based on proof-key possession. Confidence values are recorded per component as `high`, `medium`, or `low`.
 
 ## 3. Secure Transport Envelope
 
@@ -165,19 +167,19 @@ SDKs must expose these fields to applications and surface revocation/expiry erro
   - `custom`: use `check_interval_seconds`; long-running processes should run background verification loops.
 - When `next_check_at` is in the past, verification should begin immediately but allow retries/backoff if the server is unreachable. Revocation errors must halt the host application.
 
-## 6. Environment & Configuration Layering
+## 6. Configuration Layering
 
-The reference Go CLI resolves configuration in this order (strongest first): command-line flags → environment variables → defaults. Non-Go SDKs should mimic the same variable names for portability:
+The reference Go CLI resolves security-sensitive configuration in this order: command-line flags → SDK configuration → defaults. Environment variables are intentionally not used for verification endpoints, local license paths, device proof key selection, or diagnostic hardware identity.
 
-| Purpose | Env var | Default |
+| Purpose | Configuration | Default |
 | --- | --- | --- |
-| Server URL | `LICENSE_CLIENT_SERVER` | `https://localhost:6601` |
-| Config dir | `LICENSE_CLIENT_CONFIG_DIR` | `~/.licensing` |
-| License filename | `LICENSE_CLIENT_LICENSE_FILE` | `.license.dat` |
-| Activation email | `LICENSE_CLIENT_EMAIL` | — |
-| Activation client ID | `LICENSE_CLIENT_ID` | — |
-| Activation key | `LICENSE_CLIENT_LICENSE_KEY` | — |
-| Allow insecure HTTP | `LICENSE_CLIENT_ALLOW_INSECURE_HTTP` | `false` |
+| Server URL | `--server-url` / `Config.ServerURL` | `https://localhost:6601` |
+| Config dir | `--config-dir` / `Config.ConfigDir` | `~/.licensing` |
+| License filename | `--license-store` / `Config.LicenseFile` | `.license.dat` |
+| Device proof key file | `--device-key-file` / `Config.DeviceKeyFile` | `$CONFIG_DIR/device_ed25519.pem` |
+| Allow insecure HTTP | `--allow-insecure-http` / `Config.AllowInsecureHTTP` | `false` |
+
+Containerized clients must place the device proof key file on a persistent mount by passing explicit SDK configuration or the CLI `--device-key-file` flag. Environment variables are intentionally ignored for device proof key selection and diagnostic hardware identifiers, so ambient process env cannot redirect identity material. If no key path is configured, the Go SDK tries common mounted directories such as `/var/lib/licensing`, `/data/licensing`, and `/persistent/licensing` before falling back to the config directory.
 
 ## 7. Compliance Checklist
 

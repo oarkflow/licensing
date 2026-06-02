@@ -23,8 +23,8 @@ components:
       schema:
         type: string
         minLength: 16
-        maxLength: 128
-      description: Deterministic SHA-256 hex fingerprint defined in docs/sdk_protocol.md.
+        maxLength: 160
+      description: Versioned SHA-256 fingerprint of the device proof public key defined in docs/sdk_protocol.md.
     LicenseKeyHeader:
       name: X-License-Key
       in: header

@@ -398,3 +398,99 @@ func TestAdminAuthorizationWithBearerToken(t *testing.T) {
 		t.Fatalf("expected 200 OK from /api/clients with Authorization bearer token, got %d, body=%s", w.Code, w.Body.String())
 	}
 }
+
+func TestAdminDeviceLifecycleHandlers(t *testing.T) {
+	storage := NewInMemoryStorage()
+	lm, err := NewLicenseManager(storage)
+	if err != nil {
+		t.Fatalf("NewLicenseManager failed: %v", err)
+	}
+	rl := NewRateLimiter(100, time.Minute)
+	s, err := NewServer(lm, ":0", nil, rl, "", "", "", true)
+	if err != nil {
+		t.Fatalf("NewServer failed: %v", err)
+	}
+
+	ctx := context.Background()
+	admin, err := lm.CreateAdminUser(ctx, "deviceadmin", "password")
+	if err != nil {
+		t.Fatalf("CreateAdminUser failed: %v", err)
+	}
+	apiKey, _, err := lm.GenerateAPIKey(ctx, admin.ID)
+	if err != nil {
+		t.Fatalf("GenerateAPIKey failed: %v", err)
+	}
+	client, err := lm.CreateClient(ctx, "device-handler@example.com")
+	if err != nil {
+		t.Fatalf("CreateClient failed: %v", err)
+	}
+	license, err := lm.GenerateLicense(ctx, client.ID, 24*time.Hour, 1, "pro", LicenseCheckModeEachRun, 0)
+	if err != nil {
+		t.Fatalf("GenerateLicense failed: %v", err)
+	}
+	const fp = "handlerdevice0001"
+	license.Devices = map[string]*LicenseDevice{
+		fp: {Fingerprint: fp, ActivatedAt: time.Now(), LastSeenAt: time.Now(), Status: DeviceStatusTrusted, TransportKey: []byte("12345678901234567890123456789012")},
+	}
+	if err := lm.storage.UpdateLicense(ctx, license); err != nil {
+		t.Fatalf("UpdateLicense failed: %v", err)
+	}
+
+	revokeBody, _ := json.Marshal(map[string]string{"reason": "handler test"})
+	req := httptest.NewRequest(http.MethodPost, "/api/licenses/"+license.ID+"/devices/"+fp+"/revoke", bytes.NewReader(revokeBody))
+	req.Header.Set("X-API-Key", apiKey)
+	w := httptest.NewRecorder()
+	s.handleLicenseActions(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected revoke 200, got %d body=%s", w.Code, w.Body.String())
+	}
+	updated, err := lm.storage.GetLicense(ctx, license.ID)
+	if err != nil {
+		t.Fatalf("GetLicense failed: %v", err)
+	}
+	if got := updated.Devices[fp].Status; got != DeviceStatusRevoked {
+		t.Fatalf("expected revoked device, got %s", got)
+	}
+
+	req = httptest.NewRequest(http.MethodPost, "/api/licenses/"+license.ID+"/devices/"+fp+"/reinstate", nil)
+	req.Header.Set("X-API-Key", apiKey)
+	w = httptest.NewRecorder()
+	s.handleLicenseActions(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected reinstate 200, got %d body=%s", w.Code, w.Body.String())
+	}
+
+	reqBody, _ := json.Marshal(map[string]int{"ttl_hours": 1})
+	req = httptest.NewRequest(http.MethodPost, "/api/licenses/"+license.ID+"/devices/"+fp+"/replacement-token", bytes.NewReader(reqBody))
+	req.Header.Set("X-API-Key", apiKey)
+	w = httptest.NewRecorder()
+	s.handleLicenseActions(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected replacement-token 200, got %d body=%s", w.Code, w.Body.String())
+	}
+	var tokenResp struct {
+		Token       string                  `json:"token"`
+		TokenRecord *DeviceReplacementToken `json:"token_record"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &tokenResp); err != nil {
+		t.Fatalf("decode token response failed: %v", err)
+	}
+	if tokenResp.Token == "" || tokenResp.TokenRecord == nil || tokenResp.TokenRecord.OldFingerprint != fp {
+		t.Fatalf("unexpected token response: %+v", tokenResp)
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "/api/licenses/"+license.ID+"/device-replacement-tokens", nil)
+	req.Header.Set("X-API-Key", apiKey)
+	w = httptest.NewRecorder()
+	s.handleLicenseActions(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected replacement-token list 200, got %d body=%s", w.Code, w.Body.String())
+	}
+	var tokens []*DeviceReplacementToken
+	if err := json.Unmarshal(w.Body.Bytes(), &tokens); err != nil {
+		t.Fatalf("decode token list failed: %v", err)
+	}
+	if len(tokens) != 1 || tokens[0].ID != tokenResp.TokenRecord.ID {
+		t.Fatalf("unexpected token list: %+v", tokens)
+	}
+}

@@ -453,7 +453,7 @@ Switch modes with `-mode=pro` or `-mode=standard` CLI flag.
 
 1. **Encryption at Rest** - All data encrypted with AES-256-GCM
 2. **Key Derivation** - Argon2id with NIST-compliant parameters (PBKDF2 in FIPS mode)
-3. **Device Binding** - Hardware fingerprint prevents vault copying
+3. **Device Binding** - Device proof key fingerprint prevents vault copying; hardware fingerprint is retained as diagnostic risk metadata
 4. **Audit Trail** - HMAC-signed logs with hash chains for tamper detection
 5. **Zero Trust** - No cloud dependencies, fully offline capable
 6. **Shamir Shares** - Distributed master key for disaster recovery (Solo+)

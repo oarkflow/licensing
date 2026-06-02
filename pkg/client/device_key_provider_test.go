@@ -35,12 +35,12 @@ func TestSoftwareDeviceKeyProviderBuildsVerifiableProof(t *testing.T) {
 	}
 
 	req := ActivationRequest{
-		Email:             "device@example.com",
-		ClientID:          "client-1",
-		LicenseKey:        "ABCD-EFGH-IJKL-MNOP-QRST-UVWX-YZ12-3456",
-		DeviceFingerprint: "softwaredevice0001",
-		ProductID:         "prod-1",
+		Email:      "device@example.com",
+		ClientID:   "client-1",
+		LicenseKey: "ABCD-EFGH-IJKL-MNOP-QRST-UVWX-YZ12-3456",
+		ProductID:  "prod-1",
 	}
+	req.DeviceFingerprint = licensingcore.DeviceProofFingerprint(provider.PublicKeyAlgorithm(), provider.PublicKeyBytes())
 	challenge := &DeviceChallengeResponse{
 		ChallengeID: "challenge-1",
 		Nonce:       "nonce-1",
@@ -124,8 +124,11 @@ func TestDeviceFingerprintIsDerivedFromStableProofKey(t *testing.T) {
 		t.Fatalf("newDeviceKeyProvider failed: %v", err)
 	}
 	defer closeDeviceKeyProvider(provider)
-	if want := licensingcore.DeviceProofPublicKeyID(provider.PublicKeyBytes()); first != want {
-		t.Fatalf("expected fingerprint to be proof key id, got %s want %s", first, want)
+	if want := licensingcore.DeviceProofFingerprint(provider.PublicKeyAlgorithm(), provider.PublicKeyBytes()); first != want {
+		t.Fatalf("expected fingerprint to be versioned proof key id, got %s want %s", first, want)
+	}
+	if gotLegacyPrefix := first[:6]; gotLegacyPrefix != "fp:v2:" {
+		t.Fatalf("expected versioned fingerprint, got %s", first)
 	}
 
 	identity, err := client.CurrentDeviceIdentity()
@@ -137,5 +140,107 @@ func TestDeviceFingerprintIsDerivedFromStableProofKey(t *testing.T) {
 	}
 	if identity.KeyProvider != "software-file" {
 		t.Fatalf("unexpected provider: %+v", identity)
+	}
+}
+
+func TestDeviceFingerprintUnaffectedByHardwareMetadata(t *testing.T) {
+	cfg := Config{
+		ConfigDir:         t.TempDir(),
+		DeviceKeyProvider: "software",
+	}
+	client, err := New(cfg)
+	if err != nil {
+		t.Fatalf("New failed: %v", err)
+	}
+	before, err := client.GetDeviceFingerprint()
+	if err != nil {
+		t.Fatalf("GetDeviceFingerprint before failed: %v", err)
+	}
+	t.Setenv("DEVICE_ID", "changed-hardware-signal")
+	t.Setenv("POD_NAME", "changed-pod")
+	after, err := client.GetDeviceFingerprint()
+	if err != nil {
+		t.Fatalf("GetDeviceFingerprint after failed: %v", err)
+	}
+	if before != after {
+		t.Fatalf("expected proof-key fingerprint to ignore hardware metadata drift, got %s then %s", before, after)
+	}
+}
+
+func TestDeviceFingerprintSurvivesContainerRebuildWithPersistentKeyDir(t *testing.T) {
+	persistentKeyDir := t.TempDir()
+	deviceKeyFile := filepath.Join(persistentKeyDir, defaultDeviceKeyFile)
+
+	firstClient, err := New(Config{
+		ConfigDir:         t.TempDir(),
+		DeviceKeyProvider: "software",
+		DeviceKeyFile:     deviceKeyFile,
+	})
+	if err != nil {
+		t.Fatalf("New first client failed: %v", err)
+	}
+	first, err := firstClient.GetDeviceFingerprint()
+	if err != nil {
+		t.Fatalf("GetDeviceFingerprint first failed: %v", err)
+	}
+
+	rebuiltClient, err := New(Config{
+		ConfigDir:         t.TempDir(),
+		DeviceKeyProvider: "software",
+		DeviceKeyFile:     deviceKeyFile,
+	})
+	if err != nil {
+		t.Fatalf("New rebuilt client failed: %v", err)
+	}
+	afterRebuild, err := rebuiltClient.GetDeviceFingerprint()
+	if err != nil {
+		t.Fatalf("GetDeviceFingerprint after rebuild failed: %v", err)
+	}
+
+	if first != afterRebuild {
+		t.Fatalf("expected persistent key dir to preserve fingerprint across rebuild, got %s then %s", first, afterRebuild)
+	}
+	if _, err := os.Stat(filepath.Join(persistentKeyDir, defaultDeviceKeyFile)); err != nil {
+		t.Fatalf("expected device proof key in persistent dir: %v", err)
+	}
+}
+
+func TestDeviceKeyEnvironmentDoesNotOverrideConfiguredPath(t *testing.T) {
+	configDir := t.TempDir()
+	keyPath := filepath.Join(t.TempDir(), "configured-device-key.pem")
+	envKeyPath := filepath.Join(t.TempDir(), "env-device-key.pem")
+	t.Setenv("LICENSE_CLIENT_DEVICE_KEY_FILE", envKeyPath)
+	t.Setenv("LICENSE_CLIENT_DEVICE_KEY_DIR", filepath.Join(t.TempDir(), "ignored"))
+
+	if got := softwareDeviceKeyPath(Config{ConfigDir: configDir, DeviceKeyFile: keyPath}); got != keyPath {
+		t.Fatalf("expected configured device key file to win, got %s want %s", got, keyPath)
+	}
+	provider, err := newDeviceKeyProvider(Config{
+		ConfigDir:         configDir,
+		DeviceKeyProvider: "software",
+		DeviceKeyFile:     keyPath,
+	})
+	if err != nil {
+		t.Fatalf("newDeviceKeyProvider failed: %v", err)
+	}
+	defer closeDeviceKeyProvider(provider)
+	if _, err := os.Stat(keyPath); err != nil {
+		t.Fatalf("expected configured key file to be created: %v", err)
+	}
+	if _, err := os.Stat(envKeyPath); err == nil {
+		t.Fatalf("environment-selected key path must not be created")
+	}
+}
+
+func TestFormatIdentifierConfidenceIsStable(t *testing.T) {
+	got := formatIdentifierConfidence(map[string]string{
+		"machine_id":           "medium",
+		"dmi_uuid":             "high",
+		"container_id":         "low",
+		"configured_device_id": "high",
+	})
+	want := "configured_device_id:high,container_id:low,dmi_uuid:high,machine_id:medium"
+	if got != want {
+		t.Fatalf("unexpected confidence format: got %q want %q", got, want)
 	}
 }

@@ -24,7 +24,7 @@ This guide provides comprehensive documentation for integrating the Licensing sy
 
 The Licensing SDK provides a secure, cross-platform solution for software license management. Key features include:
 
-- **Hardware-bound licenses**: Licenses are cryptographically tied to specific devices using hardware fingerprinting
+- **Proof-key-bound licenses**: Licenses are tied to a stable device proof key using `fp:v2:<algorithm>:<sha256-public-key>`; hardware fingerprinting is diagnostic risk metadata only
 - **Encrypted transport**: All license data is encrypted with AES-256-GCM during transit and at rest
 - **RSA-PSS signatures**: License authenticity is verified using RSA-PSS with SHA-256
 - **Offline capability**: Once activated, licenses work offline until the next verification checkpoint
@@ -149,19 +149,9 @@ use Oarkflow\Licensing\Crypto;
 
 ## Configuration
 
-### Environment Variables
+### Client Configuration
 
-All SDKs support consistent environment variable configuration:
-
-| Variable | Description | Default |
-|----------|-------------|---------|
-| `LICENSE_CLIENT_SERVER` | License server URL | `https://localhost:6601` |
-| `LICENSE_CLIENT_CONFIG_DIR` | Directory for license storage | `~/.licensing` |
-| `LICENSE_CLIENT_LICENSE_FILE` | License filename | `.license.dat` |
-| `LICENSE_CLIENT_EMAIL` | Activation email | — |
-| `LICENSE_CLIENT_ID` | Client identifier | — |
-| `LICENSE_CLIENT_LICENSE_KEY` | License key for activation | — |
-| `LICENSE_CLIENT_ALLOW_INSECURE_HTTP` | Allow non-TLS connections | `false` |
+Pass security-sensitive SDK configuration explicitly in code or CLI flags. The SDK does not read environment variables for verification endpoints, license storage paths, device proof key selection, or hardware identity.
 
 ### Go Configuration
 
@@ -192,8 +182,8 @@ const client = new LicensingClient({
 
 ```php
 // Configuration is typically passed directly to methods
-$serverUrl = getenv('LICENSE_CLIENT_SERVER') ?: 'https://localhost:6601';
-$configDir = getenv('LICENSE_CLIENT_CONFIG_DIR') ?: $_SERVER['HOME'] . '/.licensing';
+$serverUrl = 'https://licensing.example.com';
+$configDir = $_SERVER['HOME'] . '/.licensing';
 ```
 
 ---
@@ -1038,8 +1028,8 @@ if license.IsRevoked {
 // ❌ Don't do this:
 licenseKey := "ABCD-EFGH-..."
 
-// ✅ Use environment variables or secure config:
-licenseKey := os.Getenv("LICENSE_KEY")
+// ✅ Load from your application's secure configuration or secret manager:
+licenseKey := secureConfig.LicenseKey()
 ```
 
 ### 6. Implement Checksum Verification

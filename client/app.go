@@ -23,7 +23,6 @@ import (
 var sharedClient *client.Client
 
 func main() {
-	os.Setenv(EnvAllowInsecureHTTP, "true")
 	flag.Parse()
 	activation.SetLicenseFilePath(strings.TrimSpace(*licenseInfoFileFlag))
 

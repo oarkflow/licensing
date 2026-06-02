@@ -14,6 +14,7 @@ import type {
     CreateProductRequest,
     CreateScopeRequest,
     DashboardStats,
+    DeviceReplacementToken,
     EmailComposeRequest,
     EmailComposeResponse,
     EmailProvider,
@@ -289,6 +290,41 @@ class ApiService {
             method: 'POST',
             body: JSON.stringify({ fingerprint }),
         });
+    }
+
+    async revokeDevice(
+        licenseId: string,
+        fingerprint: string,
+        reason?: string
+    ): Promise<ApiResponse<License>> {
+        return this.request<License>(`/api/licenses/${licenseId}/devices/${encodeURIComponent(fingerprint)}/revoke`, {
+            method: 'POST',
+            body: JSON.stringify({ reason }),
+        });
+    }
+
+    async reinstateDevice(
+        licenseId: string,
+        fingerprint: string
+    ): Promise<ApiResponse<License>> {
+        return this.request<License>(`/api/licenses/${licenseId}/devices/${encodeURIComponent(fingerprint)}/reinstate`, {
+            method: 'POST',
+        });
+    }
+
+    async issueDeviceReplacementToken(
+        licenseId: string,
+        fingerprint: string,
+        ttlHours?: number
+    ): Promise<ApiResponse<{ token: string; token_record: DeviceReplacementToken }>> {
+        return this.request(`/api/licenses/${licenseId}/devices/${encodeURIComponent(fingerprint)}/replacement-token`, {
+            method: 'POST',
+            body: JSON.stringify({ ttl_hours: ttlHours }),
+        });
+    }
+
+    async listDeviceReplacementTokens(licenseId: string): Promise<ApiResponse<DeviceReplacementToken[]>> {
+        return this.request(`/api/licenses/${licenseId}/device-replacement-tokens`);
     }
 
     async updateLicenseEntitlements(

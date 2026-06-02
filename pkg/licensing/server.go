@@ -1295,6 +1295,7 @@ func (s *Server) handleActivate(w http.ResponseWriter, r *http.Request) {
 	req.LicenseKey = normalizeLicenseKey(req.LicenseKey)
 	req.IPAddress = clientIP(r)
 	req.UserAgent = r.UserAgent()
+	req.AppVersion = strings.TrimSpace(r.Header.Get("X-App-Version"))
 
 	resp, err := s.lm.ActivateLicense(r.Context(), &req)
 	if err != nil {
@@ -2107,6 +2108,7 @@ func (s *Server) handleVerify(w http.ResponseWriter, r *http.Request) {
 	req.LicenseKey = normalizeLicenseKey(req.LicenseKey)
 	req.IPAddress = clientIP(r)
 	req.UserAgent = r.UserAgent()
+	req.AppVersion = strings.TrimSpace(r.Header.Get("X-App-Version"))
 	resp, err := s.lm.VerifyLicense(r.Context(), &req)
 	if err != nil {
 		s.respondClientError(w, http.StatusInternalServerError, err.Error(), transportKey)
@@ -3187,6 +3189,71 @@ func (s *Server) handleLicenseActions(w http.ResponseWriter, r *http.Request) {
 	// Handle /api/licenses/{id}/{action}
 	action := parts[1]
 
+	if action == "devices" && len(parts) >= 4 {
+		fingerprint := strings.TrimSpace(parts[2])
+		deviceAction := parts[3]
+		if fingerprint == "" {
+			s.respondError(w, http.StatusBadRequest, "fingerprint is required")
+			return
+		}
+		switch deviceAction {
+		case "revoke":
+			if r.Method != http.MethodPost {
+				s.respondError(w, http.StatusMethodNotAllowed, "Method not allowed")
+				return
+			}
+			var req licenseMutationRequest
+			if !s.decodeJSONBody(w, r, &req, maxAdminPayloadBytes) {
+				return
+			}
+			license, err := s.lm.RevokeDevice(r.Context(), licenseID, fingerprint, req.Reason)
+			if err != nil {
+				s.respondError(w, http.StatusBadRequest, err.Error())
+				return
+			}
+			s.respondJSON(w, http.StatusOK, license)
+		case "reinstate":
+			if r.Method != http.MethodPost {
+				s.respondError(w, http.StatusMethodNotAllowed, "Method not allowed")
+				return
+			}
+			license, err := s.lm.ReinstateDevice(r.Context(), licenseID, fingerprint)
+			if err != nil {
+				s.respondError(w, http.StatusBadRequest, err.Error())
+				return
+			}
+			s.respondJSON(w, http.StatusOK, license)
+		case "replacement-token":
+			if r.Method != http.MethodPost {
+				s.respondError(w, http.StatusMethodNotAllowed, "Method not allowed")
+				return
+			}
+			var req struct {
+				TTLHours  int    `json:"ttl_hours,omitempty"`
+				CreatedBy string `json:"created_by,omitempty"`
+			}
+			if !s.decodeJSONBody(w, r, &req, maxAdminPayloadBytes) {
+				return
+			}
+			ttl := 24 * time.Hour
+			if req.TTLHours > 0 {
+				ttl = time.Duration(req.TTLHours) * time.Hour
+			}
+			token, value, err := s.lm.IssueDeviceReplacementToken(r.Context(), licenseID, fingerprint, req.CreatedBy, ttl)
+			if err != nil {
+				s.respondError(w, http.StatusBadRequest, err.Error())
+				return
+			}
+			s.respondJSON(w, http.StatusOK, map[string]interface{}{
+				"token":        value,
+				"token_record": token,
+			})
+		default:
+			http.NotFound(w, r)
+		}
+		return
+	}
+
 	switch action {
 	case "revoke":
 		if r.Method != http.MethodPost {
@@ -3230,6 +3297,20 @@ func (s *Server) handleLicenseActions(w http.ResponseWriter, r *http.Request) {
 			activations = []*ActivationRecord{}
 		}
 		s.respondJSON(w, http.StatusOK, activations)
+	case "device-replacement-tokens":
+		if r.Method != http.MethodGet {
+			s.respondError(w, http.StatusMethodNotAllowed, "Method not allowed")
+			return
+		}
+		tokens, err := s.lm.ListDeviceReplacementTokens(r.Context(), licenseID)
+		if err != nil {
+			s.respondError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		if tokens == nil {
+			tokens = []*DeviceReplacementToken{}
+		}
+		s.respondJSON(w, http.StatusOK, tokens)
 	case "delete-device":
 		if r.Method != http.MethodPost {
 			s.respondError(w, http.StatusMethodNotAllowed, "Method not allowed")

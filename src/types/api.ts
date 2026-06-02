@@ -94,6 +94,36 @@ export interface LicenseDevice {
     fingerprint: string;
     activated_at: string;
     last_seen_at: string;
+    status?: 'trusted' | 'revoked' | 'replacement_pending' | 'replaced' | 'suspicious';
+    label?: string;
+    hardware_fingerprint?: string;
+    hardware_confidence?: string;
+    last_ip?: string;
+    last_user_agent?: string;
+    app_version?: string;
+    proof_version?: number;
+    device_key_id?: string;
+    public_key_algorithm?: string;
+    key_provider?: string;
+    attestation_type?: string;
+    attestation_status?: string;
+    last_proof_at?: string;
+    revoked_at?: string;
+    revoked_reason?: string;
+    replaced_by_fingerprint?: string;
+    replacement_token_id?: string;
+}
+
+export interface DeviceReplacementToken {
+    id: string;
+    license_id: string;
+    old_fingerprint: string;
+    replacement_fingerprint?: string;
+    created_at: string;
+    expires_at: string;
+    used_at?: string;
+    created_by?: string;
+    revoked_at?: string;
 }
 
 export interface LicenseIdentity {

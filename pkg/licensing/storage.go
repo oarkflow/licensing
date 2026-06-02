@@ -156,44 +156,64 @@ type Storage interface {
 	LeaseNextEmail(ctx context.Context, dueBefore time.Time) (*email.EmailMessage, error)
 	AppendEmailEvent(ctx context.Context, event *email.EmailEvent) error
 	ListEmailEvents(ctx context.Context, messageID string) ([]*email.EmailEvent, error)
+
+	SaveDeviceReplacementToken(ctx context.Context, token *DeviceReplacementToken) error
+	UpdateDeviceReplacementToken(ctx context.Context, token *DeviceReplacementToken) error
+	GetDeviceReplacementToken(ctx context.Context, tokenID string) (*DeviceReplacementToken, error)
+	GetDeviceReplacementTokenByHash(ctx context.Context, tokenHash string) (*DeviceReplacementToken, error)
+	ListDeviceReplacementTokensByLicense(ctx context.Context, licenseID string) ([]*DeviceReplacementToken, error)
 }
 
 var (
-	errClientExists            = errors.New("client already exists")
-	errClientMissing           = errors.New("client not found")
-	errLicenseExists           = errors.New("license already exists")
-	errLicenseMissing          = errors.New("license not found")
-	errUserExists              = errors.New("user already exists")
-	errUserMissing             = errors.New("user not found")
-	errAPIKeyExists            = errors.New("api key already exists")
-	errAPIKeyMissing           = errors.New("api key not found")
-	errProductExists           = errors.New("product already exists")
-	errProductMissing          = errors.New("product not found")
-	errPlanExists              = errors.New("plan already exists")
-	errPlanMissing             = errors.New("plan not found")
-	errFeatureExists           = errors.New("feature already exists")
-	errFeatureMissing          = errors.New("feature not found")
-	errFeatureScopeExists      = errors.New("feature scope already exists")
-	errFeatureScopeMissing     = errors.New("feature scope not found")
-	errPlanFeatureExists       = errors.New("plan feature already exists")
-	errPlanFeatureMissing      = errors.New("plan feature not found")
-	errDeviceTrialExists       = errors.New("device has already used trial")
-	errDeviceTrialMissing      = errors.New("device trial not found")
-	errEmailProviderExists     = errors.New("email provider already exists")
-	errEmailProviderMissing    = errors.New("email provider not found")
-	errEmailTemplateExists     = errors.New("email template already exists")
-	errEmailTemplateMissing    = errors.New("email template not found")
-	errEmailRouteExists        = errors.New("email route already exists")
-	errEmailRouteMissing       = errors.New("email route not found")
-	errEmailMessageMissing     = errors.New("email message not found")
-	errEmailStorageUnsupported = errors.New("email storage is not supported by this backend")
-	errOfflineTokenExists      = errors.New("offline validation token already exists")
-	errOfflineTokenMissing     = errors.New("offline validation token not found")
-	errOfflineLogMissing       = errors.New("offline validation log not found")
-	errCouponExists            = errors.New("coupon already exists")
-	errCouponMissing           = errors.New("coupon not found")
-	errCouponRedemptionExists  = errors.New("coupon redemption already exists")
+	errClientExists                  = errors.New("client already exists")
+	errClientMissing                 = errors.New("client not found")
+	errLicenseExists                 = errors.New("license already exists")
+	errLicenseMissing                = errors.New("license not found")
+	errUserExists                    = errors.New("user already exists")
+	errUserMissing                   = errors.New("user not found")
+	errAPIKeyExists                  = errors.New("api key already exists")
+	errAPIKeyMissing                 = errors.New("api key not found")
+	errProductExists                 = errors.New("product already exists")
+	errProductMissing                = errors.New("product not found")
+	errPlanExists                    = errors.New("plan already exists")
+	errPlanMissing                   = errors.New("plan not found")
+	errFeatureExists                 = errors.New("feature already exists")
+	errFeatureMissing                = errors.New("feature not found")
+	errFeatureScopeExists            = errors.New("feature scope already exists")
+	errFeatureScopeMissing           = errors.New("feature scope not found")
+	errPlanFeatureExists             = errors.New("plan feature already exists")
+	errPlanFeatureMissing            = errors.New("plan feature not found")
+	errDeviceTrialExists             = errors.New("device has already used trial")
+	errDeviceTrialMissing            = errors.New("device trial not found")
+	errEmailProviderExists           = errors.New("email provider already exists")
+	errEmailProviderMissing          = errors.New("email provider not found")
+	errEmailTemplateExists           = errors.New("email template already exists")
+	errEmailTemplateMissing          = errors.New("email template not found")
+	errEmailRouteExists              = errors.New("email route already exists")
+	errEmailRouteMissing             = errors.New("email route not found")
+	errEmailMessageMissing           = errors.New("email message not found")
+	errEmailStorageUnsupported       = errors.New("email storage is not supported by this backend")
+	errOfflineTokenExists            = errors.New("offline validation token already exists")
+	errOfflineTokenMissing           = errors.New("offline validation token not found")
+	errOfflineLogMissing             = errors.New("offline validation log not found")
+	errCouponExists                  = errors.New("coupon already exists")
+	errCouponMissing                 = errors.New("coupon not found")
+	errCouponRedemptionExists        = errors.New("coupon redemption already exists")
+	errDeviceReplacementTokenMissing = errors.New("device replacement token not found")
 )
+
+type DeviceReplacementToken struct {
+	ID                     string    `json:"id"`
+	TokenHash              string    `json:"-"`
+	LicenseID              string    `json:"license_id"`
+	OldFingerprint         string    `json:"old_fingerprint"`
+	ReplacementFingerprint string    `json:"replacement_fingerprint,omitempty"`
+	CreatedAt              time.Time `json:"created_at"`
+	ExpiresAt              time.Time `json:"expires_at"`
+	UsedAt                 time.Time `json:"used_at,omitempty"`
+	CreatedBy              string    `json:"created_by,omitempty"`
+	RevokedAt              time.Time `json:"revoked_at,omitempty"`
+}
 
 // DeviceTrial tracks devices that have used a trial license.
 // This prevents the same device from getting multiple trial licenses.
@@ -320,79 +340,84 @@ type InMemoryStorage struct {
 	signingKeys        map[string]*SigningKey
 	activeSigningKeyID string
 	// Email management
-	emailProviders             map[string]*email.EmailProvider
-	emailProvidersBySlug       map[string]string
-	emailTemplates             map[string]*email.EmailTemplate
-	emailTemplatesBySlug       map[string]string
-	emailRoutes                map[string]*email.EmailTemplateRoute
-	emailMessages              map[string]*email.EmailMessage
-	emailEvents                map[string][]*email.EmailEvent
-	coupons                    map[string]*CouponCode
-	couponsByCode              map[string]string
-	couponRedemptions          map[string]*CouponRedemption
-	couponRedemptionsByCoupon  map[string][]string
-	couponRedemptionsByLicense map[string][]string
-	couponRedemptionsByClient  map[string][]string
+	emailProviders                map[string]*email.EmailProvider
+	emailProvidersBySlug          map[string]string
+	emailTemplates                map[string]*email.EmailTemplate
+	emailTemplatesBySlug          map[string]string
+	emailRoutes                   map[string]*email.EmailTemplateRoute
+	emailMessages                 map[string]*email.EmailMessage
+	emailEvents                   map[string][]*email.EmailEvent
+	deviceReplacementTokens       map[string]*DeviceReplacementToken
+	deviceReplacementTokensByHash map[string]string
+	coupons                       map[string]*CouponCode
+	couponsByCode                 map[string]string
+	couponRedemptions             map[string]*CouponRedemption
+	couponRedemptionsByCoupon     map[string][]string
+	couponRedemptionsByLicense    map[string][]string
+	couponRedemptionsByClient     map[string][]string
 }
 
 func NewInMemoryStorage() *InMemoryStorage {
 	return &InMemoryStorage{
-		clients:                    make(map[string]*Client),
-		clientsByEmail:             make(map[string]string),
-		clientsByUsername:          make(map[string]string),
-		licenses:                   make(map[string]*License),
-		licensesByKey:              make(map[string]string),
-		activations:                make(map[string][]*ActivationRecord),
-		adminUsers:                 make(map[string]*AdminUser),
-		adminByName:                make(map[string]string),
-		apiKeys:                    make(map[string]*APIKeyRecord),
-		apiKeysByHash:              make(map[string]string),
-		apiKeysByUser:              make(map[string]map[string]struct{}),
-		apiKeysByClient:            make(map[string]map[string]struct{}),
-		products:                   make(map[string]*Product),
-		productsBySlug:             make(map[string]string),
-		plans:                      make(map[string]*Plan),
-		plansBySlug:                make(map[string]string),
-		features:                   make(map[string]*Feature),
-		featuresBySlug:             make(map[string]string),
-		featureScopes:              make(map[string]*FeatureScope),
-		planFeatures:               make(map[string]*PlanFeature),
-		deviceTrials:               make(map[string]*DeviceTrial),
-		offlineValidationTokens:    make(map[string]*OfflineValidationToken),
-		offlineValidationLogs:      make(map[string][]*OfflineValidationLog),
-		emailProviders:             make(map[string]*email.EmailProvider),
-		emailProvidersBySlug:       make(map[string]string),
-		emailTemplates:             make(map[string]*email.EmailTemplate),
-		emailTemplatesBySlug:       make(map[string]string),
-		emailRoutes:                make(map[string]*email.EmailTemplateRoute),
-		emailMessages:              make(map[string]*email.EmailMessage),
-		emailEvents:                make(map[string][]*email.EmailEvent),
-		coupons:                    make(map[string]*CouponCode),
-		couponsByCode:              make(map[string]string),
-		couponRedemptions:          make(map[string]*CouponRedemption),
-		couponRedemptionsByCoupon:  make(map[string][]string),
-		couponRedemptionsByLicense: make(map[string][]string),
-		couponRedemptionsByClient:  make(map[string][]string),
-		signingKeys:                make(map[string]*SigningKey),
-		activeSigningKeyID:         "",
+		clients:                       make(map[string]*Client),
+		clientsByEmail:                make(map[string]string),
+		clientsByUsername:             make(map[string]string),
+		licenses:                      make(map[string]*License),
+		licensesByKey:                 make(map[string]string),
+		activations:                   make(map[string][]*ActivationRecord),
+		adminUsers:                    make(map[string]*AdminUser),
+		adminByName:                   make(map[string]string),
+		apiKeys:                       make(map[string]*APIKeyRecord),
+		apiKeysByHash:                 make(map[string]string),
+		apiKeysByUser:                 make(map[string]map[string]struct{}),
+		apiKeysByClient:               make(map[string]map[string]struct{}),
+		products:                      make(map[string]*Product),
+		productsBySlug:                make(map[string]string),
+		plans:                         make(map[string]*Plan),
+		plansBySlug:                   make(map[string]string),
+		features:                      make(map[string]*Feature),
+		featuresBySlug:                make(map[string]string),
+		featureScopes:                 make(map[string]*FeatureScope),
+		planFeatures:                  make(map[string]*PlanFeature),
+		deviceTrials:                  make(map[string]*DeviceTrial),
+		offlineValidationTokens:       make(map[string]*OfflineValidationToken),
+		offlineValidationLogs:         make(map[string][]*OfflineValidationLog),
+		emailProviders:                make(map[string]*email.EmailProvider),
+		emailProvidersBySlug:          make(map[string]string),
+		emailTemplates:                make(map[string]*email.EmailTemplate),
+		emailTemplatesBySlug:          make(map[string]string),
+		emailRoutes:                   make(map[string]*email.EmailTemplateRoute),
+		emailMessages:                 make(map[string]*email.EmailMessage),
+		emailEvents:                   make(map[string][]*email.EmailEvent),
+		deviceReplacementTokens:       make(map[string]*DeviceReplacementToken),
+		deviceReplacementTokensByHash: make(map[string]string),
+		coupons:                       make(map[string]*CouponCode),
+		couponsByCode:                 make(map[string]string),
+		couponRedemptions:             make(map[string]*CouponRedemption),
+		couponRedemptionsByCoupon:     make(map[string][]string),
+		couponRedemptionsByLicense:    make(map[string][]string),
+		couponRedemptionsByClient:     make(map[string][]string),
+		signingKeys:                   make(map[string]*SigningKey),
+		activeSigningKeyID:            "",
 	}
 }
 
 type storageSnapshot struct {
-	Clients            map[string]*Client                   `json:"clients"`
-	Licenses           map[string]*License                  `json:"licenses"`
-	Activations        map[string][]*ActivationRecord       `json:"activations"`
-	AdminUsers         map[string]*AdminUser                `json:"admin_users"`
-	APIKeys            map[string]*APIKeyRecord             `json:"api_keys"`
-	EmailProviders     map[string]*email.EmailProvider      `json:"email_providers,omitempty"`
-	EmailTemplates     map[string]*email.EmailTemplate      `json:"email_templates,omitempty"`
-	EmailRoutes        map[string]*email.EmailTemplateRoute `json:"email_routes,omitempty"`
-	EmailMessages      map[string]*email.EmailMessage       `json:"email_messages,omitempty"`
-	EmailEvents        map[string][]*email.EmailEvent       `json:"email_events,omitempty"`
-	SigningKeys        map[string]*SigningKey               `json:"signing_keys,omitempty"`
-	ActiveSigningKeyID string                               `json:"active_signing_key_id,omitempty"`
-	Coupons            map[string]*CouponCode               `json:"coupons,omitempty"`
-	CouponRedemptions  map[string]*CouponRedemption         `json:"coupon_redemptions,omitempty"`
+	Clients                 map[string]*Client                   `json:"clients"`
+	Licenses                map[string]*License                  `json:"licenses"`
+	Activations             map[string][]*ActivationRecord       `json:"activations"`
+	AdminUsers              map[string]*AdminUser                `json:"admin_users"`
+	APIKeys                 map[string]*APIKeyRecord             `json:"api_keys"`
+	EmailProviders          map[string]*email.EmailProvider      `json:"email_providers,omitempty"`
+	EmailTemplates          map[string]*email.EmailTemplate      `json:"email_templates,omitempty"`
+	EmailRoutes             map[string]*email.EmailTemplateRoute `json:"email_routes,omitempty"`
+	EmailMessages           map[string]*email.EmailMessage       `json:"email_messages,omitempty"`
+	EmailEvents             map[string][]*email.EmailEvent       `json:"email_events,omitempty"`
+	SigningKeys             map[string]*SigningKey               `json:"signing_keys,omitempty"`
+	ActiveSigningKeyID      string                               `json:"active_signing_key_id,omitempty"`
+	Coupons                 map[string]*CouponCode               `json:"coupons,omitempty"`
+	CouponRedemptions       map[string]*CouponRedemption         `json:"coupon_redemptions,omitempty"`
+	DeviceReplacementTokens map[string]*DeviceReplacementToken   `json:"device_replacement_tokens,omitempty"`
 }
 
 func (s *InMemoryStorage) SaveClient(_ context.Context, client *Client) error {
@@ -1152,6 +1177,14 @@ func cloneDeviceTrial(trial *DeviceTrial) *DeviceTrial {
 	return &clone
 }
 
+func cloneDeviceReplacementToken(token *DeviceReplacementToken) *DeviceReplacementToken {
+	if token == nil {
+		return nil
+	}
+	clone := *token
+	return &clone
+}
+
 func cloneOfflineValidationToken(token *OfflineValidationToken) *OfflineValidationToken {
 	if token == nil {
 		return nil
@@ -1206,6 +1239,79 @@ func (s *InMemoryStorage) ListDeviceTrials(_ context.Context) ([]*DeviceTrial, e
 		trials = append(trials, cloneDeviceTrial(trial))
 	}
 	return trials, nil
+}
+
+func (s *InMemoryStorage) SaveDeviceReplacementToken(_ context.Context, token *DeviceReplacementToken) error {
+	if token == nil {
+		return fmt.Errorf("device replacement token is nil")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, exists := s.deviceReplacementTokens[token.ID]; exists {
+		return fmt.Errorf("device replacement token already exists")
+	}
+	if token.TokenHash == "" {
+		return fmt.Errorf("device replacement token hash is required")
+	}
+	if _, exists := s.deviceReplacementTokensByHash[token.TokenHash]; exists {
+		return fmt.Errorf("device replacement token already exists")
+	}
+	s.deviceReplacementTokens[token.ID] = cloneDeviceReplacementToken(token)
+	s.deviceReplacementTokensByHash[token.TokenHash] = token.ID
+	return nil
+}
+
+func (s *InMemoryStorage) UpdateDeviceReplacementToken(_ context.Context, token *DeviceReplacementToken) error {
+	if token == nil {
+		return fmt.Errorf("device replacement token is nil")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	current, exists := s.deviceReplacementTokens[token.ID]
+	if !exists {
+		return errDeviceReplacementTokenMissing
+	}
+	if current.TokenHash != token.TokenHash {
+		delete(s.deviceReplacementTokensByHash, current.TokenHash)
+		s.deviceReplacementTokensByHash[token.TokenHash] = token.ID
+	}
+	s.deviceReplacementTokens[token.ID] = cloneDeviceReplacementToken(token)
+	return nil
+}
+
+func (s *InMemoryStorage) GetDeviceReplacementToken(_ context.Context, tokenID string) (*DeviceReplacementToken, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	token, exists := s.deviceReplacementTokens[tokenID]
+	if !exists {
+		return nil, errDeviceReplacementTokenMissing
+	}
+	return cloneDeviceReplacementToken(token), nil
+}
+
+func (s *InMemoryStorage) GetDeviceReplacementTokenByHash(_ context.Context, tokenHash string) (*DeviceReplacementToken, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	tokenID, exists := s.deviceReplacementTokensByHash[tokenHash]
+	if !exists {
+		return nil, errDeviceReplacementTokenMissing
+	}
+	return cloneDeviceReplacementToken(s.deviceReplacementTokens[tokenID]), nil
+}
+
+func (s *InMemoryStorage) ListDeviceReplacementTokensByLicense(_ context.Context, licenseID string) ([]*DeviceReplacementToken, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	tokens := make([]*DeviceReplacementToken, 0)
+	for _, token := range s.deviceReplacementTokens {
+		if token.LicenseID == licenseID {
+			tokens = append(tokens, cloneDeviceReplacementToken(token))
+		}
+	}
+	sort.Slice(tokens, func(i, j int) bool {
+		return tokens[i].CreatedAt.After(tokens[j].CreatedAt)
+	})
+	return tokens, nil
 }
 
 // OfflineValidationToken methods for InMemoryStorage
@@ -1448,16 +1554,17 @@ func (s *InMemoryStorage) snapshot() *storageSnapshot {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	snapshot := &storageSnapshot{
-		Clients:        make(map[string]*Client, len(s.clients)),
-		Licenses:       make(map[string]*License, len(s.licenses)),
-		Activations:    make(map[string][]*ActivationRecord, len(s.activations)),
-		AdminUsers:     make(map[string]*AdminUser, len(s.adminUsers)),
-		APIKeys:        make(map[string]*APIKeyRecord, len(s.apiKeys)),
-		EmailProviders: make(map[string]*email.EmailProvider, len(s.emailProviders)),
-		EmailTemplates: make(map[string]*email.EmailTemplate, len(s.emailTemplates)),
-		EmailRoutes:    make(map[string]*email.EmailTemplateRoute, len(s.emailRoutes)),
-		EmailMessages:  make(map[string]*email.EmailMessage, len(s.emailMessages)),
-		EmailEvents:    make(map[string][]*email.EmailEvent, len(s.emailEvents)),
+		Clients:                 make(map[string]*Client, len(s.clients)),
+		Licenses:                make(map[string]*License, len(s.licenses)),
+		Activations:             make(map[string][]*ActivationRecord, len(s.activations)),
+		AdminUsers:              make(map[string]*AdminUser, len(s.adminUsers)),
+		APIKeys:                 make(map[string]*APIKeyRecord, len(s.apiKeys)),
+		EmailProviders:          make(map[string]*email.EmailProvider, len(s.emailProviders)),
+		EmailTemplates:          make(map[string]*email.EmailTemplate, len(s.emailTemplates)),
+		EmailRoutes:             make(map[string]*email.EmailTemplateRoute, len(s.emailRoutes)),
+		EmailMessages:           make(map[string]*email.EmailMessage, len(s.emailMessages)),
+		EmailEvents:             make(map[string][]*email.EmailEvent, len(s.emailEvents)),
+		DeviceReplacementTokens: make(map[string]*DeviceReplacementToken, len(s.deviceReplacementTokens)),
 	}
 	for id, client := range s.clients {
 		snapshot.Clients[id] = cloneClient(client)
@@ -1496,6 +1603,9 @@ func (s *InMemoryStorage) snapshot() *storageSnapshot {
 			copies = append(copies, evt.Clone())
 		}
 		snapshot.EmailEvents[id] = copies
+	}
+	for id, token := range s.deviceReplacementTokens {
+		snapshot.DeviceReplacementTokens[id] = cloneDeviceReplacementToken(token)
 	}
 	if len(s.coupons) > 0 {
 		snapshot.Coupons = make(map[string]*CouponCode, len(s.coupons))
@@ -1603,6 +1713,13 @@ func (s *InMemoryStorage) loadSnapshot(snapshot *storageSnapshot) {
 			copies = append(copies, evt.Clone())
 		}
 		s.emailEvents[id] = copies
+	}
+	s.deviceReplacementTokens = make(map[string]*DeviceReplacementToken, len(snapshot.DeviceReplacementTokens))
+	s.deviceReplacementTokensByHash = make(map[string]string, len(snapshot.DeviceReplacementTokens))
+	for id, token := range snapshot.DeviceReplacementTokens {
+		cloned := cloneDeviceReplacementToken(token)
+		s.deviceReplacementTokens[id] = cloned
+		s.deviceReplacementTokensByHash[cloned.TokenHash] = id
 	}
 	s.coupons = make(map[string]*CouponCode, len(snapshot.Coupons))
 	s.couponsByCode = make(map[string]string, len(snapshot.Coupons))
@@ -2084,6 +2201,32 @@ func (ps *PersistentStorage) AppendEmailEvent(ctx context.Context, event *email.
 
 func (ps *PersistentStorage) ListEmailEvents(ctx context.Context, messageID string) ([]*email.EmailEvent, error) {
 	return ps.backend.ListEmailEvents(ctx, messageID)
+}
+
+func (ps *PersistentStorage) SaveDeviceReplacementToken(ctx context.Context, token *DeviceReplacementToken) error {
+	if err := ps.backend.SaveDeviceReplacementToken(ctx, token); err != nil {
+		return err
+	}
+	return ps.persist()
+}
+
+func (ps *PersistentStorage) UpdateDeviceReplacementToken(ctx context.Context, token *DeviceReplacementToken) error {
+	if err := ps.backend.UpdateDeviceReplacementToken(ctx, token); err != nil {
+		return err
+	}
+	return ps.persist()
+}
+
+func (ps *PersistentStorage) GetDeviceReplacementToken(ctx context.Context, tokenID string) (*DeviceReplacementToken, error) {
+	return ps.backend.GetDeviceReplacementToken(ctx, tokenID)
+}
+
+func (ps *PersistentStorage) GetDeviceReplacementTokenByHash(ctx context.Context, tokenHash string) (*DeviceReplacementToken, error) {
+	return ps.backend.GetDeviceReplacementTokenByHash(ctx, tokenHash)
+}
+
+func (ps *PersistentStorage) ListDeviceReplacementTokensByLicense(ctx context.Context, licenseID string) ([]*DeviceReplacementToken, error) {
+	return ps.backend.ListDeviceReplacementTokensByLicense(ctx, licenseID)
 }
 
 func (ps *PersistentStorage) persist() error {

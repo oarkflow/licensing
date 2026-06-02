@@ -105,6 +105,13 @@ func ensureSQLiteSchema(db *squealx.DB) error {
             activated_at TIMESTAMP NOT NULL,
             last_seen_at TIMESTAMP NOT NULL,
             transport_key BLOB NOT NULL,
+			status TEXT NOT NULL DEFAULT 'trusted',
+			label TEXT,
+			hardware_fingerprint TEXT,
+			hardware_confidence TEXT,
+			last_ip TEXT,
+			last_user_agent TEXT,
+			app_version TEXT,
 			proof_version INTEGER NOT NULL DEFAULT 0,
 			device_key_id TEXT,
 			device_public_key BLOB,
@@ -113,9 +120,26 @@ func ensureSQLiteSchema(db *squealx.DB) error {
 			attestation_type TEXT,
 			attestation_status TEXT,
 			last_proof_at TIMESTAMP,
+			revoked_at TIMESTAMP,
+			revoked_reason TEXT,
+			replaced_by_fingerprint TEXT,
+			replacement_token_id TEXT,
             PRIMARY KEY(license_id, fingerprint),
             FOREIGN KEY(license_id) REFERENCES licenses(id) ON DELETE CASCADE
         );`,
+		`CREATE TABLE IF NOT EXISTS device_replacement_tokens (
+			id TEXT PRIMARY KEY,
+			token_hash TEXT NOT NULL UNIQUE,
+			license_id TEXT NOT NULL,
+			old_fingerprint TEXT NOT NULL,
+			replacement_fingerprint TEXT,
+			created_at TIMESTAMP NOT NULL,
+			expires_at TIMESTAMP NOT NULL,
+			used_at TIMESTAMP,
+			created_by TEXT,
+			revoked_at TIMESTAMP,
+			FOREIGN KEY(license_id) REFERENCES licenses(id) ON DELETE CASCADE
+		);`,
 		`CREATE TABLE IF NOT EXISTS license_authorized_users (
 			license_id TEXT NOT NULL,
 			email TEXT NOT NULL,
@@ -350,6 +374,13 @@ func ensureSQLiteSchema(db *squealx.DB) error {
 		name string
 		def  string
 	}{
+		{"status", "TEXT NOT NULL DEFAULT 'trusted'"},
+		{"label", "TEXT"},
+		{"hardware_fingerprint", "TEXT"},
+		{"hardware_confidence", "TEXT"},
+		{"last_ip", "TEXT"},
+		{"last_user_agent", "TEXT"},
+		{"app_version", "TEXT"},
 		{"proof_version", "INTEGER NOT NULL DEFAULT 0"},
 		{"device_key_id", "TEXT"},
 		{"device_public_key", "BLOB"},
@@ -358,10 +389,32 @@ func ensureSQLiteSchema(db *squealx.DB) error {
 		{"attestation_type", "TEXT"},
 		{"attestation_status", "TEXT"},
 		{"last_proof_at", "TIMESTAMP"},
+		{"revoked_at", "TIMESTAMP"},
+		{"revoked_reason", "TEXT"},
+		{"replaced_by_fingerprint", "TEXT"},
+		{"replacement_token_id", "TEXT"},
 	} {
 		if err := ensureSQLiteColumn(db, "license_devices", col.name, col.def); err != nil {
 			return err
 		}
+	}
+	if _, err := db.Exec(`CREATE TABLE IF NOT EXISTS device_replacement_tokens (
+		id TEXT PRIMARY KEY,
+		token_hash TEXT NOT NULL UNIQUE,
+		license_id TEXT NOT NULL,
+		old_fingerprint TEXT NOT NULL,
+		replacement_fingerprint TEXT,
+		created_at TIMESTAMP NOT NULL,
+		expires_at TIMESTAMP NOT NULL,
+		used_at TIMESTAMP,
+		created_by TEXT,
+		revoked_at TIMESTAMP,
+		FOREIGN KEY(license_id) REFERENCES licenses(id) ON DELETE CASCADE
+	);`); err != nil {
+		return fmt.Errorf("failed to create device_replacement_tokens table: %w", err)
+	}
+	if _, err := db.Exec(`CREATE INDEX IF NOT EXISTS idx_device_replacement_tokens_license ON device_replacement_tokens(license_id);`); err != nil {
+		return fmt.Errorf("failed to create device replacement token license index: %w", err)
 	}
 	// Create device_trials table to track devices that have used trial licenses
 	_, err = db.Exec(`CREATE TABLE IF NOT EXISTS device_trials (
@@ -534,6 +587,28 @@ func nullString(s string) any {
 		return nil
 	}
 	return s
+}
+
+func scanAPIKeyRow(scanner rowScanner) (*APIKeyRecord, error) {
+	var key APIKeyRecord
+	var userID sql.NullString
+	var clientID sql.NullString
+	var createdAt sqliteTimeValue
+	var lastUsed sqliteNullTime
+	if err := scanner.Scan(&key.ID, &userID, &clientID, &key.Hash, &key.Prefix, &createdAt, &lastUsed); err != nil {
+		return nil, err
+	}
+	if userID.Valid {
+		key.UserID = userID.String
+	}
+	if clientID.Valid {
+		key.ClientID = clientID.String
+	}
+	key.CreatedAt = createdAt.Time
+	if lastUsed.Valid {
+		key.LastUsed = lastUsed.Time
+	}
+	return &key, nil
 }
 
 func scanClientRow(scanner rowScanner) (*Client, error) {
@@ -1005,9 +1080,11 @@ func (s *SQLiteStorage) replaceDevices(ctx context.Context, tx squealx.SQLTx, li
 	}
 	stmt, err := tx.PrepareContext(ctx, `INSERT INTO license_devices (
 		license_id, fingerprint, activated_at, last_seen_at, transport_key,
+		status, label, hardware_fingerprint, hardware_confidence, last_ip, last_user_agent, app_version,
 		proof_version, device_key_id, device_public_key, public_key_algorithm, key_provider,
-		attestation_type, attestation_status, last_proof_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+		attestation_type, attestation_status, last_proof_at,
+		revoked_at, revoked_reason, replaced_by_fingerprint, replacement_token_id)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
 	if err != nil {
 		return err
 	}
@@ -1020,9 +1097,14 @@ func (s *SQLiteStorage) replaceDevices(ctx context.Context, tx squealx.SQLTx, li
 		devicePublicKey := append([]byte(nil), device.DevicePublicKey...)
 		if _, err := stmt.ExecContext(ctx,
 			licenseID, fingerprint, device.ActivatedAt, device.LastSeenAt, transport,
+			normalizeDeviceStatus(device.Status), nullString(device.Label), nullString(device.HardwareFingerprint),
+			nullString(device.HardwareConfidence),
+			nullString(device.LastIP), nullString(device.LastUserAgent), nullString(device.AppVersion),
 			device.ProofVersion, nullString(device.DeviceKeyID), devicePublicKey,
 			nullString(device.PublicKeyAlgorithm), nullString(device.KeyProvider),
 			nullString(device.AttestationType), nullString(device.AttestationStatus), nullTime(device.LastProofAt),
+			nullTime(device.RevokedAt), nullString(device.RevokedReason), nullString(device.ReplacedByFingerprint),
+			nullString(device.ReplacementTokenID),
 		); err != nil {
 			return err
 		}
@@ -1032,8 +1114,10 @@ func (s *SQLiteStorage) replaceDevices(ctx context.Context, tx squealx.SQLTx, li
 
 func (s *SQLiteStorage) loadDevices(ctx context.Context, license *License) error {
 	rows, err := s.db.QueryContext(ctx, `SELECT fingerprint, activated_at, last_seen_at, transport_key,
+		status, label, hardware_fingerprint, hardware_confidence, last_ip, last_user_agent, app_version,
 		proof_version, device_key_id, device_public_key, public_key_algorithm, key_provider,
-		attestation_type, attestation_status, last_proof_at
+		attestation_type, attestation_status, last_proof_at,
+		revoked_at, revoked_reason, replaced_by_fingerprint, replacement_token_id
         FROM license_devices WHERE license_id = ?`, license.ID)
 	if err != nil {
 		return err
@@ -1044,12 +1128,16 @@ func (s *SQLiteStorage) loadDevices(ctx context.Context, license *License) error
 		var device LicenseDevice
 		var transport, publicKey []byte
 		var activatedAt, lastSeen sqliteTimeValue
+		var status, label, hardwareFingerprint, hardwareConfidence, lastIP, lastUserAgent, appVersion sql.NullString
 		var deviceKeyID, publicKeyAlg, keyProvider, attestationType, attestationStatus sql.NullString
-		var lastProofAt sqliteNullTime
+		var revokedReason, replacedByFingerprint, replacementTokenID sql.NullString
+		var lastProofAt, revokedAt sqliteNullTime
 		if err := rows.Scan(
 			&device.Fingerprint, &activatedAt, &lastSeen, &transport,
+			&status, &label, &hardwareFingerprint, &hardwareConfidence, &lastIP, &lastUserAgent, &appVersion,
 			&device.ProofVersion, &deviceKeyID, &publicKey, &publicKeyAlg, &keyProvider,
 			&attestationType, &attestationStatus, &lastProofAt,
+			&revokedAt, &revokedReason, &replacedByFingerprint, &replacementTokenID,
 		); err != nil {
 			return err
 		}
@@ -1057,6 +1145,29 @@ func (s *SQLiteStorage) loadDevices(ctx context.Context, license *License) error
 		device.LastSeenAt = lastSeen.Time
 		device.TransportKey = append([]byte(nil), transport...)
 		device.DevicePublicKey = append([]byte(nil), publicKey...)
+		if status.Valid {
+			device.Status = normalizeDeviceStatus(status.String)
+		} else {
+			device.Status = DeviceStatusTrusted
+		}
+		if label.Valid {
+			device.Label = label.String
+		}
+		if hardwareFingerprint.Valid {
+			device.HardwareFingerprint = hardwareFingerprint.String
+		}
+		if hardwareConfidence.Valid {
+			device.HardwareConfidence = hardwareConfidence.String
+		}
+		if lastIP.Valid {
+			device.LastIP = lastIP.String
+		}
+		if lastUserAgent.Valid {
+			device.LastUserAgent = lastUserAgent.String
+		}
+		if appVersion.Valid {
+			device.AppVersion = appVersion.String
+		}
 		if deviceKeyID.Valid {
 			device.DeviceKeyID = deviceKeyID.String
 		}
@@ -1074,6 +1185,18 @@ func (s *SQLiteStorage) loadDevices(ctx context.Context, license *License) error
 		}
 		if lastProofAt.Valid {
 			device.LastProofAt = lastProofAt.Time
+		}
+		if revokedAt.Valid {
+			device.RevokedAt = revokedAt.Time
+		}
+		if revokedReason.Valid {
+			device.RevokedReason = revokedReason.String
+		}
+		if replacedByFingerprint.Valid {
+			device.ReplacedByFingerprint = replacedByFingerprint.String
+		}
+		if replacementTokenID.Valid {
+			device.ReplacementTokenID = replacementTokenID.String
 		}
 		license.Devices[device.Fingerprint] = &device
 	}
@@ -1323,8 +1446,8 @@ func (s *SQLiteStorage) SaveAPIKey(ctx context.Context, key *APIKeyRecord) error
 			  VALUES (?, ?, ?, ?, ?, ?, ?)`
 	_, err := s.db.ExecContext(ctx, query,
 		key.ID,
-		key.UserID,
-		key.ClientID,
+		nullString(key.UserID),
+		nullString(key.ClientID),
 		key.Hash,
 		key.Prefix,
 		key.CreatedAt,
@@ -1345,8 +1468,8 @@ func (s *SQLiteStorage) UpdateAPIKey(ctx context.Context, key *APIKeyRecord) err
 	}
 	query := `UPDATE api_keys SET user_id = ?, client_id = ?, hash = ?, prefix = ?, created_at = ?, last_used_at = ? WHERE id = ?`
 	res, err := s.db.ExecContext(ctx, query,
-		key.UserID,
-		key.ClientID,
+		nullString(key.UserID),
+		nullString(key.ClientID),
 		key.Hash,
 		key.Prefix,
 		key.CreatedAt,
@@ -1379,20 +1502,14 @@ func (s *SQLiteStorage) DeleteAPIKey(ctx context.Context, keyID string) error {
 func (s *SQLiteStorage) GetAPIKeyByHash(ctx context.Context, hash string) (*APIKeyRecord, error) {
 	query := `SELECT id, user_id, client_id, hash, prefix, created_at, last_used_at FROM api_keys WHERE hash = ?`
 	row := s.db.QueryRowContext(ctx, query, hash)
-	var key APIKeyRecord
-	var createdAt sqliteTimeValue
-	var lastUsed sqliteNullTime
-	if err := row.Scan(&key.ID, &key.UserID, &key.ClientID, &key.Hash, &key.Prefix, &createdAt, &lastUsed); err != nil {
+	key, err := scanAPIKeyRow(row)
+	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, errAPIKeyMissing
 		}
 		return nil, err
 	}
-	key.CreatedAt = createdAt.Time
-	if lastUsed.Valid {
-		key.LastUsed = lastUsed.Time
-	}
-	return cloneAPIKeyRecord(&key), nil
+	return cloneAPIKeyRecord(key), nil
 }
 
 func (s *SQLiteStorage) ListAPIKeysByUser(ctx context.Context, userID string) ([]*APIKeyRecord, error) {
@@ -1404,17 +1521,11 @@ func (s *SQLiteStorage) ListAPIKeysByUser(ctx context.Context, userID string) ([
 	defer rows.Close()
 	var keys []*APIKeyRecord
 	for rows.Next() {
-		var key APIKeyRecord
-		var createdAt sqliteTimeValue
-		var lastUsed sqliteNullTime
-		if err := rows.Scan(&key.ID, &key.UserID, &key.ClientID, &key.Hash, &key.Prefix, &createdAt, &lastUsed); err != nil {
+		key, err := scanAPIKeyRow(rows)
+		if err != nil {
 			return nil, err
 		}
-		key.CreatedAt = createdAt.Time
-		if lastUsed.Valid {
-			key.LastUsed = lastUsed.Time
-		}
-		keys = append(keys, cloneAPIKeyRecord(&key))
+		keys = append(keys, cloneAPIKeyRecord(key))
 	}
 	return keys, rows.Err()
 }
@@ -1447,17 +1558,11 @@ func (s *SQLiteStorage) ListAPIKeysByClient(ctx context.Context, clientID string
 	defer rows.Close()
 	var keys []*APIKeyRecord
 	for rows.Next() {
-		var key APIKeyRecord
-		var createdAt sqliteTimeValue
-		var lastUsed sqliteNullTime
-		if err := rows.Scan(&key.ID, &key.UserID, &key.ClientID, &key.Hash, &key.Prefix, &createdAt, &lastUsed); err != nil {
+		key, err := scanAPIKeyRow(rows)
+		if err != nil {
 			return nil, err
 		}
-		key.CreatedAt = createdAt.Time
-		if lastUsed.Valid {
-			key.LastUsed = lastUsed.Time
-		}
-		keys = append(keys, cloneAPIKeyRecord(&key))
+		keys = append(keys, cloneAPIKeyRecord(key))
 	}
 	return keys, rows.Err()
 }
@@ -1646,6 +1751,109 @@ func (s *SQLiteStorage) ListSessionsByUser(ctx context.Context, userID string) (
 		sessions = append(sessions, &session)
 	}
 	return sessions, rows.Err()
+}
+
+func (s *SQLiteStorage) SaveDeviceReplacementToken(ctx context.Context, token *DeviceReplacementToken) error {
+	if token == nil {
+		return fmt.Errorf("device replacement token is nil")
+	}
+	_, err := s.db.ExecContext(ctx, `INSERT INTO device_replacement_tokens (
+		id, token_hash, license_id, old_fingerprint, replacement_fingerprint,
+		created_at, expires_at, used_at, created_by, revoked_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		token.ID, token.TokenHash, token.LicenseID, token.OldFingerprint, nullString(token.ReplacementFingerprint),
+		token.CreatedAt, token.ExpiresAt, nullTime(token.UsedAt), nullString(token.CreatedBy), nullTime(token.RevokedAt),
+	)
+	return err
+}
+
+func (s *SQLiteStorage) UpdateDeviceReplacementToken(ctx context.Context, token *DeviceReplacementToken) error {
+	if token == nil {
+		return fmt.Errorf("device replacement token is nil")
+	}
+	res, err := s.db.ExecContext(ctx, `UPDATE device_replacement_tokens SET
+		token_hash = ?, license_id = ?, old_fingerprint = ?, replacement_fingerprint = ?,
+		created_at = ?, expires_at = ?, used_at = ?, created_by = ?, revoked_at = ?
+		WHERE id = ?`,
+		token.TokenHash, token.LicenseID, token.OldFingerprint, nullString(token.ReplacementFingerprint),
+		token.CreatedAt, token.ExpiresAt, nullTime(token.UsedAt), nullString(token.CreatedBy), nullTime(token.RevokedAt),
+		token.ID,
+	)
+	if err != nil {
+		return err
+	}
+	if rows, _ := res.RowsAffected(); rows == 0 {
+		return errDeviceReplacementTokenMissing
+	}
+	return nil
+}
+
+func (s *SQLiteStorage) GetDeviceReplacementToken(ctx context.Context, tokenID string) (*DeviceReplacementToken, error) {
+	row := s.db.QueryRowContext(ctx, `SELECT id, token_hash, license_id, old_fingerprint, replacement_fingerprint,
+		created_at, expires_at, used_at, created_by, revoked_at
+		FROM device_replacement_tokens WHERE id = ?`, tokenID)
+	return scanDeviceReplacementToken(row)
+}
+
+func (s *SQLiteStorage) GetDeviceReplacementTokenByHash(ctx context.Context, tokenHash string) (*DeviceReplacementToken, error) {
+	row := s.db.QueryRowContext(ctx, `SELECT id, token_hash, license_id, old_fingerprint, replacement_fingerprint,
+		created_at, expires_at, used_at, created_by, revoked_at
+		FROM device_replacement_tokens WHERE token_hash = ?`, tokenHash)
+	return scanDeviceReplacementToken(row)
+}
+
+func (s *SQLiteStorage) ListDeviceReplacementTokensByLicense(ctx context.Context, licenseID string) ([]*DeviceReplacementToken, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT id, token_hash, license_id, old_fingerprint, replacement_fingerprint,
+		created_at, expires_at, used_at, created_by, revoked_at
+		FROM device_replacement_tokens WHERE license_id = ? ORDER BY created_at DESC`, licenseID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	tokens := []*DeviceReplacementToken{}
+	for rows.Next() {
+		token, err := scanDeviceReplacementToken(rows)
+		if err != nil {
+			return nil, err
+		}
+		tokens = append(tokens, token)
+	}
+	return tokens, rows.Err()
+}
+
+type deviceReplacementTokenScanner interface {
+	Scan(dest ...interface{}) error
+}
+
+func scanDeviceReplacementToken(scanner deviceReplacementTokenScanner) (*DeviceReplacementToken, error) {
+	var token DeviceReplacementToken
+	var replacementFingerprint, createdBy sql.NullString
+	var createdAt, expiresAt sqliteTimeValue
+	var usedAt, revokedAt sqliteNullTime
+	if err := scanner.Scan(
+		&token.ID, &token.TokenHash, &token.LicenseID, &token.OldFingerprint, &replacementFingerprint,
+		&createdAt, &expiresAt, &usedAt, &createdBy, &revokedAt,
+	); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, errDeviceReplacementTokenMissing
+		}
+		return nil, err
+	}
+	token.CreatedAt = createdAt.Time
+	token.ExpiresAt = expiresAt.Time
+	if replacementFingerprint.Valid {
+		token.ReplacementFingerprint = replacementFingerprint.String
+	}
+	if usedAt.Valid {
+		token.UsedAt = usedAt.Time
+	}
+	if createdBy.Valid {
+		token.CreatedBy = createdBy.String
+	}
+	if revokedAt.Valid {
+		token.RevokedAt = revokedAt.Time
+	}
+	return &token, nil
 }
 
 // ResetTables drops and recreates product-related tables (products, plans, features, scopes)

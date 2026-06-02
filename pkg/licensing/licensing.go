@@ -131,9 +131,11 @@ type ActivationRequest struct {
 	LicenseKey        string       `json:"license_key"`
 	DeviceFingerprint string       `json:"device_fingerprint"`
 	ProductID         string       `json:"product_id,omitempty"` // Product ID or slug to validate license against
+	ReplacementToken  string       `json:"replacement_token,omitempty"`
 	DeviceProof       *DeviceProof `json:"device_proof,omitempty"`
 	IPAddress         string       `json:"-"`
 	UserAgent         string       `json:"-"`
+	AppVersion        string       `json:"-"`
 }
 
 type ActivationResponse struct {
@@ -154,21 +156,38 @@ const (
 )
 
 type LicenseDevice struct {
-	Fingerprint        string    `json:"fingerprint"`
-	ActivatedAt        time.Time `json:"activated_at"`
-	LastSeenAt         time.Time `json:"last_seen_at"`
-	TransportKey       []byte    `json:"-"`
-	ProofVersion       int       `json:"proof_version,omitempty"`
-	DeviceKeyID        string    `json:"device_key_id,omitempty"`
-	DevicePublicKey    []byte    `json:"device_public_key,omitempty"`
-	PublicKeyAlgorithm string    `json:"public_key_algorithm,omitempty"`
-	KeyProvider        string    `json:"key_provider,omitempty"`
-	AttestationType    string    `json:"attestation_type,omitempty"`
-	AttestationStatus  string    `json:"attestation_status,omitempty"`
-	LastProofAt        time.Time `json:"last_proof_at,omitempty"`
+	Fingerprint           string    `json:"fingerprint"`
+	ActivatedAt           time.Time `json:"activated_at"`
+	LastSeenAt            time.Time `json:"last_seen_at"`
+	TransportKey          []byte    `json:"-"`
+	Status                string    `json:"status,omitempty"`
+	Label                 string    `json:"label,omitempty"`
+	HardwareFingerprint   string    `json:"hardware_fingerprint,omitempty"`
+	HardwareConfidence    string    `json:"hardware_confidence,omitempty"`
+	LastIP                string    `json:"last_ip,omitempty"`
+	LastUserAgent         string    `json:"last_user_agent,omitempty"`
+	AppVersion            string    `json:"app_version,omitempty"`
+	ProofVersion          int       `json:"proof_version,omitempty"`
+	DeviceKeyID           string    `json:"device_key_id,omitempty"`
+	DevicePublicKey       []byte    `json:"device_public_key,omitempty"`
+	PublicKeyAlgorithm    string    `json:"public_key_algorithm,omitempty"`
+	KeyProvider           string    `json:"key_provider,omitempty"`
+	AttestationType       string    `json:"attestation_type,omitempty"`
+	AttestationStatus     string    `json:"attestation_status,omitempty"`
+	LastProofAt           time.Time `json:"last_proof_at,omitempty"`
+	RevokedAt             time.Time `json:"revoked_at,omitempty"`
+	RevokedReason         string    `json:"revoked_reason,omitempty"`
+	ReplacedByFingerprint string    `json:"replaced_by_fingerprint,omitempty"`
+	ReplacementTokenID    string    `json:"replacement_token_id,omitempty"`
 }
 
 const (
+	DeviceStatusTrusted            = "trusted"
+	DeviceStatusRevoked            = "revoked"
+	DeviceStatusReplacementPending = "replacement_pending"
+	DeviceStatusReplaced           = "replaced"
+	DeviceStatusSuspicious         = "suspicious"
+
 	DeviceProofVersionV2             = 2
 	DeviceProofAlgorithmEd25519      = "ed25519"
 	DeviceProofAlgorithmRSAPSSSHA256 = "rsa-pss-sha256"
@@ -206,6 +225,14 @@ type DeviceProofPayload struct {
 func DeviceProofPublicKeyID(publicKey []byte) string {
 	sum := sha256.Sum256(publicKey)
 	return hex.EncodeToString(sum[:])
+}
+
+func DeviceProofFingerprint(algorithm string, publicKey []byte) string {
+	algorithm = strings.ToLower(strings.TrimSpace(algorithm))
+	if algorithm == "" {
+		algorithm = "unknown"
+	}
+	return "fp:v2:" + algorithm + ":" + DeviceProofPublicKeyID(publicKey)
 }
 
 func EncodeDeviceProofBytes(data []byte) string {
@@ -283,6 +310,11 @@ func VerifyDeviceProofSignature(proof *DeviceProof, payload DeviceProofPayload) 
 	if strings.TrimSpace(proof.KeyID) != "" && !strings.EqualFold(strings.TrimSpace(proof.KeyID), expectedKeyID) {
 		return nil, fmt.Errorf("device proof key id mismatch")
 	}
+	expectedFingerprint := DeviceProofFingerprint(algorithm, publicKey)
+	legacyFingerprint := expectedKeyID
+	if strings.TrimSpace(proof.Fingerprint) != "" && strings.TrimSpace(proof.Fingerprint) != expectedFingerprint && !strings.EqualFold(strings.TrimSpace(proof.Fingerprint), legacyFingerprint) {
+		return nil, fmt.Errorf("device proof fingerprint mismatch")
+	}
 	return publicKey, nil
 }
 
@@ -345,11 +377,29 @@ func refreshLicenseDeviceStats(license *License) {
 	if license == nil {
 		return
 	}
-	deviceCount := len(license.Devices)
+	deviceCount := 0
+	for _, device := range license.Devices {
+		if device == nil {
+			continue
+		}
+		device.Status = normalizeDeviceStatus(device.Status)
+		if device.Status == DeviceStatusTrusted || device.Status == DeviceStatusReplacementPending {
+			deviceCount++
+		}
+	}
 	license.DeviceCount = deviceCount
 	license.CurrentActivations = deviceCount
 	if license.MaxDevices <= 0 {
 		license.MaxDevices = 1
+	}
+}
+
+func normalizeDeviceStatus(status string) string {
+	switch strings.TrimSpace(status) {
+	case DeviceStatusTrusted, DeviceStatusRevoked, DeviceStatusReplacementPending, DeviceStatusReplaced, DeviceStatusSuspicious:
+		return strings.TrimSpace(status)
+	default:
+		return DeviceStatusTrusted
 	}
 }
 
@@ -372,7 +422,7 @@ func licenseIdentityKey(email string) string {
 var (
 	emailRegex       = regexp.MustCompile(`^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$`)
 	licenseKeyRegex  = regexp.MustCompile(`^[A-Z2-7]{5}(?:-?[A-Z2-7]{5}){7}$`)
-	fingerprintRegex = regexp.MustCompile(`^[A-Za-z0-9_-]{16,128}$`)
+	fingerprintRegex = regexp.MustCompile(`^(?:[A-Za-z0-9_-]{16,128}|fp:v[0-9]+:[A-Za-z0-9_-]+:[a-f0-9]{64})$`)
 )
 
 const maxActivationPayloadBytes = 1 << 20

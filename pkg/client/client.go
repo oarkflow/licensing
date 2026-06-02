@@ -30,7 +30,6 @@ import (
 )
 
 const (
-	EnvServerURL       = "LICENSE_CLIENT_SERVER"
 	DefaultLicenseFile = ".license.dat"
 	DefaultConfigDir   = ".licensing"
 	DefaultServerURL   = "https://localhost:6601"
@@ -104,6 +103,7 @@ type ActivationRequest struct {
 	LicenseKey        string                     `json:"license_key"`
 	DeviceFingerprint string                     `json:"device_fingerprint"`
 	ProductID         string                     `json:"product_id,omitempty"` // Product ID or slug to validate license against
+	ReplacementToken  string                     `json:"replacement_token,omitempty"`
 	DeviceProof       *licensingcore.DeviceProof `json:"device_proof,omitempty"`
 }
 
@@ -135,6 +135,7 @@ type DeviceIdentity struct {
 	KeyProvider         string `json:"key_provider"`
 	PublicKeyAlgorithm  string `json:"public_key_alg"`
 	HardwareFingerprint string `json:"hardware_fingerprint,omitempty"`
+	HardwareConfidence  string `json:"hardware_confidence,omitempty"`
 	Platform            string `json:"platform,omitempty"`
 	Label               string `json:"label,omitempty"`
 	IsContainer         bool   `json:"is_container,omitempty"`
@@ -616,9 +617,6 @@ func normalizeConfig(cfg Config) (Config, error) {
 
 	serverURL := strings.TrimSpace(cfg.ServerURL)
 	if serverURL == "" {
-		serverURL = strings.TrimSpace(os.Getenv(EnvServerURL))
-	}
-	if serverURL == "" {
 		serverURL = DefaultServerURL
 	}
 	parsedURL, err := url.Parse(serverURL)
@@ -768,10 +766,17 @@ func (lc *Client) IsActivated() bool {
 
 // Activate runs the device enrollment flow with the licensing server.
 func (lc *Client) Activate(email, clientID, licenseKey string) error {
+	return lc.ActivateWithReplacementToken(email, clientID, licenseKey, "")
+}
+
+// ActivateWithReplacementToken enrolls this device using an admin-issued one-time
+// replacement token. Passing an empty token behaves like Activate.
+func (lc *Client) ActivateWithReplacementToken(email, clientID, licenseKey, replacementToken string) error {
 	fmt.Println("\n🔐 Starting license activation...")
 	email = strings.TrimSpace(email)
 	clientID = strings.TrimSpace(clientID)
 	licenseKey = strings.TrimSpace(licenseKey)
+	replacementToken = strings.TrimSpace(replacementToken)
 	if clientID == "" {
 		return fmt.Errorf("client ID is required for activation")
 	}
@@ -791,6 +796,7 @@ func (lc *Client) Activate(email, clientID, licenseKey string) error {
 		LicenseKey:        licenseKey,
 		DeviceFingerprint: fingerprint,
 		ProductID:         lc.productID,
+		ReplacementToken:  replacementToken,
 	}
 	challenge, err := lc.requestDeviceChallenge(context.Background(), licensingcore.DeviceProofPurposeActivate)
 	if err != nil {
@@ -818,6 +824,7 @@ func (lc *Client) Activate(email, clientID, licenseKey string) error {
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("User-Agent", lc.userAgent())
+	req.Header.Set("X-App-Version", lc.config.AppVersion)
 	req.Header.Set(headerFingerprint, fingerprint)
 	req.Header.Set(headerLicenseKey, normalizeLicenseKey(licenseKey))
 	if encrypted {
@@ -1105,6 +1112,7 @@ func (lc *Client) refreshLicenseFromServer(ctx context.Context, stored *StoredLi
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("User-Agent", lc.userAgent())
+	req.Header.Set("X-App-Version", lc.config.AppVersion)
 	req.Header.Set(headerFingerprint, stored.DeviceFingerprint)
 	req.Header.Set(headerLicenseKey, normalizeLicenseKey(verificationReq.LicenseKey))
 	if encrypted {
@@ -1312,6 +1320,7 @@ func (lc *Client) checkTrialEligibilityWithFingerprint(productID, fingerprint st
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("User-Agent", lc.userAgent())
+	req.Header.Set("X-App-Version", lc.config.AppVersion)
 	req.Header.Set(headerFingerprint, fingerprint)
 
 	resp, err := lc.httpClient.Do(req)
@@ -1404,6 +1413,7 @@ func (lc *Client) RequestTrial(email, productID, planID string, trialDays int) (
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("User-Agent", lc.userAgent())
+	req.Header.Set("X-App-Version", lc.config.AppVersion)
 	req.Header.Set(headerFingerprint, fingerprint)
 
 	resp, err := lc.httpClient.Do(req)
@@ -1591,6 +1601,9 @@ func (lc *Client) deviceIdentityFromProvider(provider deviceKeyProvider) *Device
 	}
 	if info, err := device.GetInfo(); err == nil && info != nil {
 		identity.HardwareFingerprint = info.Fingerprint
+		if len(info.IdentifierConfidence) > 0 {
+			identity.HardwareConfidence = formatIdentifierConfidence(info.IdentifierConfidence)
+		}
 		identity.Platform = info.Platform
 		identity.IsContainer = info.IsContainer
 		if strings.TrimSpace(info.Name) != "" {
@@ -1609,7 +1622,7 @@ func deviceFingerprintFromProvider(provider deviceKeyProvider) string {
 	if provider == nil {
 		return ""
 	}
-	return licensingcore.DeviceProofPublicKeyID(provider.PublicKeyBytes())
+	return licensingcore.DeviceProofFingerprint(provider.PublicKeyAlgorithm(), provider.PublicKeyBytes())
 }
 
 func truncateFingerprint(fp string) string {

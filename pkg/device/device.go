@@ -28,18 +28,20 @@ type Identifier struct {
 }
 
 type DeviceInfo struct {
-	Name        string            `json:"name"`
-	Fingerprint string            `json:"fingerprint"`
-	Platform    string            `json:"platform"`
-	Label       string            `json:"label"`
-	Identifiers map[string]string `json:"identifiers"`
-	IsContainer bool              `json:"is_container"`
+	Name                 string            `json:"name"`
+	Fingerprint          string            `json:"fingerprint"`
+	Platform             string            `json:"platform"`
+	Label                string            `json:"label"`
+	Identifiers          map[string]string `json:"identifiers"`
+	IdentifierConfidence map[string]string `json:"identifier_confidence"`
+	IsContainer          bool              `json:"is_container"`
 }
 
 func GetInfo() (*DeviceInfo, error) {
 	info := &DeviceInfo{
-		Platform:    runtime.GOOS,
-		Identifiers: make(map[string]string),
+		Platform:             runtime.GOOS,
+		Identifiers:          make(map[string]string),
+		IdentifierConfidence: make(map[string]string),
 	}
 
 	// Detect if running in a container
@@ -63,6 +65,9 @@ func GetInfo() (*DeviceInfo, error) {
 	if idErr != nil {
 		return nil, fmt.Errorf("identifier error: %v", idErr)
 	}
+	for key := range info.Identifiers {
+		info.IdentifierConfidence[key] = getIdentifierConfidence(key)
+	}
 
 	fingerprint, err := generateFingerprint(info.Identifiers)
 	if err != nil {
@@ -72,7 +77,7 @@ func GetInfo() (*DeviceInfo, error) {
 	if info.Name == "" {
 		info.Name = "unknown-device"
 	}
-	info.Label = fmt.Sprintf("%s-%s", info.Name, info.Fingerprint)
+	info.Label = fmt.Sprintf("%s-%s", info.Name, strings.TrimPrefix(info.Fingerprint, "hw:v1:"))
 	return info, nil
 }
 
@@ -86,7 +91,7 @@ func GetDeviceLabel() (string, error) {
 		return info.Label, nil
 	}
 	if strings.TrimSpace(info.Name) != "" && strings.TrimSpace(info.Fingerprint) != "" {
-		return fmt.Sprintf("%s-%s", strings.TrimSpace(info.Name), strings.TrimSpace(info.Fingerprint)), nil
+		return fmt.Sprintf("%s-%s", strings.TrimSpace(info.Name), strings.TrimPrefix(strings.TrimSpace(info.Fingerprint), "hw:v1:")), nil
 	}
 	if strings.TrimSpace(info.Name) != "" {
 		return info.Name, nil
@@ -108,19 +113,6 @@ func IsRunningInContainer() bool {
 			strings.Contains(content, "containerd") ||
 			strings.Contains(content, "kubepods") ||
 			strings.Contains(content, "lxc") {
-			return true
-		}
-	}
-
-	// Check for container environment variables
-	containerEnvVars := []string{
-		"KUBERNETES_SERVICE_HOST",
-		"DOCKER_CONTAINER",
-		"CONTAINER",
-		"container",
-	}
-	for _, envVar := range containerEnvVars {
-		if os.Getenv(envVar) != "" {
 			return true
 		}
 	}
@@ -204,7 +196,7 @@ func generateFingerprint(ids map[string]string) (string, error) {
 		// Include application salt for security
 		data := strings.Join(append([]string{appSalt}, parts...), "|")
 		hash := sha256.Sum256([]byte(data))
-		return fmt.Sprintf("%x", hash), nil
+		return "hw:v1:" + fmt.Sprintf("%x", hash), nil
 	}
 
 	// Filter out ephemeral identifiers (priority < 3) for better stability
@@ -225,7 +217,7 @@ func generateFingerprint(ids map[string]string) (string, error) {
 		// Include application salt for security
 		data := strings.Join(append([]string{appSalt}, parts...), "|")
 		hash := sha256.Sum256([]byte(data))
-		return fmt.Sprintf("%x", hash), nil
+		return "hw:v1:" + fmt.Sprintf("%x", hash), nil
 	}
 
 	// Last resort: use all identifiers if no stable ones are available
@@ -241,12 +233,14 @@ func generateFingerprint(ids map[string]string) (string, error) {
 	// Include application salt for security
 	data := strings.Join(append([]string{appSalt}, parts...), "|")
 	hash := sha256.Sum256([]byte(data))
-	return fmt.Sprintf("%x", hash), nil
+	return "hw:v1:" + fmt.Sprintf("%x", hash), nil
 }
 
 // getIdentifierPriority returns the stability priority of an identifier
 func getIdentifierPriority(key string) int {
 	switch key {
+	case "configured_device_id":
+		return 9 // Operator-provided stable device identity for containers/VMs
 	case "bios_uuid", "platform_uuid", "dmi_uuid", "hardware_uuid", "host_dmi_uuid":
 		return 10 // Highest priority - hardware UUIDs
 	case "system_serial", "baseboard_serial", "board_serial", "product_serial", "host_serial":
@@ -261,6 +255,19 @@ func getIdentifierPriority(key string) int {
 		return 1 // Lowest priority - ephemeral container IDs (now filtered out)
 	default:
 		return 0 // Unknown priority
+	}
+}
+
+func getIdentifierConfidence(key string) string {
+	switch key {
+	case "configured_device_id", "docker_volume_id", "persistent_volume_id", "persistent_fallback_id", "bios_uuid", "platform_uuid", "dmi_uuid", "hardware_uuid", "host_dmi_uuid":
+		return "high"
+	case "system_serial", "baseboard_serial", "board_serial", "product_serial", "host_serial", "machine_guid", "dbus_machine_id", "machine_id", "host_machine_id":
+		return "medium"
+	case "container_id", "pod_uid":
+		return "low"
+	default:
+		return "low"
 	}
 }
 
@@ -604,14 +611,6 @@ func getDockerVolumeID() string {
 		}
 	}
 
-	// Environment variable-based volume detection for cloud-native deployments
-	if envVolumeID := os.Getenv("DOCKER_VOLUME_ID"); envVolumeID != "" {
-		return "env-" + envVolumeID
-	}
-	if envVolumeID := os.Getenv("VOLUME_ID"); envVolumeID != "" {
-		return "env-" + envVolumeID
-	}
-
 	return ""
 }
 
@@ -640,76 +639,7 @@ func getKubernetesPVCID() string {
 				}
 			}
 
-			// Fallback: construct PVC ID from available Kubernetes metadata
-			if podName := os.Getenv("HOSTNAME"); podName != "" {
-				if pvcName := os.Getenv("PVC_NAME"); pvcName != "" {
-					return "k8s-" + namespace + "-" + podName + "-" + pvcName
-				}
-				// Use pod name as fallback identifier
-				return "k8s-" + namespace + "-" + podName
-			}
 		}
-	}
-
-	// Enhanced environment variable detection for PVC information
-	if pvcName := os.Getenv("PVC_NAME"); pvcName != "" {
-		if namespace := os.Getenv("POD_NAMESPACE"); namespace != "" {
-			return "k8s-env-" + namespace + "-" + pvcName
-		}
-		return "k8s-env-" + pvcName
-	}
-
-	// Additional Kubernetes environment variables
-	if podUID := os.Getenv("POD_UID"); podUID != "" {
-		return "k8s-uid-" + podUID
-	}
-	if podName := os.Getenv("POD_NAME"); podName != "" {
-		if namespace := os.Getenv("POD_NAMESPACE"); namespace != "" {
-			return "k8s-" + namespace + "-" + podName
-		}
-		return "k8s-" + podName
-	}
-
-	return ""
-}
-
-// getContainerID attempts to detect container ID
-func getContainerID() string {
-	// Method 1: Check hostname (usually container ID in Docker)
-	if hostname, err := os.Hostname(); err == nil {
-		if len(hostname) == 12 || len(hostname) == 64 {
-			// Looks like a Docker container ID
-			return hostname
-		}
-	}
-
-	// Method 2: Check cgroup for Docker container ID
-	if data, err := os.ReadFile("/proc/self/cgroup"); err == nil {
-		lines := strings.Split(string(data), "\n")
-		for _, line := range lines {
-			if strings.Contains(line, "docker") {
-				parts := strings.Split(line, "/")
-				if len(parts) > 0 {
-					containerID := strings.TrimSpace(parts[len(parts)-1])
-					if len(containerID) >= 12 && len(containerID) <= 64 {
-						return containerID
-					}
-				}
-			}
-		}
-	}
-
-	// Method 3: Check for Kubernetes pod UID
-	if data, err := os.ReadFile("/etc/podinfo/uid"); err == nil {
-		uid := strings.TrimSpace(string(data))
-		if uid != "" {
-			return uid
-		}
-	}
-
-	// Method 4: Check Kubernetes downward API
-	if podUID := os.Getenv("POD_UID"); podUID != "" {
-		return podUID
 	}
 
 	return ""
@@ -772,11 +702,6 @@ func getWindowsDockerVolumeID() string {
 		}
 	}
 
-	// Windows environment variable support
-	if envVolumeID := os.Getenv("DOCKER_VOLUME_ID"); envVolumeID != "" {
-		return "win-env-" + envVolumeID
-	}
-
 	return ""
 }
 
@@ -803,20 +728,11 @@ func getPersistentStorageFallback() string {
 	}
 
 	// Method 2: Generate based on stable system properties
-	// This creates a consistent ID based on system characteristics
+	// This deliberately avoids hostnames, pod names, MAC addresses, and CPU
+	// metadata so fallback hardware fingerprints do not bind to unstable IDs.
 	systemProps := []string{
 		runtime.GOOS,
 		runtime.GOARCH,
-	}
-
-	// Add hostname if available
-	if hostname, err := os.Hostname(); err == nil && hostname != "" {
-		systemProps = append(systemProps, hostname)
-	}
-
-	// Add user if available
-	if user := os.Getenv("USER"); user != "" {
-		systemProps = append(systemProps, user)
 	}
 
 	// Create a deterministic hash based on system properties

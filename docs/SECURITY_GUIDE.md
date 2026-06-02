@@ -761,8 +761,8 @@ func ActivateLicense(licenseKey string) error {
     // 2. Contact server securely
     client := createSecureClient(serverCert)
 
-    // 3. Get hardware fingerprint
-    hwID := getHardwareID()
+    // 3. Get canonical proof-key fingerprint
+    deviceFingerprint := getDeviceProofFingerprint()
 
     // 4. Send activation request
     resp, err := client.Post(
@@ -770,8 +770,8 @@ func ActivateLicense(licenseKey string) error {
         "application/json",
         bytes.NewBuffer([]byte(fmt.Sprintf(`{
             "license_key": "%s",
-            "hardware_id": "%s"
-        }`, licenseKey, hwID))),
+            "device_fingerprint": "%s"
+        }`, licenseKey, deviceFingerprint))),
     )
     if err != nil {
         return err

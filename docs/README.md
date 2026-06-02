@@ -158,7 +158,7 @@ These endpoints require additional headers instead of `X-API-Key`:
 
 | Header | Description |
 | --- | --- |
-| `X-Device-Fingerprint` | SHA-256 hex fingerprint of the device |
+| `X-Device-Fingerprint` | Versioned SHA-256 fingerprint of the device proof public key, e.g. `fp:v2:ed25519:<hash>` |
 | `X-License-Key` | Upper-case, hyphenless license key |
 | `User-Agent` | Identifies the calling SDK/app |
 
@@ -178,7 +178,7 @@ See `docs/api/README.md` for more examples and `docs/api/licensing_openapi.yaml`
 
 1. **(Optional) Point to a remote server:**
    ```bash
-   export LICENSE_CLIENT_SERVER="https://licensing.example.com"
+   go run ./client --server-url "https://licensing.example.com"
    ```
    Defaults to `https://localhost:6601`.
 2. **Seed activation data (optional):** Place the credentials you want to reuse into a JSON file and pass it with `--license-file`. The file must include `email`, `client_id`, and `license_key`.
@@ -207,23 +207,26 @@ The CLI layers configuration in the following order: command-line flags → envi
 | Flag | Env Var | Description | Default |
 | --- | --- | --- | --- |
 | `--activation-mode` | — | Chooses the activation strategy (`auto`, `prompt`, `verify`). | `auto` |
-| `--config-dir` | `LICENSE_CLIENT_CONFIG_DIR` | Directory that stores the encrypted license payload. | `$HOME/.licensing` |
-| `--license-store` | `LICENSE_CLIENT_LICENSE_FILE` | File name (placed under `config-dir`) for the encrypted license blob. | `.license.dat` |
+| `--config-dir` | — | Directory that stores the encrypted license payload. | `$HOME/.licensing` |
+| `--license-store` | — | File name (placed under `config-dir`) for the encrypted license blob. | `.license.dat` |
+| `--device-key-file` | — | Absolute or config-dir-relative path for the persistent device proof private key. | `$CONFIG_DIR/device_ed25519.pem` |
 | `--license-file` | — | Path to a JSON file containing `email`, `client_id`, and `license_key` used to pre-fill activation prompts. | — |
-| `--server-url` | `LICENSE_CLIENT_SERVER` | Licensing server base URL. | `https://localhost:6601` |
-| `--ca-cert` | `LICENSE_CLIENT_CA_CERT` | Path to a PEM bundle that should be trusted in addition to system roots. | — |
-| `--allow-insecure-http` | `LICENSE_CLIENT_ALLOW_INSECURE_HTTP` | Permit HTTP URLs and skip TLS verification (development only). | `false` |
-| `--http-timeout` | `LICENSE_CLIENT_HTTP_TIMEOUT` | HTTP client timeout (Go duration, e.g. `20s`, `1m`). | `15s` |
+| `--server-url` | — | Licensing server base URL. | `https://localhost:6601` |
+| `--ca-cert` | — | Path to a PEM bundle that should be trusted in addition to system roots. | — |
+| `--allow-insecure-http` | — | Permit HTTP URLs and skip TLS verification (development only). | `false` |
+| `--http-timeout` | — | HTTP client timeout (Go duration, e.g. `20s`, `1m`). | `15s` |
 
-| `--exec` or args after `--` | `LICENSE_CLIENT_EXEC` | Command to run once the license is verified (quote the flag value or place the command after `--`). | — |
+| `--exec` or args after `--` | — | Command to run once the license is verified (quote the flag value or place the command after `--`). | — |
 
 Example:
 
 ```bash
-LICENSE_CLIENT_CONFIG_DIR=/var/lib/myapp-licenses \
-LICENSE_CLIENT_LICENSE_FILE=myapp.lic \
-go run ./client --server-url https://licensing.example.com --http-timeout 20s
+go run ./client --server-url https://licensing.example.com --config-dir /var/lib/myapp-licenses \
+  --license-store myapp.lic --http-timeout 20s \
+  --device-key-file /var/lib/myapp-licenses/device/device_ed25519.pem
 ```
+
+For containers, pass `--device-key-file` or set `Config.DeviceKeyFile` to a persistent volume path. The canonical fingerprint is derived from this proof key, so container restarts and image rebuilds keep the same device ID as long as the mounted key survives. Device key selection intentionally does not read environment variables.
 
 ### Wrapping Your Application
 
@@ -341,7 +344,7 @@ If you prefer file-based automation, include `email`, `client_id`, and `license_
 
 ## How Server & Client Communicate
 
-1. The client derives a stable device fingerprint (hostname, OS, CPU brand, and MAC hash) and posts it with the license key to `/api/activate`.
+1. The client derives a stable device fingerprint from the device proof public key and posts it with the license key to `/api/activate`.
 2. The server validates the request (API rate limit, client ban status, license quotas) before encrypting `[random 32-byte transport key || license JSON]` with AES-GCM using a key derived from the device fingerprint + nonce.
 3. The ciphertext is signed by the active signing provider and returned together with the PEM-encoded public key and expiration metadata.
 4. The client verifies the signature, derives the same transport key, decrypts the payload, persists it, and caches the transport key for future HTTPS payload encryption.

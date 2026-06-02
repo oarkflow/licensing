@@ -1559,8 +1559,161 @@ func applyDeviceProof(device *LicenseDevice, proof *DeviceProof, publicKey []byt
 	if proof.Attestation != nil {
 		device.AttestationType = strings.TrimSpace(proof.Attestation["type"])
 		device.AttestationStatus = strings.TrimSpace(proof.Attestation["status"])
+		if hardwareFingerprint := strings.TrimSpace(proof.Attestation["hardware_fingerprint"]); hardwareFingerprint != "" {
+			device.HardwareFingerprint = hardwareFingerprint
+		}
+		if hardwareConfidence := strings.TrimSpace(proof.Attestation["hardware_confidence"]); hardwareConfidence != "" {
+			device.HardwareConfidence = hardwareConfidence
+		}
+		if label := strings.TrimSpace(proof.Attestation["label"]); label != "" {
+			device.Label = label
+		}
 	}
 	device.LastProofAt = now
+}
+
+func deviceReplacementTokenHash(token string) string {
+	sum := sha256.Sum256([]byte(strings.TrimSpace(token)))
+	return hex.EncodeToString(sum[:])
+}
+
+func deviceCanVerify(device *LicenseDevice) bool {
+	return device != nil && normalizeDeviceStatus(device.Status) == DeviceStatusTrusted
+}
+
+func deviceCanActivate(device *LicenseDevice) bool {
+	if device == nil {
+		return true
+	}
+	status := normalizeDeviceStatus(device.Status)
+	return status == DeviceStatusTrusted || status == DeviceStatusReplacementPending
+}
+
+func (lm *LicenseManager) IssueDeviceReplacementToken(ctx context.Context, licenseID, oldFingerprint, createdBy string, ttl time.Duration) (*DeviceReplacementToken, string, error) {
+	if ttl <= 0 {
+		ttl = 24 * time.Hour
+	}
+	license, err := lm.storage.GetLicense(ctx, strings.TrimSpace(licenseID))
+	if err != nil {
+		return nil, "", err
+	}
+	oldFingerprint = strings.TrimSpace(oldFingerprint)
+	if oldFingerprint == "" {
+		return nil, "", fmt.Errorf("old fingerprint is required")
+	}
+	device, ok := license.Devices[oldFingerprint]
+	if !ok || device == nil {
+		return nil, "", fmt.Errorf("device not found")
+	}
+	now := time.Now().UTC()
+	raw, err := lm.randomBytes(32)
+	if err != nil {
+		return nil, "", err
+	}
+	tokenValue := base64.RawURLEncoding.EncodeToString(raw)
+	token := &DeviceReplacementToken{
+		ID:             uuid.New().String(),
+		TokenHash:      deviceReplacementTokenHash(tokenValue),
+		LicenseID:      license.ID,
+		OldFingerprint: oldFingerprint,
+		CreatedAt:      now,
+		ExpiresAt:      now.Add(ttl),
+		CreatedBy:      strings.TrimSpace(createdBy),
+	}
+	if err := lm.storage.SaveDeviceReplacementToken(ctx, token); err != nil {
+		return nil, "", err
+	}
+	device.Status = DeviceStatusReplacementPending
+	device.ReplacementTokenID = token.ID
+	if err := lm.storage.UpdateLicense(ctx, license); err != nil {
+		return nil, "", err
+	}
+	return token, tokenValue, nil
+}
+
+func (lm *LicenseManager) ListDeviceReplacementTokens(ctx context.Context, licenseID string) ([]*DeviceReplacementToken, error) {
+	return lm.storage.ListDeviceReplacementTokensByLicense(ctx, strings.TrimSpace(licenseID))
+}
+
+func (lm *LicenseManager) RevokeDevice(ctx context.Context, licenseID, fingerprint, reason string) (*License, error) {
+	license, err := lm.storage.GetLicense(ctx, strings.TrimSpace(licenseID))
+	if err != nil {
+		return nil, err
+	}
+	fingerprint = strings.TrimSpace(fingerprint)
+	device, ok := license.Devices[fingerprint]
+	if !ok || device == nil {
+		return nil, fmt.Errorf("device not found")
+	}
+	device.Status = DeviceStatusRevoked
+	device.RevokedAt = time.Now().UTC()
+	device.RevokedReason = strings.TrimSpace(reason)
+	refreshLicenseDeviceStats(license)
+	if err := lm.storage.UpdateLicense(ctx, license); err != nil {
+		return nil, err
+	}
+	return license, nil
+}
+
+func (lm *LicenseManager) ReinstateDevice(ctx context.Context, licenseID, fingerprint string) (*License, error) {
+	license, err := lm.storage.GetLicense(ctx, strings.TrimSpace(licenseID))
+	if err != nil {
+		return nil, err
+	}
+	fingerprint = strings.TrimSpace(fingerprint)
+	device, ok := license.Devices[fingerprint]
+	if !ok || device == nil {
+		return nil, fmt.Errorf("device not found")
+	}
+	device.Status = DeviceStatusTrusted
+	device.RevokedAt = time.Time{}
+	device.RevokedReason = ""
+	device.ReplacementTokenID = ""
+	refreshLicenseDeviceStats(license)
+	if license.MaxDevices > 0 && license.DeviceCount > license.MaxDevices {
+		return nil, fmt.Errorf("maximum devices (%d) would be exceeded", license.MaxDevices)
+	}
+	if err := lm.storage.UpdateLicense(ctx, license); err != nil {
+		return nil, err
+	}
+	return license, nil
+}
+
+func (lm *LicenseManager) consumeReplacementToken(ctx context.Context, license *License, newFingerprint, tokenValue string, now time.Time) (*DeviceReplacementToken, error) {
+	tokenValue = strings.TrimSpace(tokenValue)
+	if tokenValue == "" {
+		return nil, nil
+	}
+	token, err := lm.storage.GetDeviceReplacementTokenByHash(ctx, deviceReplacementTokenHash(tokenValue))
+	if err != nil {
+		return nil, fmt.Errorf("invalid replacement token")
+	}
+	if token.LicenseID != license.ID {
+		return nil, fmt.Errorf("replacement token is not valid for this license")
+	}
+	if !token.UsedAt.IsZero() {
+		return nil, fmt.Errorf("replacement token has already been used")
+	}
+	if !token.RevokedAt.IsZero() {
+		return nil, fmt.Errorf("replacement token has been revoked")
+	}
+	if now.After(token.ExpiresAt) {
+		return nil, fmt.Errorf("replacement token expired")
+	}
+	oldDevice, ok := license.Devices[token.OldFingerprint]
+	if !ok || oldDevice == nil {
+		return nil, fmt.Errorf("replacement source device not found")
+	}
+	newFingerprint = strings.TrimSpace(newFingerprint)
+	if token.OldFingerprint == newFingerprint {
+		return nil, fmt.Errorf("replacement device must be different")
+	}
+	token.UsedAt = now
+	token.ReplacementFingerprint = newFingerprint
+	oldDevice.Status = DeviceStatusReplaced
+	oldDevice.ReplacedByFingerprint = newFingerprint
+	oldDevice.ReplacementTokenID = token.ID
+	return token, nil
 }
 
 func (lm *LicenseManager) ActivateLicense(ctx context.Context, req *ActivationRequest) (*ActivationResponse, error) {
@@ -1637,7 +1790,19 @@ func (lm *LicenseManager) ActivateLicense(ctx context.Context, req *ActivationRe
 		return &ActivationResponse{Success: false, Message: message}, nil
 	}
 
+	replacementToken, err := lm.consumeReplacementToken(ctx, license, req.DeviceFingerprint, req.ReplacementToken, now)
+	if err != nil {
+		message := err.Error()
+		lm.recordActivationAttempt(ctx, license, req, false, message)
+		return &ActivationResponse{Success: false, Message: message}, nil
+	}
+
 	device, exists := license.Devices[req.DeviceFingerprint]
+	if exists && !deviceCanActivate(device) {
+		message := fmt.Sprintf("Device is %s", normalizeDeviceStatus(device.Status))
+		lm.recordActivationAttempt(ctx, license, req, false, message)
+		return &ActivationResponse{Success: false, Message: message}, nil
+	}
 	proofPublicKey, err := verifyRequestDeviceProof(req, DeviceProofPurposeActivate, device)
 	if err != nil {
 		message := err.Error()
@@ -1645,9 +1810,10 @@ func (lm *LicenseManager) ActivateLicense(ctx context.Context, req *ActivationRe
 		return &ActivationResponse{Success: false, Message: message}, nil
 	}
 	if !exists {
-		if license.MaxDevices > 0 && len(license.Devices) >= license.MaxDevices {
+		refreshLicenseDeviceStats(license)
+		if replacementToken == nil && license.MaxDevices > 0 && license.DeviceCount >= license.MaxDevices {
 			message := fmt.Sprintf("Maximum devices (%d) reached", license.MaxDevices)
-			phusluLog.Error().Str("operation", "activate_license").Str("message", message).Str("licenseID", license.ID).Int("maxDevices", license.MaxDevices).Int("currentDevices", len(license.Devices)).Msg("")
+			phusluLog.Error().Str("operation", "activate_license").Str("message", message).Str("licenseID", license.ID).Int("maxDevices", license.MaxDevices).Int("currentDevices", license.DeviceCount).Msg("")
 			lm.recordActivationAttempt(ctx, license, req, false, message)
 			return &ActivationResponse{Success: false, Message: message}, nil
 		}
@@ -1660,9 +1826,11 @@ func (lm *LicenseManager) ActivateLicense(ctx context.Context, req *ActivationRe
 			ActivatedAt:  now,
 			LastSeenAt:   now,
 			TransportKey: transportKey,
+			Status:       DeviceStatusTrusted,
 		}
 		license.Devices[req.DeviceFingerprint] = device
 	} else {
+		device.Status = normalizeDeviceStatus(device.Status)
 		device.LastSeenAt = now
 		if len(device.TransportKey) == 0 {
 			transportKey, err := lm.randomBytes(32)
@@ -1672,6 +1840,16 @@ func (lm *LicenseManager) ActivateLicense(ctx context.Context, req *ActivationRe
 			device.TransportKey = transportKey
 		}
 	}
+	if replacementToken != nil {
+		device.ReplacementTokenID = replacementToken.ID
+		if err := lm.storage.UpdateDeviceReplacementToken(ctx, replacementToken); err != nil {
+			return nil, err
+		}
+	}
+	device.Status = DeviceStatusTrusted
+	device.LastIP = strings.TrimSpace(req.IPAddress)
+	device.LastUserAgent = strings.TrimSpace(req.UserAgent)
+	device.AppVersion = strings.TrimSpace(req.AppVersion)
 	applyDeviceProof(device, req.DeviceProof, proofPublicKey, now)
 
 	license.IsActivated = true
@@ -1840,6 +2018,12 @@ func (lm *LicenseManager) VerifyLicense(ctx context.Context, req *ActivationRequ
 		lm.recordActivationAttempt(ctx, license, req, false, message)
 		return &ActivationResponse{Success: false, Message: message}, nil
 	}
+	if !deviceCanVerify(device) {
+		message := fmt.Sprintf("Device is %s", normalizeDeviceStatus(device.Status))
+		phusluLog.Error().Str("operation", "verify_license").Str("message", message).Str("licenseID", license.ID).Str("deviceFingerprint", req.DeviceFingerprint).Msg("")
+		lm.recordActivationAttempt(ctx, license, req, false, message)
+		return &ActivationResponse{Success: false, Message: message}, nil
+	}
 	proofPublicKey, err := verifyRequestDeviceProof(req, DeviceProofPurposeVerify, device)
 	if err != nil {
 		message := err.Error()
@@ -1855,6 +2039,10 @@ func (lm *LicenseManager) VerifyLicense(ctx context.Context, req *ActivationRequ
 		device.TransportKey = transportKey
 	}
 	device.LastSeenAt = now
+	device.Status = DeviceStatusTrusted
+	device.LastIP = strings.TrimSpace(req.IPAddress)
+	device.LastUserAgent = strings.TrimSpace(req.UserAgent)
+	device.AppVersion = strings.TrimSpace(req.AppVersion)
 	applyDeviceProof(device, req.DeviceProof, proofPublicKey, now)
 	license.LastActivatedAt = now
 	refreshLicenseDeviceStats(license)

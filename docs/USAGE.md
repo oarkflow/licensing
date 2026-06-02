@@ -208,14 +208,15 @@ Run the CLI directly (`go run ./client`) or build a static binary. Configuration
 | Flag | Environment | Purpose |
 | --- | --- | --- |
 | `--activation-mode` | — | `auto`, `prompt`, or `verify`. |
-| `--config-dir` | `LICENSE_CLIENT_CONFIG_DIR` | Directory that holds the encrypted license (`~/.licensing` default). |
-| `--license-store` | `LICENSE_CLIENT_LICENSE_FILE` | File name under the config dir (`.license.dat` default). |
+| `--config-dir` | — | Directory that holds the encrypted license (`~/.licensing` default). |
+| `--license-store` | — | File name under the config dir (`.license.dat` default). |
+| `--device-key-file` | — | Persistent device proof private key path; mount this path on a volume for containers. |
 | `--license-file` | — | JSON file containing `email`, `client_id`, `license_key`. |
-| `--server-url` | `LICENSE_CLIENT_SERVER` | Server base URL. HTTPS is required unless `--allow-insecure-http`. |
-| `--http-timeout` | `LICENSE_CLIENT_HTTP_TIMEOUT` | Go duration string (e.g. `30s`). |
-| `--ca-cert` | `LICENSE_CLIENT_CA_CERT` | Additional CA bundle path. |
-| `--allow-insecure-http` | `LICENSE_CLIENT_ALLOW_INSECURE_HTTP` | Accept HTTP + skip TLS verification (local testing). |
-| `--exec` / `--` | `LICENSE_CLIENT_EXEC` | Command to run after successful verification. |
+| `--server-url` | — | Server base URL. HTTPS is required unless `--allow-insecure-http`. |
+| `--http-timeout` | — | Go duration string (e.g. `30s`). |
+| `--ca-cert` | — | Additional CA bundle path. |
+| `--allow-insecure-http` | — | Accept HTTP + skip TLS verification (local testing). |
+| `--exec` / `--` | — | Command to run after successful verification. |
 
 ### Activation Strategies
 
@@ -231,8 +232,7 @@ Supply a command after `--` or via `--exec` so your app only runs when licensing
 
 ```bash
 # Using --exec
-LICENSE_CLIENT_SERVER=https://licensing.example.com \
-  go run ./client --exec "./bin/my-app --serve"
+go run ./client --server-url https://licensing.example.com --exec "./bin/my-app --serve"
 
 # Using -- to forward arbitrary args
 go run ./client -- -- ./bin/my-app --serve --port 9000
@@ -266,7 +266,7 @@ When a license uses `check_mode"custom"`, the helper client (`client/app.go`) au
    ```
 3. Deploy `go run ./cmd/server --http-addr :443`.
 4. Use CI to call `/api/licenses` with `plan_slug` per tier.
-5. Distribute the client binary with `LICENSE_CLIENT_SERVER=https://licensing.example.com` baked in.
+5. Distribute the client binary with the licensing server URL supplied by code config or an explicit `--server-url` flag.
 
 ### 2. Offline-first appliance
 1. Activate once while connected using `--activation-mode prompt` or `--license-file`.

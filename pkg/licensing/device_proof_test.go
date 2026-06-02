@@ -53,6 +53,19 @@ func testDeviceProof(t *testing.T, purpose string, challenge *DeviceChallenge, r
 	}
 }
 
+func testEd25519Fingerprint(priv ed25519.PrivateKey) string {
+	return DeviceProofFingerprint(DeviceProofAlgorithmEd25519, priv.Public().(ed25519.PublicKey))
+}
+
+func testRSAFingerprint(t *testing.T, priv *rsa.PrivateKey) string {
+	t.Helper()
+	pubDER, err := x509.MarshalPKIXPublicKey(&priv.PublicKey)
+	if err != nil {
+		t.Fatalf("MarshalPKIXPublicKey failed: %v", err)
+	}
+	return DeviceProofFingerprint(DeviceProofAlgorithmRSAPSSSHA256, pubDER)
+}
+
 func testRSADeviceProof(t *testing.T, purpose string, challenge *DeviceChallenge, req *ActivationRequest, priv *rsa.PrivateKey) *DeviceProof {
 	t.Helper()
 	pubDER, err := x509.MarshalPKIXPublicKey(&priv.PublicKey)
@@ -90,6 +103,28 @@ func testRSADeviceProof(t *testing.T, purpose string, challenge *DeviceChallenge
 			"type":   "tpm2",
 			"status": "unattested-test",
 		},
+	}
+}
+
+func TestDeviceProofFingerprintContract(t *testing.T) {
+	pub, _, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatalf("GenerateKey failed: %v", err)
+	}
+
+	keyID := DeviceProofPublicKeyID(pub)
+	first := DeviceProofFingerprint(DeviceProofAlgorithmEd25519, pub)
+	second := DeviceProofFingerprint(" ED25519 ", pub)
+	want := "fp:v2:ed25519:" + keyID
+
+	if first != want {
+		t.Fatalf("unexpected versioned proof fingerprint: got %s want %s", first, want)
+	}
+	if second != first {
+		t.Fatalf("expected algorithm normalization to be deterministic, got %s then %s", first, second)
+	}
+	if keyID == first {
+		t.Fatalf("expected versioned proof fingerprint to be distinct from legacy raw key id")
 	}
 }
 
@@ -181,11 +216,11 @@ func TestDeviceProofRejectsTrialBypassWithRotatedFakeFingerprintsWithoutProof(t 
 
 func TestDeviceProofRejectsCopiedLicenseSpoofWithOnlyFingerprint(t *testing.T) {
 	lm, client, license := seedProofLicenseManager(t, 1)
-	const copiedFingerprint = "copiedlicensefp01"
 	_, priv, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
 		t.Fatalf("GenerateKey failed: %v", err)
 	}
+	copiedFingerprint := testEd25519Fingerprint(priv)
 	activateReq := &ActivationRequest{
 		Email:             client.Email,
 		ClientID:          client.ID,
@@ -223,7 +258,7 @@ func TestDeviceProofRejectsPublicKeyMismatch(t *testing.T) {
 		Email:             client.Email,
 		ClientID:          client.ID,
 		LicenseKey:        license.LicenseKey,
-		DeviceFingerprint: "proofdevice000001",
+		DeviceFingerprint: testEd25519Fingerprint(priv),
 	}
 	req.DeviceProof = testDeviceProof(t, DeviceProofPurposeActivate, &DeviceChallenge{ID: "ch-1", Nonce: "nonce-1"}, req, priv)
 	resp, err := lm.ActivateLicense(context.Background(), req)
@@ -246,8 +281,147 @@ func TestDeviceProofRejectsPublicKeyMismatch(t *testing.T) {
 	if err != nil {
 		t.Fatalf("VerifyLicense returned unexpected error: %v", err)
 	}
-	if verifyResp.Success || verifyResp.Message != "device proof public key mismatch" {
-		t.Fatalf("expected public key mismatch failure, got %+v", verifyResp)
+	if verifyResp.Success || verifyResp.Message != "device proof fingerprint mismatch" {
+		t.Fatalf("expected fingerprint mismatch failure, got %+v", verifyResp)
+	}
+}
+
+func activateTestDevice(t *testing.T, lm *LicenseManager, client *Client, license *License, fingerprint string, priv ed25519.PrivateKey, replacementToken string) *ActivationResponse {
+	t.Helper()
+	if fingerprint == "" {
+		fingerprint = testEd25519Fingerprint(priv)
+	}
+	req := &ActivationRequest{
+		Email:             client.Email,
+		ClientID:          client.ID,
+		LicenseKey:        license.LicenseKey,
+		DeviceFingerprint: fingerprint,
+		ReplacementToken:  replacementToken,
+	}
+	req.DeviceProof = testDeviceProof(t, DeviceProofPurposeActivate, &DeviceChallenge{ID: "activate-" + fingerprint, Nonce: "nonce-" + fingerprint}, req, priv)
+	resp, err := lm.ActivateLicense(context.Background(), req)
+	if err != nil {
+		t.Fatalf("ActivateLicense failed: %v", err)
+	}
+	return resp
+}
+
+func verifyTestDevice(t *testing.T, lm *LicenseManager, client *Client, license *License, fingerprint string, priv ed25519.PrivateKey) *ActivationResponse {
+	t.Helper()
+	req := &ActivationRequest{
+		Email:             client.Email,
+		ClientID:          client.ID,
+		LicenseKey:        license.LicenseKey,
+		DeviceFingerprint: fingerprint,
+	}
+	req.DeviceProof = testDeviceProof(t, DeviceProofPurposeVerify, &DeviceChallenge{ID: "verify-" + fingerprint, Nonce: "nonce-" + fingerprint}, req, priv)
+	resp, err := lm.VerifyLicense(context.Background(), req)
+	if err != nil {
+		t.Fatalf("VerifyLicense failed: %v", err)
+	}
+	return resp
+}
+
+func TestDeviceLifecycleRejectsRevokedDeviceVerification(t *testing.T) {
+	lm, client, license := seedProofLicenseManager(t, 1)
+	_, priv, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatalf("GenerateKey failed: %v", err)
+	}
+	fp := testEd25519Fingerprint(priv)
+	if resp := activateTestDevice(t, lm, client, license, fp, priv, ""); !resp.Success {
+		t.Fatalf("activation failed: %+v", resp)
+	}
+	if _, err := lm.RevokeDevice(context.Background(), license.ID, fp, "test revoke"); err != nil {
+		t.Fatalf("RevokeDevice failed: %v", err)
+	}
+	resp := verifyTestDevice(t, lm, client, license, fp, priv)
+	if resp.Success || resp.Message != "Device is revoked" {
+		t.Fatalf("expected revoked device verification failure, got %+v", resp)
+	}
+}
+
+func TestDeviceReplacementTokenReplacesDeviceWithoutIncreasingCount(t *testing.T) {
+	lm, client, license := seedProofLicenseManager(t, 1)
+	_, oldPriv, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatalf("GenerateKey old failed: %v", err)
+	}
+	_, newPriv, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatalf("GenerateKey new failed: %v", err)
+	}
+	oldFP := testEd25519Fingerprint(oldPriv)
+	newFP := testEd25519Fingerprint(newPriv)
+	if resp := activateTestDevice(t, lm, client, license, oldFP, oldPriv, ""); !resp.Success {
+		t.Fatalf("old activation failed: %+v", resp)
+	}
+	_, tokenValue, err := lm.IssueDeviceReplacementToken(context.Background(), license.ID, oldFP, "test", time.Hour)
+	if err != nil {
+		t.Fatalf("IssueDeviceReplacementToken failed: %v", err)
+	}
+	if resp := activateTestDevice(t, lm, client, license, newFP, newPriv, tokenValue); !resp.Success {
+		t.Fatalf("replacement activation failed: %+v", resp)
+	}
+	updated, err := lm.storage.GetLicense(context.Background(), license.ID)
+	if err != nil {
+		t.Fatalf("GetLicense failed: %v", err)
+	}
+	if updated.DeviceCount != 1 || updated.CurrentActivations != 1 {
+		t.Fatalf("expected one active device after replacement, got count=%d activations=%d", updated.DeviceCount, updated.CurrentActivations)
+	}
+	if got := updated.Devices[oldFP].Status; got != DeviceStatusReplaced {
+		t.Fatalf("expected old device replaced, got %s", got)
+	}
+	if got := updated.Devices[newFP].Status; got != DeviceStatusTrusted {
+		t.Fatalf("expected new device trusted, got %s", got)
+	}
+	resp := activateTestDevice(t, lm, client, license, "", newPriv, tokenValue)
+	if resp.Success || resp.Message != "replacement token has already been used" {
+		t.Fatalf("expected reused replacement token rejection, got %+v", resp)
+	}
+}
+
+func TestDeviceReplacementTokenRejectsExpiredAndWrongLicense(t *testing.T) {
+	lm, client, license := seedProofLicenseManager(t, 1)
+	otherLM, otherClient, otherLicense := seedProofLicenseManager(t, 1)
+	_, oldPriv, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatalf("GenerateKey old failed: %v", err)
+	}
+	_, newPriv, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatalf("GenerateKey new failed: %v", err)
+	}
+	oldFP := testEd25519Fingerprint(oldPriv)
+	if resp := activateTestDevice(t, lm, client, license, oldFP, oldPriv, ""); !resp.Success {
+		t.Fatalf("old activation failed: %+v", resp)
+	}
+	_, expiredToken, err := lm.IssueDeviceReplacementToken(context.Background(), license.ID, oldFP, "test", time.Nanosecond)
+	if err != nil {
+		t.Fatalf("IssueDeviceReplacementToken expired failed: %v", err)
+	}
+	time.Sleep(time.Millisecond)
+	resp := activateTestDevice(t, lm, client, license, "", newPriv, expiredToken)
+	if resp.Success || resp.Message != "replacement token expired" {
+		t.Fatalf("expected expired replacement token rejection, got %+v", resp)
+	}
+
+	_, otherOldPriv, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatalf("GenerateKey other old failed: %v", err)
+	}
+	otherOldFP := testEd25519Fingerprint(otherOldPriv)
+	if resp := activateTestDevice(t, otherLM, otherClient, otherLicense, otherOldFP, otherOldPriv, ""); !resp.Success {
+		t.Fatalf("other activation failed: %+v", resp)
+	}
+	_, wrongLicenseToken, err := otherLM.IssueDeviceReplacementToken(context.Background(), otherLicense.ID, otherOldFP, "test", time.Hour)
+	if err != nil {
+		t.Fatalf("IssueDeviceReplacementToken wrong-license failed: %v", err)
+	}
+	resp = activateTestDevice(t, lm, client, license, "", newPriv, wrongLicenseToken)
+	if resp.Success || resp.Message != "invalid replacement token" {
+		t.Fatalf("expected wrong license token rejection, got %+v", resp)
 	}
 }
 
@@ -261,7 +435,7 @@ func TestDeviceProofAcceptsRSAPSSSHA256Provider(t *testing.T) {
 		Email:             client.Email,
 		ClientID:          client.ID,
 		LicenseKey:        license.LicenseKey,
-		DeviceFingerprint: "rsaproofdevice0001",
+		DeviceFingerprint: testRSAFingerprint(t, priv),
 	}
 	req.DeviceProof = testRSADeviceProof(t, DeviceProofPurposeActivate, &DeviceChallenge{ID: "rsa-ch-1", Nonce: "rsa-nonce-1"}, req, priv)
 	resp, err := lm.ActivateLicense(context.Background(), req)
@@ -309,7 +483,7 @@ func TestDeviceChallengeReplayIsRejected(t *testing.T) {
 		Email:             client.Email,
 		ClientID:          client.ID,
 		LicenseKey:        license.LicenseKey,
-		DeviceFingerprint: "replayproofdevice1",
+		DeviceFingerprint: testEd25519Fingerprint(priv),
 	}
 	activateReq.DeviceProof = testDeviceProof(t, DeviceProofPurposeActivate, activateChallenge, activateReq, priv)
 	body, _ := json.Marshal(activateReq)
@@ -381,6 +555,13 @@ func TestSQLiteDeviceProofColumnsAddedToExistingLicenseDevicesTable(t *testing.T
 	}
 	defer storage.db.Close()
 	for _, column := range []string{
+		"status",
+		"label",
+		"hardware_fingerprint",
+		"hardware_confidence",
+		"last_ip",
+		"last_user_agent",
+		"app_version",
 		"proof_version",
 		"device_key_id",
 		"device_public_key",
@@ -389,6 +570,10 @@ func TestSQLiteDeviceProofColumnsAddedToExistingLicenseDevicesTable(t *testing.T
 		"attestation_type",
 		"attestation_status",
 		"last_proof_at",
+		"revoked_at",
+		"revoked_reason",
+		"replaced_by_fingerprint",
+		"replacement_token_id",
 	} {
 		exists, err := sqliteColumnExists(storage.db, "license_devices", column)
 		if err != nil {
@@ -397,5 +582,9 @@ func TestSQLiteDeviceProofColumnsAddedToExistingLicenseDevicesTable(t *testing.T
 		if !exists {
 			t.Fatalf("expected license_devices.%s to be added", column)
 		}
+	}
+	var tableName string
+	if err := storage.db.QueryRow(`SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'device_replacement_tokens'`).Scan(&tableName); err != nil {
+		t.Fatalf("expected device_replacement_tokens table to exist: %v", err)
 	}
 }

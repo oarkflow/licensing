@@ -13,6 +13,8 @@ import {
     CheckCircle,
     XCircle,
     Ticket,
+    ShieldCheck,
+    RefreshCw,
 } from 'lucide-react';
 import {
     Tooltip,
@@ -62,7 +64,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { useToast } from '@/hooks/use-toast';
-import type { CouponRedemption, FeatureScopeSelection, License, LicenseDevice } from '@/types/api';
+import type { CouponRedemption, DeviceReplacementToken, FeatureScopeSelection, License, LicenseDevice } from '@/types/api';
 import { FeatureScopeSelector } from '@/components/licenses/FeatureScopeSelector';
 import { entitlementsToSelections, slugToLabel, groupScopesForFeature, categorizeSelections } from '@/lib/entitlements';
 
@@ -80,6 +82,26 @@ function getLicenseStatusBadge(license: License) {
     return <Badge variant="default">Active</Badge>;
 }
 
+function getDeviceStatusBadge(status?: LicenseDevice['status']) {
+    switch (status || 'trusted') {
+        case 'revoked':
+            return <Badge variant="destructive">Revoked</Badge>;
+        case 'replacement_pending':
+            return <Badge variant="secondary">Replacement pending</Badge>;
+        case 'replaced':
+            return <Badge variant="outline">Replaced</Badge>;
+        case 'suspicious':
+            return <Badge variant="destructive">Suspicious</Badge>;
+        default:
+            return <Badge variant="default">Trusted</Badge>;
+    }
+}
+
+function shortValue(value?: string, length = 20) {
+    if (!value) return '—';
+    return value.length > length ? `${value.substring(0, length)}...` : value;
+}
+
 export function LicenseDetailPage() {
     const { id } = useParams<{ id: string }>();
     const navigate = useNavigate();
@@ -92,6 +114,7 @@ export function LicenseDetailPage() {
     const [tokenMaxUses, setTokenMaxUses] = useState<number | undefined>(30);
     const [tokenValidity, setTokenValidity] = useState<number | undefined>(30);
     const [issuedTokenBundle, setIssuedTokenBundle] = useState<any | null>(null);
+    const [issuedReplacementToken, setIssuedReplacementToken] = useState<{ token: string; token_record: DeviceReplacementToken } | null>(null);
 
     const issueMutation = useMutation({
         mutationFn: (payload: { license_key: string; device_fingerprint: string; max_uses?: number; validity_days?: number }) => api.createOfflineToken(payload),
@@ -131,6 +154,11 @@ export function LicenseDetailPage() {
     const { data: couponRedemptionsResponse } = useQuery({
         queryKey: ['license-coupons', id],
         queryFn: () => api.listLicenseCoupons(id!),
+        enabled: !!id,
+    });
+    const { data: replacementTokensResponse } = useQuery({
+        queryKey: ['device-replacement-tokens', id],
+        queryFn: () => api.listDeviceReplacementTokens(id!),
         enabled: !!id,
     });
 
@@ -175,6 +203,58 @@ export function LicenseDetailPage() {
         onError: (error) => {
             toast({
                 title: 'Failed to delete device',
+                description: error instanceof Error ? error.message : 'Unknown error',
+                variant: 'destructive',
+            });
+        },
+    });
+
+    const revokeDeviceMutation = useMutation({
+        mutationFn: ({ fingerprint, reason }: { fingerprint: string; reason?: string }) => api.revokeDevice(id!, fingerprint, reason),
+        onSuccess: () => {
+            queryClient.invalidateQueries({ queryKey: ['license', id] });
+            queryClient.invalidateQueries({ queryKey: ['device-replacement-tokens', id] });
+            toast({ title: 'Device revoked' });
+        },
+        onError: (error) => {
+            toast({
+                title: 'Failed to revoke device',
+                description: error instanceof Error ? error.message : 'Unknown error',
+                variant: 'destructive',
+            });
+        },
+    });
+
+    const reinstateDeviceMutation = useMutation({
+        mutationFn: (fingerprint: string) => api.reinstateDevice(id!, fingerprint),
+        onSuccess: () => {
+            queryClient.invalidateQueries({ queryKey: ['license', id] });
+            toast({ title: 'Device reinstated' });
+        },
+        onError: (error) => {
+            toast({
+                title: 'Failed to reinstate device',
+                description: error instanceof Error ? error.message : 'Unknown error',
+                variant: 'destructive',
+            });
+        },
+    });
+
+    const replacementTokenMutation = useMutation({
+        mutationFn: (fingerprint: string) => api.issueDeviceReplacementToken(id!, fingerprint, 24),
+        onSuccess: (response) => {
+            if (response.success && response.data) {
+                setIssuedReplacementToken(response.data);
+                queryClient.invalidateQueries({ queryKey: ['license', id] });
+                queryClient.invalidateQueries({ queryKey: ['device-replacement-tokens', id] });
+                toast({ title: 'Replacement token issued' });
+            } else {
+                toast({ title: 'Failed to issue replacement token', description: response.error || 'Unknown error', variant: 'destructive' });
+            }
+        },
+        onError: (error) => {
+            toast({
+                title: 'Failed to issue replacement token',
                 description: error instanceof Error ? error.message : 'Unknown error',
                 variant: 'destructive',
             });
@@ -276,6 +356,7 @@ export function LicenseDetailPage() {
 
     const selectorLoading = planEntitlementsLoading && editedFeatureScopes.length === 0;
     const couponRedemptions: CouponRedemption[] = couponRedemptionsResponse?.data || [];
+    const replacementTokens: DeviceReplacementToken[] = replacementTokensResponse?.data || [];
 
     return (
         <div className="space-y-6">
@@ -404,6 +485,25 @@ export function LicenseDetailPage() {
                                 <DialogFooter>
                                     <Button onClick={() => { navigator.clipboard.writeText(typeof issuedTokenBundle === 'string' ? issuedTokenBundle : JSON.stringify(issuedTokenBundle)); toast({ title: 'Copied to clipboard' }); }}>Copy</Button>
                                     <Button onClick={() => setIssuedTokenBundle(null)}>Close</Button>
+                                </DialogFooter>
+                            </DialogContent>
+                        </Dialog>
+                    )}
+                    {issuedReplacementToken && (
+                        <Dialog open={Boolean(issuedReplacementToken)} onOpenChange={() => setIssuedReplacementToken(null)}>
+                            <DialogContent>
+                                <DialogHeader>
+                                    <DialogTitle>Device Replacement Token</DialogTitle>
+                                    <DialogDescription>
+                                        Share this one-time token with the replacement device. It expires {new Date(issuedReplacementToken.token_record.expires_at).toLocaleString()}.
+                                    </DialogDescription>
+                                </DialogHeader>
+                                <div className="space-y-3 py-2">
+                                    <Textarea readOnly value={issuedReplacementToken.token} className="font-mono text-xs" />
+                                </div>
+                                <DialogFooter>
+                                    <Button onClick={() => copyToClipboard(issuedReplacementToken.token)}>Copy</Button>
+                                    <Button variant="ghost" onClick={() => setIssuedReplacementToken(null)}>Close</Button>
                                 </DialogFooter>
                             </DialogContent>
                         </Dialog>
@@ -643,30 +743,106 @@ export function LicenseDetailPage() {
                         <Table>
                             <TableHeader>
                                 <TableRow>
-                                    <TableHead>Fingerprint</TableHead>
-                                    <TableHead>Activated</TableHead>
+                                    <TableHead>Device</TableHead>
+                                    <TableHead>Status</TableHead>
+                                    <TableHead>Proof</TableHead>
                                     <TableHead>Last Seen</TableHead>
-                                    <TableHead className="w-[100px]">Actions</TableHead>
+                                    <TableHead className="w-[180px]">Actions</TableHead>
                                 </TableRow>
                             </TableHeader>
                             <TableBody>
                                 {devices.map(([fingerprint, device]) => (
                                     <TableRow key={fingerprint}>
-                                        <TableCell className="font-mono text-sm">
-                                            {fingerprint.substring(0, 20)}...
+                                        <TableCell className="max-w-[280px]">
+                                            <div className="space-y-1">
+                                                <div className="font-mono text-sm">{shortValue(fingerprint, 28)}</div>
+                                                {device.device_key_id && (
+                                                    <div className="text-xs text-muted-foreground">key {shortValue(device.device_key_id, 18)}</div>
+                                                )}
+                                                {device.replaced_by_fingerprint && (
+                                                    <div className="text-xs text-muted-foreground">replaced by {shortValue(device.replaced_by_fingerprint, 14)}</div>
+                                                )}
+                                                {device.hardware_fingerprint && (
+                                                    <div className="text-xs text-muted-foreground">hw {shortValue(device.hardware_fingerprint, 22)}</div>
+                                                )}
+                                            </div>
                                         </TableCell>
+                                        <TableCell>{getDeviceStatusBadge(device.status)}</TableCell>
                                         <TableCell>
-                                            <div className="flex items-center gap-1 text-sm">
-                                                <Clock className="h-3 w-3" />
-                                                {device.activated_at ? new Date(device.activated_at).toLocaleDateString() : '—'}
+                                            <div className="space-y-1 text-sm">
+                                                <div className="flex items-center gap-1">
+                                                    <ShieldCheck className="h-3 w-3" />
+                                                    {device.key_provider || 'unknown'}
+                                                </div>
+                                                <div className="text-xs text-muted-foreground">
+                                                    {device.public_key_algorithm || 'proof pending'}
+                                                    {device.attestation_type ? ` / ${device.attestation_type}` : ''}
+                                                </div>
+                                                {device.last_proof_at && (
+                                                    <div className="text-xs text-muted-foreground">
+                                                        proof {new Date(device.last_proof_at).toLocaleDateString()}
+                                                    </div>
+                                                )}
                                             </div>
                                         </TableCell>
                                         <TableCell>
-                                            {device.last_seen_at
-                                                ? new Date(device.last_seen_at).toLocaleDateString()
-                                                : '—'}
+                                            <div className="space-y-1 text-sm">
+                                                <div className="flex items-center gap-1">
+                                                    <Clock className="h-3 w-3" />
+                                                    {device.last_seen_at ? new Date(device.last_seen_at).toLocaleDateString() : '—'}
+                                                </div>
+                                                {device.last_ip && <div className="text-xs text-muted-foreground">{device.last_ip}</div>}
+                                            </div>
                                         </TableCell>
-                                        <TableCell>
+                                        <TableCell className="flex items-center gap-1">
+                                            {device.status === 'revoked' ? (
+                                                <Tooltip>
+                                                    <TooltipTrigger asChild>
+                                                        <Button
+                                                            variant="ghost"
+                                                            size="icon"
+                                                            onClick={() => reinstateDeviceMutation.mutate(fingerprint)}
+                                                            disabled={reinstateDeviceMutation.isPending}
+                                                        >
+                                                            <RotateCcw className="h-4 w-4" />
+                                                        </Button>
+                                                    </TooltipTrigger>
+                                                    <TooltipContent>
+                                                        <p>Reinstate device</p>
+                                                    </TooltipContent>
+                                                </Tooltip>
+                                            ) : (
+                                                <Tooltip>
+                                                    <TooltipTrigger asChild>
+                                                        <Button
+                                                            variant="ghost"
+                                                            size="icon"
+                                                            onClick={() => revokeDeviceMutation.mutate({ fingerprint, reason: 'Revoked from admin UI' })}
+                                                            disabled={revokeDeviceMutation.isPending}
+                                                        >
+                                                            <Ban className="h-4 w-4" />
+                                                        </Button>
+                                                    </TooltipTrigger>
+                                                    <TooltipContent>
+                                                        <p>Revoke device</p>
+                                                    </TooltipContent>
+                                                </Tooltip>
+                                            )}
+                                            <Tooltip>
+                                                <TooltipTrigger asChild>
+                                                    <Button
+                                                        variant="ghost"
+                                                        size="icon"
+                                                        onClick={() => replacementTokenMutation.mutate(fingerprint)}
+                                                        disabled={replacementTokenMutation.isPending || device.status === 'replaced'}
+                                                    >
+                                                        <RefreshCw className="h-4 w-4" />
+                                                    </Button>
+                                                </TooltipTrigger>
+                                                <TooltipContent>
+                                                    <p>Issue replacement token</p>
+                                                </TooltipContent>
+                                            </Tooltip>
                                             <AlertDialog>
                                                 <Tooltip>
                                                     <TooltipTrigger asChild>
@@ -707,6 +883,39 @@ export function LicenseDetailPage() {
                     )}
                 </CardContent>
             </Card>
+
+            {replacementTokens.length > 0 && (
+                <Card>
+                    <CardHeader>
+                        <CardTitle>Replacement Tokens</CardTitle>
+                        <CardDescription>One-time device replacement grants for this license</CardDescription>
+                    </CardHeader>
+                    <CardContent>
+                        <Table>
+                            <TableHeader>
+                                <TableRow>
+                                    <TableHead>Old Device</TableHead>
+                                    <TableHead>Replacement</TableHead>
+                                    <TableHead>Expires</TableHead>
+                                    <TableHead>Status</TableHead>
+                                </TableRow>
+                            </TableHeader>
+                            <TableBody>
+                                {replacementTokens.map((token) => (
+                                    <TableRow key={token.id}>
+                                        <TableCell className="font-mono text-xs">{shortValue(token.old_fingerprint, 24)}</TableCell>
+                                        <TableCell className="font-mono text-xs">{shortValue(token.replacement_fingerprint, 24)}</TableCell>
+                                        <TableCell>{new Date(token.expires_at).toLocaleString()}</TableCell>
+                                        <TableCell>
+                                            {token.revoked_at ? <Badge variant="destructive">Revoked</Badge> : token.used_at ? <Badge variant="secondary">Used</Badge> : <Badge variant="default">Open</Badge>}
+                                        </TableCell>
+                                    </TableRow>
+                                ))}
+                            </TableBody>
+                        </Table>
+                    </CardContent>
+                </Card>
+            )}
 
             <Card>
                 <CardHeader>

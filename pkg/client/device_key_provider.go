@@ -12,8 +12,10 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strings"
 
+	"github.com/oarkflow/licensing/pkg/device"
 	licensingcore "github.com/oarkflow/licensing/pkg/licensing"
 	"github.com/zalando/go-keyring"
 )
@@ -59,10 +61,44 @@ func newDeviceKeyProvider(cfg Config) (deviceKeyProvider, error) {
 
 func softwareDeviceKeyPath(cfg Config) string {
 	path := strings.TrimSpace(cfg.DeviceKeyFile)
+	if path != "" {
+		if filepath.IsAbs(path) {
+			return filepath.Clean(path)
+		}
+		return filepath.Clean(filepath.Join(cfg.ConfigDir, path))
+	}
+
+	if device.IsRunningInContainer() {
+		if path := containerPersistentDeviceKeyPath(); path != "" {
+			return path
+		}
+	}
 	if path == "" {
 		path = filepath.Join(cfg.ConfigDir, defaultDeviceKeyFile)
 	}
-	return path
+	return filepath.Clean(path)
+}
+
+func containerPersistentDeviceKeyPath() string {
+	for _, dir := range []string{
+		"/var/lib/licensing",
+		"/var/lib/licensing/device",
+		"/data/licensing",
+		"/data/.licensing",
+		"/persistent/licensing",
+		"/persistent/.licensing",
+		"/app/.licensing",
+	} {
+		if directoryExists(dir) {
+			return filepath.Join(dir, defaultDeviceKeyFile)
+		}
+	}
+	return ""
+}
+
+func directoryExists(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && info.IsDir()
 }
 
 func newSoftwareDeviceKeyProvider(path string) (*softwareDeviceKeyProvider, error) {
@@ -357,6 +393,60 @@ func buildDeviceProof(ctx context.Context, provider deviceKeyProvider, challenge
 		PublicKeyAlgorithm: provider.PublicKeyAlgorithm(),
 		PublicKey:          licensingcore.EncodeDeviceProofBytes(pub),
 		Signature:          licensingcore.EncodeDeviceProofBytes(sig),
-		Attestation:        provider.Attestation(),
+		Attestation:        deviceProofAttestation(provider),
 	}, nil
+}
+
+func deviceProofAttestation(provider deviceKeyProvider) map[string]string {
+	attestation := map[string]string{}
+	if provider != nil {
+		for key, value := range provider.Attestation() {
+			key = strings.TrimSpace(key)
+			value = strings.TrimSpace(value)
+			if key != "" && value != "" {
+				attestation[key] = value
+			}
+		}
+	}
+	if info, err := device.GetInfo(); err == nil && info != nil {
+		if strings.TrimSpace(info.Fingerprint) != "" {
+			attestation["hardware_fingerprint"] = strings.TrimSpace(info.Fingerprint)
+		}
+		if len(info.IdentifierConfidence) > 0 {
+			attestation["hardware_confidence"] = formatIdentifierConfidence(info.IdentifierConfidence)
+		}
+		if strings.TrimSpace(info.Name) != "" {
+			attestation["label"] = strings.TrimSpace(info.Name)
+		} else if strings.TrimSpace(info.Label) != "" {
+			attestation["label"] = strings.TrimSpace(info.Label)
+		}
+		if strings.TrimSpace(info.Platform) != "" {
+			attestation["platform"] = strings.TrimSpace(info.Platform)
+		}
+		if info.IsContainer {
+			attestation["is_container"] = "true"
+		} else {
+			attestation["is_container"] = "false"
+		}
+	}
+	return attestation
+}
+
+func formatIdentifierConfidence(confidence map[string]string) string {
+	keys := make([]string, 0, len(confidence))
+	for key := range confidence {
+		if strings.TrimSpace(key) != "" {
+			keys = append(keys, key)
+		}
+	}
+	sort.Strings(keys)
+	parts := make([]string, 0, len(keys))
+	for _, key := range keys {
+		value := strings.TrimSpace(confidence[key])
+		if value == "" {
+			value = "low"
+		}
+		parts = append(parts, key+":"+value)
+	}
+	return strings.Join(parts, ",")
 }
