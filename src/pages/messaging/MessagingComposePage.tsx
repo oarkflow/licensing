@@ -1,6 +1,6 @@
 import { useMemo, useState, useRef } from 'react';
 import { useQuery, useMutation } from '@tanstack/react-query';
-import { ArrowLeft, Mail, MailCheck, MailPlus, Paperclip, Rocket, Send, Sparkles, X } from 'lucide-react';
+import { ArrowLeft, Loader2, Mail, MailCheck, MailPlus, Paperclip, Rocket, Send, X } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import api from '@/services/api';
 import { Button } from '@/components/ui/button';
@@ -255,7 +255,7 @@ export function MessagingComposePage() {
                             <div className="space-y-2">
                                 <Label>Template</Label>
                                 <Select value={selectedTemplateId} onValueChange={setSelectedTemplateId}>
-                                    <SelectTrigger className="rounded-2xl border border-border bg-transparent">
+                                    <SelectTrigger className="rounded-md border border-border bg-transparent">
                                         <SelectValue placeholder="Pick a template" />
                                     </SelectTrigger>
                                     <SelectContent>
@@ -281,7 +281,7 @@ export function MessagingComposePage() {
                                             {selectedClientIds.length} selected
                                         </Badge>
                                     </div>
-                                    <div className="rounded-2xl border border-border">
+                                    <div className="rounded-md border border-border">
                                         <ScrollArea className="h-72 p-4">
                                             {isLoadingClients ? (
                                                 <p className="text-sm text-muted-foreground">Loading clients…</p>
@@ -363,7 +363,7 @@ export function MessagingComposePage() {
                                 <Button
                                     type="button"
                                     variant="outline"
-                                    className="rounded-2xl"
+                                    className="rounded-md"
                                     onClick={() => fileInputRef.current?.click()}
                                 >
                                     <Paperclip className="mr-2 h-4 w-4" /> Add Files
@@ -380,7 +380,7 @@ export function MessagingComposePage() {
                                     {attachments.map((att, index) => (
                                         <div
                                             key={index}
-                                            className="flex items-center justify-between rounded-xl border border-border bg-muted px-4 py-2"
+                                            className="flex items-center justify-between rounded-md border border-border bg-muted px-4 py-2"
                                         >
                                             <div className="flex items-center gap-3">
                                                 <Paperclip className="h-4 w-4 text-muted-foreground" />
@@ -411,13 +411,13 @@ export function MessagingComposePage() {
                         <Button
                             type="button"
                             variant="outline"
-                            className="rounded-2xl"
+                            className="rounded-md"
                             disabled={previewMutation.isPending}
                             onClick={handlePreview}
                         >
                             {previewMutation.isPending ? (
                                 <>
-                                    <Sparkles className="mr-2 h-4 w-4 animate-spin" /> Rendering…
+                                    <Loader2 className="mr-2 h-4 w-4 animate-spin" /> Rendering...
                                 </>
                             ) : (
                                 <>
@@ -427,7 +427,7 @@ export function MessagingComposePage() {
                         </Button>
                         <Button
                             type="button"
-                            className="rounded-2xl"
+                            className="rounded-md"
                             disabled={sendMutation.isPending}
                             onClick={handleSend}
                         >
@@ -444,7 +444,7 @@ export function MessagingComposePage() {
                         <Button
                             type="button"
                             variant="ghost"
-                            className="rounded-2xl"
+                            className="rounded-md"
                             onClick={() => {
                                 setSelectedClientIds([]);
                                 setAdditionalEmails('');
@@ -480,20 +480,20 @@ export function MessagingComposePage() {
                                     {preview.html && (
                                         <div>
                                             <Label>HTML</Label>
-                                            <div className="rounded-2xl border border-border bg-muted p-4" dangerouslySetInnerHTML={{ __html: preview.html }} />
+                                            <div className="rounded-md border border-border bg-muted p-4" dangerouslySetInnerHTML={{ __html: preview.html }} />
                                         </div>
                                     )}
                                     {preview.text && (
                                         <div>
                                             <Label>Text</Label>
-                                            <pre className="rounded-2xl border border-border bg-muted p-4 text-sm text-muted-foreground overflow-auto">
+                                            <pre className="rounded-md border border-border bg-muted p-4 text-sm text-muted-foreground overflow-auto">
                                                 {preview.text}
                                             </pre>
                                         </div>
                                     )}
                                 </div>
                             ) : (
-                                <div className="rounded-3xl border border-dashed border-border p-8 text-center text-sm text-muted-foreground">
+                                <div className="rounded-md border border-dashed border-border p-8 text-center text-sm text-muted-foreground">
                                     <MailCheck className="mx-auto mb-4 h-10 w-10 text-muted-foreground" />
                                     Preview renders appear here after you select a template, recipients, and click Preview.
                                 </div>

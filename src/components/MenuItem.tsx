@@ -9,11 +9,11 @@ interface MenuItemProps {
 
 export const MenuItem = ({ name, description, price, badges }: MenuItemProps) => {
   return (
-    <div className="group relative overflow-hidden rounded-xl border border-border bg-card p-6 shadow-card transition-all duration-300 hover:border-primary/30 hover:shadow-lg">
+    <div className="border-y bg-background px-3 py-3 transition-colors hover:bg-muted/60">
       <div className="flex items-start justify-between gap-6">
-        <div className="flex-1 space-y-3">
-          <div className="space-y-2">
-            <h3 className="text-lg font-semibold text-card-foreground transition-colors group-hover:text-primary">
+        <div className="flex-1 space-y-2">
+          <div className="space-y-1.5">
+            <h3 className="text-sm font-semibold text-foreground">
               {name}
             </h3>
             {badges && badges.length > 0 && (
@@ -30,17 +30,16 @@ export const MenuItem = ({ name, description, price, badges }: MenuItemProps) =>
               </div>
             )}
           </div>
-          <p className="text-sm leading-relaxed text-muted-foreground">
+          <p className="text-xs leading-5 text-muted-foreground">
             {description}
           </p>
         </div>
         <div className="flex shrink-0 items-start">
-          <span className="text-xl font-bold text-primary">
+          <span className="text-sm font-semibold text-primary">
             {price}
           </span>
         </div>
       </div>
-      <div className="absolute bottom-0 left-0 h-1 w-0 bg-primary transition-all duration-300 group-hover:w-full" />
     </div>
   );
 };

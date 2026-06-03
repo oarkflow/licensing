@@ -1,13 +1,12 @@
 import { useEffect, useState } from 'react';
+import type { ReactNode } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import {
-    ArrowLeft,
     Key,
     Copy,
     Ban,
     RotateCcw,
-    Monitor,
     Trash2,
     Clock,
     CheckCircle,
@@ -23,13 +22,6 @@ import {
 } from '@/components/ui/tooltip';
 import api from '@/services/api';
 import { Button } from '@/components/ui/button';
-import {
-    Card,
-    CardContent,
-    CardDescription,
-    CardHeader,
-    CardTitle,
-} from '@/components/ui/card';
 import {
     Table,
     TableBody,
@@ -67,6 +59,7 @@ import { useToast } from '@/hooks/use-toast';
 import type { CouponRedemption, DeviceReplacementToken, FeatureScopeSelection, License, LicenseDevice } from '@/types/api';
 import { FeatureScopeSelector } from '@/components/licenses/FeatureScopeSelector';
 import { entitlementsToSelections, slugToLabel, groupScopesForFeature, categorizeSelections } from '@/lib/entitlements';
+import { DataPanel, EmptyState, MetricTile, PageHeader } from '@/components/layout/PageShell';
 
 function hasDetailContent(record?: Record<string, unknown>) {
     return Boolean(record && Object.keys(record).length > 0);
@@ -100,6 +93,41 @@ function getDeviceStatusBadge(status?: LicenseDevice['status']) {
 function shortValue(value?: string, length = 20) {
     if (!value) return '—';
     return value.length > length ? `${value.substring(0, length)}...` : value;
+}
+
+function DetailRow({
+    label,
+    children,
+}: {
+    label: string;
+    children: ReactNode;
+}) {
+    return (
+        <div className="grid gap-1 border-t px-3 py-2 text-sm md:grid-cols-[180px_1fr] md:gap-4">
+            <div className="text-xs font-medium uppercase text-muted-foreground">{label}</div>
+            <div className="min-w-0 text-foreground">{children}</div>
+        </div>
+    );
+}
+
+function SectionTitle({
+    title,
+    description,
+    actions,
+}: {
+    title: string;
+    description?: string;
+    actions?: ReactNode;
+}) {
+    return (
+        <div className="flex flex-col gap-2 border-b px-3 py-2 md:flex-row md:items-center md:justify-between">
+            <div>
+                <h2 className="text-sm font-semibold">{title}</h2>
+                {description && <p className="text-xs text-muted-foreground">{description}</p>}
+            </div>
+            {actions && <div className="flex flex-wrap items-center gap-2">{actions}</div>}
+        </div>
+    );
 }
 
 export function LicenseDetailPage() {
@@ -361,7 +389,7 @@ export function LicenseDetailPage() {
     return (
         <div className="space-y-6">
             <Dialog open={entitlementDialogOpen} onOpenChange={setEntitlementDialogOpen}>
-                <DialogContent className="max-w-3xl">
+                <DialogContent className="w-[calc(100vw-1rem)] max-w-[calc(100vw-1rem)] lg:w-[80vw] lg:max-w-[80vw]">
                     <DialogHeader>
                         <DialogTitle>Adjust Feature Scopes</DialogTitle>
                         <DialogDescription>
@@ -395,162 +423,105 @@ export function LicenseDetailPage() {
                     </DialogFooter>
                 </DialogContent>
             </Dialog>
-            <div className="flex items-center gap-4">
-                <Tooltip>
-                    <TooltipTrigger asChild>
-                        <Button variant="ghost" size="icon" onClick={() => navigate(-1)}>
-                            <ArrowLeft className="h-4 w-4" />
-                        </Button>
-                    </TooltipTrigger>
-                    <TooltipContent>
-                        <p>Go back</p>
-                    </TooltipContent>
-                </Tooltip>
-                <div className="flex-1">
-                    <h1 className="text-3xl font-bold tracking-tight">License Details</h1>
-                    <p className="text-muted-foreground">
-                        View and manage license information
-                    </p>
-                </div>
-                <div className="flex gap-2">
-                    <Dialog open={issueDialogOpen} onOpenChange={setIssueDialogOpen}>
-                        <DialogTrigger asChild>
-                            <Button variant="outline">Issue Offline Token</Button>
-                        </DialogTrigger>
-                        <DialogContent>
-                            <DialogHeader>
-                                <DialogTitle>Issue Offline Token</DialogTitle>
-                                <DialogDescription>
-                                    Create an offline validation token that can be used by clients when offline.
-                                </DialogDescription>
-                            </DialogHeader>
-
-                            <div className="space-y-3 py-2">
-                                <div className="space-y-1">
-                                    <Label>Device fingerprint</Label>
-                                    <Input placeholder="device fingerprint (e.g. device id)" value={deviceFingerprint} onChange={(e) => setDeviceFingerprint(e.target.value)} />
-                                </div>
-                                <div className="grid grid-cols-2 gap-2">
-                                    <div className="space-y-1">
-                                        <Label>Max uses</Label>
-                                        <Input type="number" value={tokenMaxUses ?? ''} onChange={(e) => setTokenMaxUses(parseInt(e.target.value || '0'))} />
-                                    </div>
-                                    <div className="space-y-1">
-                                        <Label>Validity days</Label>
-                                        <Input type="number" value={tokenValidity ?? ''} onChange={(e) => setTokenValidity(parseInt(e.target.value || '0'))} />
-                                    </div>
-                                </div>
-                            </div>
-                            <DialogFooter>
-                                <Button variant="ghost" onClick={() => setIssueDialogOpen(false)}>Cancel</Button>
-                                <Button onClick={() => issueMutation.mutate({ license_key: license!.license_key, device_fingerprint: deviceFingerprint, max_uses: tokenMaxUses, validity_days: tokenValidity })}>
-                                    {issueMutation.isPending ? 'Issuing…' : 'Issue Token'}
-                                </Button>
-                            </DialogFooter>
-                        </DialogContent>
-                    </Dialog>
-
-                    <Tooltip>
-                        <TooltipTrigger asChild>
-                            <Button
-                                variant="outline"
-                                onClick={() => {
-                                    const licenseJson = JSON.stringify({
-                                        email: license?.email ?? '',
-                                        client_id: license?.client_id ?? '',
-                                        license_key: license?.license_key ?? '',
-                                    }, null, 2);
-                                    copyToClipboard(licenseJson);
-                                }}
-                            >
-                                Copy License JSON
-                            </Button>
-                        </TooltipTrigger>
-                        <TooltipContent>
-                            <p>Copy email, client_id and license_key as JSON</p>
-                        </TooltipContent>
-                    </Tooltip>
-
-                    {/* Show issued bundle dialog */}
-                    {issuedTokenBundle && (
-                        <Dialog open={Boolean(issuedTokenBundle)} onOpenChange={() => setIssuedTokenBundle(null)}>
-                            <DialogContent>
-                                <DialogHeader>
-                                    <DialogTitle>Issued Offline Token</DialogTitle>
-                                    <DialogDescription>Copy the signed bundle or token for the client.</DialogDescription>
-                                </DialogHeader>
-                                <div className="space-y-3 py-2">
-                                    <Textarea readOnly value={typeof issuedTokenBundle === 'string' ? issuedTokenBundle : JSON.stringify(issuedTokenBundle, null, 2)} className="font-mono text-xs" />
-                                </div>
-                                <DialogFooter>
-                                    <Button onClick={() => { navigator.clipboard.writeText(typeof issuedTokenBundle === 'string' ? issuedTokenBundle : JSON.stringify(issuedTokenBundle)); toast({ title: 'Copied to clipboard' }); }}>Copy</Button>
-                                    <Button onClick={() => setIssuedTokenBundle(null)}>Close</Button>
-                                </DialogFooter>
-                            </DialogContent>
-                        </Dialog>
-                    )}
-                    {issuedReplacementToken && (
-                        <Dialog open={Boolean(issuedReplacementToken)} onOpenChange={() => setIssuedReplacementToken(null)}>
-                            <DialogContent>
-                                <DialogHeader>
-                                    <DialogTitle>Device Replacement Token</DialogTitle>
-                                    <DialogDescription>
-                                        Share this one-time token with the replacement device. It expires {new Date(issuedReplacementToken.token_record.expires_at).toLocaleString()}.
-                                    </DialogDescription>
-                                </DialogHeader>
-                                <div className="space-y-3 py-2">
-                                    <Textarea readOnly value={issuedReplacementToken.token} className="font-mono text-xs" />
-                                </div>
-                                <DialogFooter>
-                                    <Button onClick={() => copyToClipboard(issuedReplacementToken.token)}>Copy</Button>
-                                    <Button variant="ghost" onClick={() => setIssuedReplacementToken(null)}>Close</Button>
-                                </DialogFooter>
-                            </DialogContent>
-                        </Dialog>
-                    )}
-                    {license.is_revoked ? (
-                        <AlertDialog>
-                            <AlertDialogTrigger asChild>
-                                <Button variant="outline">
-                                    <RotateCcw className="mr-2 h-4 w-4" />
-                                    Reinstate
-                                </Button>
-                            </AlertDialogTrigger>
-                            <AlertDialogContent>
-                                <AlertDialogHeader>
-                                    <AlertDialogTitle>Reinstate License</AlertDialogTitle>
-                                    <AlertDialogDescription>
-                                        This will restore the license and allow it to be used again.
-                                    </AlertDialogDescription>
-                                </AlertDialogHeader>
-                                <AlertDialogFooter>
-                                    <AlertDialogCancel>Cancel</AlertDialogCancel>
-                                    <AlertDialogAction
-                                        onClick={() => reinstateMutation.mutate()}
-                                        disabled={reinstateMutation.isPending}
-                                    >
-                                        {reinstateMutation.isPending ? 'Reinstating...' : 'Reinstate'}
-                                    </AlertDialogAction>
-                                </AlertDialogFooter>
-                            </AlertDialogContent>
-                        </AlertDialog>
-                    ) : (
-                        <Dialog open={revokeDialogOpen} onOpenChange={setRevokeDialogOpen}>
+            <PageHeader
+                eyebrow="Licensing"
+                title="License Details"
+                description={shortValue(license.license_key, 42)}
+                backTo="/licenses"
+                backLabel="Licenses"
+                actions={
+                    <>
+                        <Dialog open={issueDialogOpen} onOpenChange={setIssueDialogOpen}>
                             <DialogTrigger asChild>
-                                <Button variant="destructive">
-                                    <Ban className="mr-2 h-4 w-4" />
-                                    Revoke
-                                </Button>
+                                <Button variant="outline" size="sm">Offline Token</Button>
                             </DialogTrigger>
                             <DialogContent>
                                 <DialogHeader>
-                                    <DialogTitle>Revoke License</DialogTitle>
+                                    <DialogTitle>Issue Offline Token</DialogTitle>
                                     <DialogDescription>
-                                        This will prevent the license from being used. You can reinstate it later.
+                                        Create an offline validation token that can be used by clients when offline.
                                     </DialogDescription>
                                 </DialogHeader>
-                                <div className="space-y-4 py-4">
-                                    <div className="space-y-2">
+                                <div className="space-y-3 py-2">
+                                    <div className="space-y-1">
+                                        <Label>Device fingerprint</Label>
+                                        <Input placeholder="device fingerprint" value={deviceFingerprint} onChange={(e) => setDeviceFingerprint(e.target.value)} />
+                                    </div>
+                                    <div className="grid grid-cols-2 gap-2">
+                                        <div className="space-y-1">
+                                            <Label>Max uses</Label>
+                                            <Input type="number" value={tokenMaxUses ?? ''} onChange={(e) => setTokenMaxUses(parseInt(e.target.value || '0'))} />
+                                        </div>
+                                        <div className="space-y-1">
+                                            <Label>Validity days</Label>
+                                            <Input type="number" value={tokenValidity ?? ''} onChange={(e) => setTokenValidity(parseInt(e.target.value || '0'))} />
+                                        </div>
+                                    </div>
+                                </div>
+                                <DialogFooter>
+                                    <Button variant="ghost" onClick={() => setIssueDialogOpen(false)}>Cancel</Button>
+                                    <Button onClick={() => issueMutation.mutate({ license_key: license.license_key, device_fingerprint: deviceFingerprint, max_uses: tokenMaxUses, validity_days: tokenValidity })}>
+                                        {issueMutation.isPending ? 'Issuing...' : 'Issue Token'}
+                                    </Button>
+                                </DialogFooter>
+                            </DialogContent>
+                        </Dialog>
+
+                        <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => {
+                                const licenseJson = JSON.stringify({
+                                    email: license.email ?? '',
+                                    client_id: license.client_id ?? '',
+                                    license_key: license.license_key ?? '',
+                                }, null, 2);
+                                copyToClipboard(licenseJson);
+                            }}
+                        >
+                            <Copy className="h-3.5 w-3.5" />
+                            Copy JSON
+                        </Button>
+
+                        {license.is_revoked ? (
+                            <AlertDialog>
+                                <AlertDialogTrigger asChild>
+                                    <Button variant="outline" size="sm">
+                                        <RotateCcw className="h-3.5 w-3.5" />
+                                        Reinstate
+                                    </Button>
+                                </AlertDialogTrigger>
+                                <AlertDialogContent>
+                                    <AlertDialogHeader>
+                                        <AlertDialogTitle>Reinstate License</AlertDialogTitle>
+                                        <AlertDialogDescription>
+                                            This will restore the license and allow it to be used again.
+                                        </AlertDialogDescription>
+                                    </AlertDialogHeader>
+                                    <AlertDialogFooter>
+                                        <AlertDialogCancel>Cancel</AlertDialogCancel>
+                                        <AlertDialogAction onClick={() => reinstateMutation.mutate()} disabled={reinstateMutation.isPending}>
+                                            {reinstateMutation.isPending ? 'Reinstating...' : 'Reinstate'}
+                                        </AlertDialogAction>
+                                    </AlertDialogFooter>
+                                </AlertDialogContent>
+                            </AlertDialog>
+                        ) : (
+                            <Dialog open={revokeDialogOpen} onOpenChange={setRevokeDialogOpen}>
+                                <DialogTrigger asChild>
+                                    <Button variant="destructive" size="sm">
+                                        <Ban className="h-3.5 w-3.5" />
+                                        Revoke
+                                    </Button>
+                                </DialogTrigger>
+                                <DialogContent>
+                                    <DialogHeader>
+                                        <DialogTitle>Revoke License</DialogTitle>
+                                        <DialogDescription>
+                                            This will prevent the license from being used. You can reinstate it later.
+                                        </DialogDescription>
+                                    </DialogHeader>
+                                    <div className="space-y-2 py-3">
                                         <Label htmlFor="reason">Reason for revocation</Label>
                                         <Textarea
                                             id="reason"
@@ -559,187 +530,125 @@ export function LicenseDetailPage() {
                                             onChange={(e) => setRevokeReason(e.target.value)}
                                         />
                                     </div>
-                                </div>
-                                <DialogFooter>
-                                    <Button
-                                        variant="ghost"
-                                        onClick={() => setRevokeDialogOpen(false)}
-                                    >
-                                        Cancel
-                                    </Button>
-                                    <Button
-                                        variant="destructive"
-                                        onClick={() => revokeMutation.mutate(revokeReason)}
-                                        disabled={revokeMutation.isPending}
-                                    >
-                                        {revokeMutation.isPending ? 'Revoking...' : 'Revoke License'}
-                                    </Button>
-                                </DialogFooter>
-                            </DialogContent>
-                        </Dialog>
-                    )}
+                                    <DialogFooter>
+                                        <Button variant="ghost" onClick={() => setRevokeDialogOpen(false)}>Cancel</Button>
+                                        <Button variant="destructive" onClick={() => revokeMutation.mutate(revokeReason)} disabled={revokeMutation.isPending}>
+                                            {revokeMutation.isPending ? 'Revoking...' : 'Revoke License'}
+                                        </Button>
+                                    </DialogFooter>
+                                </DialogContent>
+                            </Dialog>
+                        )}
+                    </>
+                }
+            />
+
+            {issuedTokenBundle && (
+                <Dialog open={Boolean(issuedTokenBundle)} onOpenChange={() => setIssuedTokenBundle(null)}>
+                    <DialogContent>
+                        <DialogHeader>
+                            <DialogTitle>Issued Offline Token</DialogTitle>
+                            <DialogDescription>Copy the signed bundle or token for the client.</DialogDescription>
+                        </DialogHeader>
+                        <div className="space-y-3 py-2">
+                            <Textarea readOnly value={typeof issuedTokenBundle === 'string' ? issuedTokenBundle : JSON.stringify(issuedTokenBundle, null, 2)} className="font-mono text-xs" />
+                        </div>
+                        <DialogFooter>
+                            <Button onClick={() => { navigator.clipboard.writeText(typeof issuedTokenBundle === 'string' ? issuedTokenBundle : JSON.stringify(issuedTokenBundle)); toast({ title: 'Copied to clipboard' }); }}>Copy</Button>
+                            <Button variant="ghost" onClick={() => setIssuedTokenBundle(null)}>Close</Button>
+                        </DialogFooter>
+                    </DialogContent>
+                </Dialog>
+            )}
+
+            {issuedReplacementToken && (
+                <Dialog open={Boolean(issuedReplacementToken)} onOpenChange={() => setIssuedReplacementToken(null)}>
+                    <DialogContent>
+                        <DialogHeader>
+                            <DialogTitle>Device Replacement Token</DialogTitle>
+                            <DialogDescription>
+                                Share this one-time token with the replacement device. It expires {new Date(issuedReplacementToken.token_record.expires_at).toLocaleString()}.
+                            </DialogDescription>
+                        </DialogHeader>
+                        <div className="space-y-3 py-2">
+                            <Textarea readOnly value={issuedReplacementToken.token} className="font-mono text-xs" />
+                        </div>
+                        <DialogFooter>
+                            <Button onClick={() => copyToClipboard(issuedReplacementToken.token)}>Copy</Button>
+                            <Button variant="ghost" onClick={() => setIssuedReplacementToken(null)}>Close</Button>
+                        </DialogFooter>
+                    </DialogContent>
+                </Dialog>
+            )}
+
+            <DataPanel>
+                <div className="grid divide-y md:grid-cols-4 md:divide-x md:divide-y-0">
+                    <MetricTile label="Status" value={getLicenseStatusBadge(license)} />
+                    <MetricTile label="Devices" value={`${license.device_count || 0} / ${license.max_devices || '∞'}`} />
+                    <MetricTile label="Issued" value={license.issued_at ? new Date(license.issued_at).toLocaleDateString() : '-'} />
+                    <MetricTile label="Expires" value={license.expires_at ? new Date(license.expires_at).toLocaleDateString() : 'Never'} />
                 </div>
-            </div>
+            </DataPanel>
 
-            <div className="grid gap-6 md:grid-cols-2">
-                <Card>
-                    <CardHeader>
-                        <CardTitle>License Information</CardTitle>
-                        <CardDescription>Basic license details</CardDescription>
-                    </CardHeader>
-                    <CardContent className="space-y-4">
-                        <div className="space-y-2">
-                            <Label className="text-muted-foreground">License Key</Label>
-                            <div className="flex items-center gap-2">
-                                <Input
-                                    value={license.license_key}
-                                    readOnly
-                                    className="font-mono text-sm"
-                                />
-                                <Button
-                                    variant="outline"
-                                    size="icon"
-                                    onClick={() => copyToClipboard(license.license_key)}
-                                >
-                                    <Copy className="h-4 w-4" />
-                                </Button>
-                            </div>
-                        </div>
-
-                        <div className="grid grid-cols-2 gap-4">
-                            <div className="space-y-2">
-                                <Label className="text-muted-foreground">Status</Label>
-                                <div>{getLicenseStatusBadge(license)}</div>
-                            </div>
-                            <div className="space-y-2">
-                                <Label className="text-muted-foreground">Devices</Label>
-                                <div className="font-medium">
-                                    {license.device_count || 0} / {license.max_devices || '∞'}
-                                </div>
-                            </div>
-                        </div>
-
-                        <div className="grid grid-cols-2 gap-4">
-                            <div className="space-y-2">
-                                <Label className="text-muted-foreground">Issued</Label>
-                                <div className="font-medium">
-                                    {license.issued_at ? new Date(license.issued_at).toLocaleDateString() : '—'}
-                                </div>
-                            </div>
-                            <div className="space-y-2">
-                                <Label className="text-muted-foreground">Expires</Label>
-                                <div className="font-medium">
-                                    {license.expires_at
-                                        ? new Date(license.expires_at).toLocaleDateString()
-                                        : 'Never'}
-                                </div>
-                            </div>
-                        </div>
-
-                        {license.is_revoked && license.revoke_reason && (
-                            <div className="space-y-2">
-                                <Label className="text-muted-foreground">Revoke Reason</Label>
-                                <div className="rounded-md bg-destructive/10 p-3 text-sm text-destructive">
-                                    {license.revoke_reason}
-                                </div>
-                            </div>
+            <DataPanel>
+                <SectionTitle title="License Record" description="Canonical license identifiers and ownership." />
+                <DetailRow label="License Key">
+                    <div className="flex min-w-0 items-center gap-2">
+                        <code className="min-w-0 truncate font-mono text-xs">{license.license_key}</code>
+                        <Button variant="outline" size="icon" onClick={() => copyToClipboard(license.license_key)}>
+                            <Copy className="h-3.5 w-3.5" />
+                        </Button>
+                    </div>
+                </DetailRow>
+                <DetailRow label="Email">
+                    <div className="flex min-w-0 items-center gap-2">
+                        <span className="min-w-0 truncate">{license.email || '-'}</span>
+                        {license.email && (
+                            <Button variant="outline" size="icon" onClick={() => copyToClipboard(license.email ?? '')} aria-label="Copy email">
+                                <Copy className="h-3.5 w-3.5" />
+                            </Button>
                         )}
-                    </CardContent>
-                </Card>
-
-                <Card>
-                    <CardHeader>
-                        <CardTitle>License Info</CardTitle>
-                        <CardDescription>Associated client and product</CardDescription>
-                    </CardHeader>
-                    <CardContent className="space-y-4">
-                        <div className="space-y-2">
-                            <Label className="text-muted-foreground">Email</Label>
-                            <div className="flex items-center gap-2">
-                                <div className="font-medium">{license.email}</div>
-                                <Tooltip>
-                                    <TooltipTrigger asChild>
-                                        <Button
-                                            variant="outline"
-                                            size="icon"
-                                            onClick={() => copyToClipboard(license.email ?? '')}
-                                            aria-label="Copy email"
-                                        >
-                                            <Copy className="h-4 w-4" />
-                                        </Button>
-                                    </TooltipTrigger>
-                                    <TooltipContent>
-                                        <p>Copy email</p>
-                                    </TooltipContent>
-                                </Tooltip>
-                            </div>
+                    </div>
+                </DetailRow>
+                <DetailRow label="Client">
+                    {license.client_id ? (
+                        <div className="flex min-w-0 items-center gap-2">
+                            <Link to={`/clients/${license.client_id}`} className="min-w-0 truncate font-mono text-xs text-primary hover:underline">
+                                {license.client_id}
+                            </Link>
+                            <Button variant="outline" size="icon" onClick={() => copyToClipboard(license.client_id ?? '')} aria-label="Copy client ID">
+                                <Copy className="h-3.5 w-3.5" />
+                            </Button>
                         </div>
+                    ) : '-'}
+                </DetailRow>
+                <DetailRow label="Product">
+                    {license.product_id ? (
+                        <Link to={`/products/${license.product_id}`} className="font-mono text-xs text-primary hover:underline">
+                            {license.product_id}
+                        </Link>
+                    ) : '-'}
+                </DetailRow>
+                <DetailRow label="Plan">{license.plan_slug || '-'}</DetailRow>
+                {license.is_revoked && license.revoke_reason && (
+                    <DetailRow label="Revoke Reason">
+                        <span className="text-destructive">{license.revoke_reason}</span>
+                    </DetailRow>
+                )}
+            </DataPanel>
 
-                        <div className="space-y-2">
-                            <Label className="text-muted-foreground">Client ID</Label>
-                            <div className="flex items-center gap-2">
-                                <Link
-                                    to={`/clients/${license.client_id}`}
-                                    className="text-primary hover:underline"
-                                >
-                                    {license.client_id}
-                                </Link>
-                                <Tooltip>
-                                    <TooltipTrigger asChild>
-                                        <Button
-                                            variant="outline"
-                                            size="icon"
-                                            onClick={() => copyToClipboard(license.client_id ?? '')}
-                                            aria-label="Copy client ID"
-                                        >
-                                            <Copy className="h-4 w-4" />
-                                        </Button>
-                                    </TooltipTrigger>
-                                    <TooltipContent>
-                                        <p>Copy client ID</p>
-                                    </TooltipContent>
-                                </Tooltip>
-                            </div>
-                        </div>
-
-                        {license.product_id && (
-                            <div className="space-y-2">
-                                <Label className="text-muted-foreground">Product</Label>
-                                <div>
-                                    <Link
-                                        to={`/products/${license.product_id}`}
-                                        className="text-primary hover:underline"
-                                    >
-                                        {license.product_id}
-                                    </Link>
-                                </div>
-                            </div>
-                        )}
-
-                        <div className="space-y-2">
-                            <Label className="text-muted-foreground">Plan</Label>
-                            <div className="font-medium">{license.plan_slug}</div>
-                        </div>
-                    </CardContent>
-                </Card>
-            </div>
-
-            <Card>
-                <CardHeader>
-                    <CardTitle>Active Devices</CardTitle>
-                    <CardDescription>
-                        Devices currently using this license
-                    </CardDescription>
-                </CardHeader>
-                <CardContent>
-                    {devices.length === 0 ? (
-                        <div className="flex flex-col items-center justify-center py-8 text-center">
-                            <Monitor className="h-12 w-12 text-muted-foreground" />
-                            <p className="mt-2 text-sm text-muted-foreground">
-                                No devices are currently using this license
-                            </p>
-                        </div>
-                    ) : (
+            <DataPanel>
+                <SectionTitle
+                    title="Devices"
+                    description="Trusted device identities, proof metadata, and replacement controls."
+                />
+                {devices.length === 0 ? (
+                    <EmptyState
+                        title="No devices"
+                        description="No devices are currently using this license."
+                    />
+                ) : (
+                    <div className="overflow-x-auto">
                         <Table>
                             <TableHeader>
                                 <TableRow>
@@ -880,17 +789,17 @@ export function LicenseDetailPage() {
                                 ))}
                             </TableBody>
                         </Table>
-                    )}
-                </CardContent>
-            </Card>
+                    </div>
+                )}
+            </DataPanel>
 
             {replacementTokens.length > 0 && (
-                <Card>
-                    <CardHeader>
-                        <CardTitle>Replacement Tokens</CardTitle>
-                        <CardDescription>One-time device replacement grants for this license</CardDescription>
-                    </CardHeader>
-                    <CardContent>
+                <DataPanel>
+                    <SectionTitle
+                        title="Replacement Tokens"
+                        description="One-time device replacement grants for this license."
+                    />
+                    <div className="overflow-x-auto">
                         <Table>
                             <TableHeader>
                                 <TableRow>
@@ -913,22 +822,18 @@ export function LicenseDetailPage() {
                                 ))}
                             </TableBody>
                         </Table>
-                    </CardContent>
-                </Card>
+                    </div>
+                </DataPanel>
             )}
 
-            <Card>
-                <CardHeader>
-                    <CardTitle className="flex items-center gap-2">
-                        <Ticket className="h-5 w-5" />
-                        Coupon Extensions
-                    </CardTitle>
-                    <CardDescription>
-                        Redeem coupon codes to add custom limits, flags, settings, and scope extensions for this license.
-                    </CardDescription>
-                </CardHeader>
-                <CardContent className="space-y-4">
-                    <div className="flex flex-col gap-3 md:flex-row">
+            <DataPanel>
+                <SectionTitle
+                    title="Coupon Extensions"
+                    description="Redeem coupon codes to add custom limits, flags, settings, and scope extensions."
+                    actions={<Ticket className="h-4 w-4 text-muted-foreground" />}
+                />
+                <div className="space-y-3 p-3">
+                    <div className="flex flex-col gap-2 md:flex-row">
                         <Input
                             value={couponCode}
                             onChange={(e) => setCouponCode(e.target.value.toUpperCase())}
@@ -943,219 +848,134 @@ export function LicenseDetailPage() {
                         </Button>
                     </div>
                     {couponRedemptions.length === 0 ? (
-                        <div className="rounded-md border border-dashed p-6 text-sm text-muted-foreground">
-                            No coupon extensions have been redeemed for this license yet.
-                        </div>
+                        <EmptyState
+                            title="No coupon extensions"
+                            description="No coupon extensions have been redeemed for this license yet."
+                        />
                     ) : (
-                        <div className="space-y-3">
-                            {couponRedemptions.map((redemption) => (
-                                <div key={redemption.id} className="rounded-xl border p-4">
-                                    <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
-                                        <div className="space-y-1">
-                                            <div className="flex items-center gap-2">
-                                                <Badge variant="outline" className="font-mono">
-                                                    {redemption.coupon_code}
-                                                </Badge>
-                                                {redemption.redeemed_by && (
-                                                    <Badge variant="secondary">
-                                                        by {redemption.redeemed_by}
-                                                    </Badge>
-                                                )}
-                                            </div>
-                                            <p className="text-sm text-muted-foreground">
-                                                Redeemed {new Date(redemption.redeemed_at).toLocaleString()}
-                                            </p>
-                                        </div>
-                                        <div className="text-sm text-muted-foreground">
-                                            Client: <span className="font-medium text-foreground">{redemption.client_id}</span>
-                                        </div>
-                                    </div>
-                                </div>
-                            ))}
-                        </div>
+                        <Table>
+                            <TableHeader>
+                                <TableRow>
+                                    <TableHead>Code</TableHead>
+                                    <TableHead>Client</TableHead>
+                                    <TableHead>Redeemed By</TableHead>
+                                    <TableHead>Redeemed At</TableHead>
+                                </TableRow>
+                            </TableHeader>
+                            <TableBody>
+                                {couponRedemptions.map((redemption) => (
+                                    <TableRow key={redemption.id}>
+                                        <TableCell><Badge variant="outline" className="font-mono">{redemption.coupon_code}</Badge></TableCell>
+                                        <TableCell className="font-mono text-xs">{redemption.client_id}</TableCell>
+                                        <TableCell>{redemption.redeemed_by || '-'}</TableCell>
+                                        <TableCell>{new Date(redemption.redeemed_at).toLocaleString()}</TableCell>
+                                    </TableRow>
+                                ))}
+                            </TableBody>
+                        </Table>
                     )}
-                </CardContent>
-            </Card>
+                </div>
+            </DataPanel>
 
             {license.entitlements && license.entitlements.features && Object.keys(license.entitlements.features).length > 0 && (
-                <Card>
-                    <CardHeader className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
-                        <div>
-                            <CardTitle>Entitlements</CardTitle>
-                            <CardDescription>Features included in this license</CardDescription>
-                        </div>
-                        {canEditScopes ? (
-                            <Button
-                                variant="outline"
-                                size="sm"
-                                className="rounded-full"
-                                onClick={() => setEntitlementDialogOpen(true)}
-                            >
-                                Adjust Feature Scopes
-                            </Button>
+                <DataPanel>
+                    <SectionTitle
+                        title="Entitlements"
+                        description="Feature grants summarized for review. Use the editor for detailed scope changes."
+                        actions={
+                            canEditScopes ? (
+                                <Button variant="outline" size="sm" onClick={() => setEntitlementDialogOpen(true)}>
+                                    Adjust Feature Scopes
+                                </Button>
+                            ) : (
+                                <Badge variant="secondary">Link to plan to edit</Badge>
+                            )
+                        }
+                    />
+                    {(() => {
+                        const selections = entitlementsToSelections(license.entitlements);
+                        const categories = categorizeSelections(selections);
+                        const rows = (['cli', 'gui', 'api', 'other'] as Array<'cli' | 'gui' | 'api' | 'other'>)
+                            .flatMap((category) => categories[category].map((feature) => ({ category, feature })));
+
+                        return rows.length === 0 ? (
+                            <EmptyState title="No entitlements" description="This license has no feature grants." />
                         ) : (
-                            <Badge variant="secondary" className="rounded-full px-3 py-1 text-xs">
-                                Link to plan to edit
-                            </Badge>
-                        )}
-                    </CardHeader>
-                    <CardContent>
-                        <div className="space-y-6">
-                            {/* Convert entitlements into selections and categorize into cli/gui/api/other */}
-                            {(() => {
-                                const selections = entitlementsToSelections(license.entitlements);
-                                const categories = categorizeSelections(selections);
-                                const catOrder: Array<'cli' | 'gui' | 'api' | 'other'> = ['cli', 'gui', 'api', 'other'];
-                                return (
-                                    <div className="space-y-6">
-                                        {catOrder.map((cat) => (
-                                            <div key={cat}>
-                                                {categories[cat].length > 0 && (
-                                                    <div>
-                                                        <div className="mb-2 flex items-center gap-2">
-                                                            <span className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">{cat.toUpperCase()}</span>
-                                                            <Badge variant="outline" className="text-[11px]">{categories[cat].length}</Badge>
+                            <div className="overflow-x-auto">
+                                <Table>
+                                    <TableHeader>
+                                        <TableRow>
+                                            <TableHead>Category</TableHead>
+                                            <TableHead>Feature</TableHead>
+                                            <TableHead>Status</TableHead>
+                                            <TableHead>Type</TableHead>
+                                            <TableHead>Scopes</TableHead>
+                                            <TableHead>Metadata</TableHead>
+                                        </TableRow>
+                                    </TableHeader>
+                                    <TableBody>
+                                        {rows.map(({ category, feature }) => {
+                                            const grant = license.entitlements?.features?.[feature.feature_slug];
+                                            const groups = groupScopesForFeature(feature.feature_slug, feature.scopes);
+                                            const metadata = [
+                                                hasDetailContent(grant?.flags) ? 'flags' : null,
+                                                hasDetailContent(grant?.settings) ? 'settings' : null,
+                                                hasDetailContent(grant?.limits) ? 'limits' : null,
+                                                hasDetailContent(grant?.usage) ? 'usage' : null,
+                                            ].filter(Boolean);
+
+                                            return (
+                                                <TableRow key={feature.feature_slug}>
+                                                    <TableCell>
+                                                        <Badge variant="outline">{category.toUpperCase()}</Badge>
+                                                    </TableCell>
+                                                    <TableCell>
+                                                        <div className="space-y-1">
+                                                            <div className="font-medium">{slugToLabel(feature.feature_slug)}</div>
+                                                            <div className="font-mono text-xs text-muted-foreground">{feature.feature_slug}</div>
                                                         </div>
-                                                        <div>
-                                                            {categories[cat].map((feature) => {
-                                                                const groups = groupScopesForFeature(feature.feature_slug, feature.scopes);
-                                                                return (
-                                                                    <div key={feature.feature_slug} className="rounded-md border p-3">
-                                                                        <div className="flex items-center gap-2">
-                                                                            {feature.enabled ? (
-                                                                                <CheckCircle className="h-4 w-4 text-primary" />
-                                                                            ) : (
-                                                                                <XCircle className="h-4 w-4 text-destructive" />
-                                                                            )}
-                                                                            <span className="font-medium">{slugToLabel(feature.feature_slug)}</span>
-                                                                            {'type' in (license.entitlements?.features?.[feature.feature_slug] || {}) && (
-                                                                                <Badge variant="secondary">
-                                                                                    {(license.entitlements?.features?.[feature.feature_slug]?.type || 'boolean').toString()}
-                                                                                </Badge>
-                                                                            )}
-                                                                            {feature.feature_slug && (
-                                                                                <Badge variant="outline" className="ml-auto">{feature.feature_slug}</Badge>
-                                                                            )}
-                                                                        </div>
-                                                                        {(() => {
-                                                                            const grant = license.entitlements?.features?.[feature.feature_slug];
-                                                                            if (!grant) return null;
-                                                                            return (
-                                                                                <>
-                                                                                    {(hasDetailContent(grant.flags) || hasDetailContent(grant.settings) || hasDetailContent(grant.limits) || hasDetailContent(grant.usage)) && (
-                                                                                        <div className="mt-3 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-                                                                                            {hasDetailContent(grant.flags) && (
-                                                                                                <div className="rounded-md border bg-muted/20 p-3">
-                                                                                                    <p className="text-xs uppercase text-muted-foreground">Flags</p>
-                                                                                                    <div className="mt-2 flex flex-wrap gap-2">
-                                                                                                        {Object.entries(grant.flags || {}).map(([key, value]) => (
-                                                                                                            <Badge key={key} variant={value ? 'default' : 'secondary'}>
-                                                                                                                {key}: {value ? 'on' : 'off'}
-                                                                                                            </Badge>
-                                                                                                        ))}
-                                                                                                    </div>
-                                                                                                </div>
-                                                                                            )}
-                                                                                            {hasDetailContent(grant.settings) && (
-                                                                                                <div className="rounded-md border bg-muted/20 p-3">
-                                                                                                    <p className="text-xs uppercase text-muted-foreground">Settings</p>
-                                                                                                    <div className="mt-2 space-y-1 text-sm">
-                                                                                                        {Object.entries(grant.settings || {}).map(([key, value]) => (
-                                                                                                            <p key={key}><span className="font-medium">{key}</span>: {value}</p>
-                                                                                                        ))}
-                                                                                                    </div>
-                                                                                                </div>
-                                                                                            )}
-                                                                                            {hasDetailContent(grant.limits) && (
-                                                                                                <div className="rounded-md border bg-muted/20 p-3">
-                                                                                                    <p className="text-xs uppercase text-muted-foreground">Limits</p>
-                                                                                                    <div className="mt-2 space-y-1 text-sm">
-                                                                                                        {Object.entries(grant.limits || {}).map(([key, value]) => (
-                                                                                                            <p key={key}><span className="font-medium">{key}</span>: {value}</p>
-                                                                                                        ))}
-                                                                                                    </div>
-                                                                                                </div>
-                                                                                            )}
-                                                                                            {hasDetailContent(grant.usage) && (
-                                                                                                <div className="rounded-md border bg-muted/20 p-3">
-                                                                                                    <p className="text-xs uppercase text-muted-foreground">Usage</p>
-                                                                                                    <div className="mt-2 space-y-1 text-sm">
-                                                                                                        {Object.entries(grant.usage || {}).map(([key, value]) => (
-                                                                                                            <p key={key}>
-                                                                                                                <span className="font-medium">{key}</span>
-                                                                                                                {value.limit ? `: ${value.limit}` : ''}
-                                                                                                                {value.window_seconds ? ` / ${value.window_seconds}s` : ''}
-                                                                                                            </p>
-                                                                                                        ))}
-                                                                                                    </div>
-                                                                                                </div>
-                                                                                            )}
-                                                                                        </div>
-                                                                                    )}
-                                                                                </>
-                                                                            );
-                                                                        })()}
-                                                                        {groups.length === 0 ? (
-                                                                            <p className="mt-2 text-sm italic text-muted-foreground">No scopes defined for this feature yet.</p>
-                                                                        ) : (
-                                                                            <div className="grid gap-2 sm:grid-cols-2 md:grid-cols-3 mt-2 space-y-2">
-                                                                                {groups.map((g) => (
-                                                                                    <div key={g.title} className="rounded-2xl border border-border/60 bg-muted/10 p-2">
-                                                                                        <div className="flex items-center justify-between text-xs uppercase tracking-[0.3em] text-muted-foreground">
-                                                                                            <span>{g.title}</span>
-                                                                                            <Badge variant="outline" className="rounded-full px-2 py-0.5 text-[10px]">{g.scopes.length}</Badge>
-                                                                                        </div>
-                                                                                        <div className="mt-2 flex flex-wrap gap-2">
-                                                                                            {g.scopes.map(({ selection, definition }) => (
-                                                                                                <div key={selection.scope_slug} className="rounded-xl border bg-background p-2">
-                                                                                                    <Badge variant={selection.permission === 'deny' ? 'destructive' : selection.permission === 'limit' ? 'outline' : 'default'} className="uppercase text-[11px]">
-                                                                                                        {slugToLabel(definition?.slug ?? selection.scope_slug)}{selection.permission === 'limit' && selection.limit ? ` (${selection.limit})` : ''}
-                                                                                                    </Badge>
-                                                                                                    {(() => {
-                                                                                                        const scopeGrant = license.entitlements?.features?.[feature.feature_slug]?.scopes?.[selection.scope_slug];
-                                                                                                        if (!scopeGrant) return null;
-                                                                                                        return (
-                                                                                                            <>
-                                                                                                                {(hasDetailContent(scopeGrant.flags) || hasDetailContent(scopeGrant.settings) || hasDetailContent(scopeGrant.limits) || hasDetailContent(scopeGrant.usage)) && (
-                                                                                                                    <div className="mt-2 space-y-1 text-xs text-muted-foreground">
-                                                                                                                        {Object.entries(scopeGrant.flags || {}).map(([key, value]) => (
-                                                                                                                            <p key={`flag-${key}`}>flag {key}: {value ? 'on' : 'off'}</p>
-                                                                                                                        ))}
-                                                                                                                        {Object.entries(scopeGrant.settings || {}).map(([key, value]) => (
-                                                                                                                            <p key={`setting-${key}`}>setting {key}: {value}</p>
-                                                                                                                        ))}
-                                                                                                                        {Object.entries(scopeGrant.limits || {}).map(([key, value]) => (
-                                                                                                                            <p key={`limit-${key}`}>limit {key}: {value}</p>
-                                                                                                                        ))}
-                                                                                                                        {Object.entries(scopeGrant.usage || {}).map(([key, value]) => (
-                                                                                                                            <p key={`usage-${key}`}>usage {key}: {value.limit ?? 'unlimited'}{value.window_seconds ? ` / ${value.window_seconds}s` : ''}</p>
-                                                                                                                        ))}
-                                                                                                                    </div>
-                                                                                                                )}
-                                                                                                            </>
-                                                                                                        );
-                                                                                                    })()}
-                                                                                                </div>
-                                                                                            ))}
-                                                                                        </div>
-                                                                                    </div>
-                                                                                ))}
-                                                                            </div>
-                                                                        )}
-                                                                    </div>
-                                                                );
-                                                            })}
-                                                        </div>
-                                                    </div>
-                                                )}
-                                            </div>
-                                        ))}
-                                    </div>
-                                );
-                            })()}
-                        </div>
-                    </CardContent>
-                </Card>
+                                                    </TableCell>
+                                                    <TableCell>
+                                                        {feature.enabled ? (
+                                                            <Badge><CheckCircle className="h-3 w-3" /> Enabled</Badge>
+                                                        ) : (
+                                                            <Badge variant="destructive"><XCircle className="h-3 w-3" /> Disabled</Badge>
+                                                        )}
+                                                    </TableCell>
+                                                    <TableCell>{(grant?.type || 'boolean').toString()}</TableCell>
+                                                    <TableCell>
+                                                        {groups.length === 0 ? (
+                                                            <span className="text-muted-foreground">None</span>
+                                                        ) : (
+                                                            <div className="flex flex-wrap gap-1">
+                                                                {groups.map((group) => (
+                                                                    <Badge key={group.title} variant="secondary">
+                                                                        {group.title}: {group.scopes.length}
+                                                                    </Badge>
+                                                                ))}
+                                                            </div>
+                                                        )}
+                                                    </TableCell>
+                                                    <TableCell>
+                                                        {metadata.length === 0 ? (
+                                                            <span className="text-muted-foreground">-</span>
+                                                        ) : (
+                                                            <div className="flex flex-wrap gap-1">
+                                                                {metadata.map((item) => (
+                                                                    <Badge key={item} variant="outline">{item}</Badge>
+                                                                ))}
+                                                            </div>
+                                                        )}
+                                                    </TableCell>
+                                                </TableRow>
+                                            );
+                                        })}
+                                    </TableBody>
+                                </Table>
+                            </div>
+                        );
+                    })()}
+                </DataPanel>
             )}
         </div>
     );

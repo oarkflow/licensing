@@ -77,13 +77,13 @@ export function MessagingTemplatesPage() {
                         Store repeatable subject/body pairs with provider routing.
                     </p>
                 </div>
-                <Button className="rounded-2xl" onClick={() => navigate('/messaging/templates/new')}>
+                <Button className="rounded-md" onClick={() => navigate('/messaging/templates/new')}>
                     <Plus className="mr-2 h-4 w-4" /> New Template
                 </Button>
             </div>
 
             <div className="grid gap-4 md:grid-cols-3">
-                <Card className="rounded-3xl border-border">
+                <Card className="rounded-md border-border">
                     <CardHeader>
                         <CardTitle className="flex items-center gap-2 text-base">
                             <Layers className="h-4 w-4 text-primary" /> Catalog
@@ -94,7 +94,7 @@ export function MessagingTemplatesPage() {
                         <p className="text-4xl font-semibold">{templates.length}</p>
                     </CardContent>
                 </Card>
-                <Card className="rounded-3xl border-border">
+                <Card className="rounded-md border-border">
                     <CardHeader>
                         <CardTitle className="flex items-center gap-2 text-base">
                             <FileText className="h-4 w-4 text-primary" /> Categories
@@ -107,7 +107,7 @@ export function MessagingTemplatesPage() {
                         </p>
                     </CardContent>
                 </Card>
-                <Card className="rounded-3xl border-border">
+                <Card className="rounded-md border-border">
                     <CardHeader>
                         <CardTitle className="flex items-center gap-2 text-base">
                             <MailPlus className="h-4 w-4 text-primary" /> Defaults
@@ -131,17 +131,17 @@ export function MessagingTemplatesPage() {
                     {isLoading ? (
                         <div className="space-y-3">
                             {[...Array(4)].map((_, idx) => (
-                                <Skeleton key={idx} className="h-16 w-full rounded-2xl" />
+                                <Skeleton key={idx} className="h-16 w-full rounded-md" />
                             ))}
                         </div>
                     ) : templates.length === 0 ? (
-                        <div className="flex flex-col items-center justify-center rounded-3xl border border-dashed border-border py-12 text-center">
+                        <div className="flex flex-col items-center justify-center rounded-md border border-dashed border-border py-12 text-center">
                             <FileText className="h-10 w-10 text-muted-foreground" />
                             <h3 className="mt-4 text-xl font-semibold">No templates yet</h3>
                             <p className="mt-2 text-sm text-muted-foreground">
                                 Draft your first transactional template to start composing.
                             </p>
-                            <Button className="mt-4 rounded-2xl" onClick={() => navigate('/messaging/templates/new')}>
+                            <Button className="mt-4 rounded-md" onClick={() => navigate('/messaging/templates/new')}>
                                 <Plus className="mr-2 h-4 w-4" /> Create Template
                             </Button>
                         </div>

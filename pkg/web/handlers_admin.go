@@ -2,6 +2,8 @@ package web
 
 import (
 	"encoding/json"
+	"fmt"
+	"net"
 	"net/http"
 	"sort"
 	"strings"
@@ -18,11 +20,15 @@ type adminUserResponse struct {
 }
 
 type apiKeyResponse struct {
-	ID        string `json:"id"`
-	UserID    string `json:"user_id"`
-	Prefix    string `json:"prefix"`
-	CreatedAt string `json:"created_at"`
-	LastUsed  string `json:"last_used_at,omitempty"`
+	ID             string   `json:"id"`
+	UserID         string   `json:"user_id"`
+	Prefix         string   `json:"prefix"`
+	Scopes         []string `json:"scopes,omitempty"`
+	AllowedIPs     []string `json:"allowed_ips,omitempty"`
+	AllowedOrigins []string `json:"allowed_origins,omitempty"`
+	ExpiresAt      string   `json:"expires_at,omitempty"`
+	CreatedAt      string   `json:"created_at"`
+	LastUsed       string   `json:"last_used_at,omitempty"`
 }
 
 func sanitizeAdminUser(user *licensing.AdminUser) adminUserResponse {
@@ -36,15 +42,80 @@ func sanitizeAdminUser(user *licensing.AdminUser) adminUserResponse {
 
 func sanitizeAPIKey(key *licensing.APIKeyRecord) apiKeyResponse {
 	resp := apiKeyResponse{
-		ID:        key.ID,
-		UserID:    key.UserID,
-		Prefix:    key.Prefix,
-		CreatedAt: key.CreatedAt.Format(time.RFC3339),
+		ID:             key.ID,
+		UserID:         key.UserID,
+		Prefix:         key.Prefix,
+		Scopes:         key.Scopes,
+		AllowedIPs:     key.AllowedIPs,
+		AllowedOrigins: key.AllowedOrigins,
+		CreatedAt:      key.CreatedAt.Format(time.RFC3339),
+	}
+	if !key.ExpiresAt.IsZero() {
+		resp.ExpiresAt = key.ExpiresAt.Format(time.RFC3339)
 	}
 	if !key.LastUsed.IsZero() {
 		resp.LastUsed = key.LastUsed.Format(time.RFC3339)
 	}
 	return resp
+}
+
+type createAPIKeyRequest struct {
+	UserID         string   `json:"user_id"`
+	Scopes         []string `json:"scopes,omitempty"`
+	AllowedIPs     []string `json:"allowed_ips,omitempty"`
+	AllowedOrigins []string `json:"allowed_origins,omitempty"`
+	ExpiresAt      string   `json:"expires_at,omitempty"`
+	TTLHours       int      `json:"ttl_hours,omitempty"`
+}
+
+func normalizeRequestList(values []string) []string {
+	seen := map[string]struct{}{}
+	var out []string
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			continue
+		}
+		if _, ok := seen[value]; ok {
+			continue
+		}
+		seen[value] = struct{}{}
+		out = append(out, value)
+	}
+	return out
+}
+
+func apiKeyOptionsFromRequest(req createAPIKeyRequest) (licensing.APIKeyOptions, error) {
+	opts := licensing.APIKeyOptions{
+		Scopes:         normalizeRequestList(req.Scopes),
+		AllowedIPs:     normalizeRequestList(req.AllowedIPs),
+		AllowedOrigins: normalizeRequestList(req.AllowedOrigins),
+	}
+	if len(opts.Scopes) == 0 {
+		opts.Scopes = []string{"admin:*"}
+	}
+	for _, raw := range opts.AllowedIPs {
+		if strings.Contains(raw, "/") {
+			if _, _, err := net.ParseCIDR(raw); err != nil {
+				return opts, fmt.Errorf("invalid allowed IP CIDR %q", raw)
+			}
+			continue
+		}
+		if net.ParseIP(raw) == nil {
+			return opts, fmt.Errorf("invalid allowed IP %q", raw)
+		}
+	}
+	if strings.TrimSpace(req.ExpiresAt) != "" {
+		expiresAt, err := time.Parse(time.RFC3339, strings.TrimSpace(req.ExpiresAt))
+		if err != nil {
+			return opts, fmt.Errorf("expires_at must be RFC3339")
+		}
+		opts.ExpiresAt = expiresAt
+	}
+	if req.TTLHours > 0 {
+		opts.ExpiresAt = time.Now().Add(time.Duration(req.TTLHours) * time.Hour)
+	}
+	return opts, nil
 }
 
 func (ws *WebServer) handleAPIAdminUsers(w http.ResponseWriter, r *http.Request) {
@@ -234,18 +305,19 @@ func (ws *WebServer) handleAPIAdminAPIKeys(w http.ResponseWriter, r *http.Reques
 		}
 		ws.respondJSON(w, http.StatusOK, resp)
 	case http.MethodPost:
-		var req struct {
-			UserID string `json:"user_id"`
-		}
+		var req createAPIKeyRequest
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			ws.respondAPIError(w, http.StatusBadRequest, "Invalid request body", map[string]interface{}{
-				"expected": "JSON object with user_id",
+				"expected": "JSON object with user_id and optional scopes/restrictions",
 				"example": map[string]interface{}{
-					"user_id": "admin-user-uuid",
+					"user_id":     "admin-user-uuid",
+					"scopes":      []string{"licenses:read", "clients:read"},
+					"allowed_ips": []string{"203.0.113.10", "10.0.0.0/24"},
+					"ttl_hours":   24,
 				},
 				"error_type":       "json_decode_failed",
 				"parse_error":      err.Error(),
-				"suggested_action": "Ensure the request body contains valid JSON with a 'user_id' field",
+				"suggested_action": "Ensure the request body contains valid JSON",
 			})
 			return
 		}
@@ -253,7 +325,12 @@ func (ws *WebServer) handleAPIAdminAPIKeys(w http.ResponseWriter, r *http.Reques
 			ws.respondAPIError(w, http.StatusBadRequest, "user_id is required")
 			return
 		}
-		token, metadata, err := ws.lm.GenerateAPIKey(ctx, req.UserID)
+		opts, err := apiKeyOptionsFromRequest(req)
+		if err != nil {
+			ws.respondAPIError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		token, metadata, err := ws.lm.GenerateAPIKeyWithOptions(ctx, req.UserID, opts)
 		if err != nil {
 			ws.respondAPIError(w, http.StatusBadRequest, err.Error())
 			return

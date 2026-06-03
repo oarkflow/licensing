@@ -487,7 +487,35 @@ func (lm *LicenseManager) DeleteAdminUser(ctx context.Context, userID string) er
 	return lm.storage.DeleteAdminUser(ctx, userID)
 }
 
+type APIKeyOptions struct {
+	Scopes         []string
+	AllowedIPs     []string
+	AllowedOrigins []string
+	ExpiresAt      time.Time
+}
+
+func normalizeStringList(values []string) []string {
+	seen := map[string]struct{}{}
+	var normalized []string
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			continue
+		}
+		if _, ok := seen[value]; ok {
+			continue
+		}
+		seen[value] = struct{}{}
+		normalized = append(normalized, value)
+	}
+	return normalized
+}
+
 func (lm *LicenseManager) GenerateAPIKey(ctx context.Context, userID string) (string, *APIKeyRecord, error) {
+	return lm.GenerateAPIKeyWithOptions(ctx, userID, APIKeyOptions{})
+}
+
+func (lm *LicenseManager) GenerateAPIKeyWithOptions(ctx context.Context, userID string, opts APIKeyOptions) (string, *APIKeyRecord, error) {
 	if _, err := lm.storage.GetAdminUser(ctx, userID); err != nil {
 		return "", nil, err
 	}
@@ -497,11 +525,15 @@ func (lm *LicenseManager) GenerateAPIKey(ctx context.Context, userID string) (st
 	}
 	hash := hashAPIKey(secret)
 	record := &APIKeyRecord{
-		ID:        uuid.New().String(),
-		UserID:    userID,
-		Hash:      hash,
-		Prefix:    strings.ToUpper(secret[:8]),
-		CreatedAt: time.Now(),
+		ID:             uuid.New().String(),
+		UserID:         userID,
+		Hash:           hash,
+		Prefix:         strings.ToUpper(secret[:8]),
+		Scopes:         normalizeStringList(opts.Scopes),
+		AllowedIPs:     normalizeStringList(opts.AllowedIPs),
+		AllowedOrigins: normalizeStringList(opts.AllowedOrigins),
+		ExpiresAt:      opts.ExpiresAt,
+		CreatedAt:      time.Now(),
 	}
 	if err := lm.storage.SaveAPIKey(ctx, record); err != nil {
 		return "", nil, err
@@ -583,24 +615,35 @@ func (lm *LicenseManager) DeleteAPIKey(ctx context.Context, keyID string) error 
 }
 
 func (lm *LicenseManager) ValidateAPIKey(ctx context.Context, token string) (*AdminUser, error) {
+	user, _, err := lm.ValidateAPIKeyRecord(ctx, token)
+	return user, err
+}
+
+func (lm *LicenseManager) ValidateAPIKeyRecord(ctx context.Context, token string) (*AdminUser, *APIKeyRecord, error) {
 	token = strings.TrimSpace(token)
 	if token == "" {
-		return nil, fmt.Errorf("api key required")
+		return nil, nil, fmt.Errorf("api key required")
 	}
 	hash := hashAPIKey(token)
 	record, err := lm.storage.GetAPIKeyByHash(ctx, hash)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
+	}
+	if record.UserID == "" {
+		return nil, nil, fmt.Errorf("not an admin API key")
+	}
+	if !record.ExpiresAt.IsZero() && time.Now().After(record.ExpiresAt) {
+		return nil, nil, fmt.Errorf("api key expired")
 	}
 	user, err := lm.storage.GetAdminUser(ctx, record.UserID)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	record.LastUsed = time.Now()
 	if err := lm.storage.UpdateAPIKey(ctx, record); err != nil {
 		phusluLog.Error().Err(err).Msg("failed to update api key usage")
 	}
-	return user, nil
+	return user, record, nil
 }
 
 func (lm *LicenseManager) CreateClient(ctx context.Context, email string) (*Client, error) {

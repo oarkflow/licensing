@@ -280,13 +280,17 @@ type AdminUser struct {
 }
 
 type APIKeyRecord struct {
-	ID        string    `json:"id"`
-	UserID    string    `json:"user_id"`
-	ClientID  string    `json:"client_id,omitempty"`
-	Hash      string    `json:"hash"`
-	Prefix    string    `json:"prefix"`
-	CreatedAt time.Time `json:"created_at"`
-	LastUsed  time.Time `json:"last_used_at,omitempty"`
+	ID             string    `json:"id"`
+	UserID         string    `json:"user_id"`
+	ClientID       string    `json:"client_id,omitempty"`
+	Hash           string    `json:"hash"`
+	Prefix         string    `json:"prefix"`
+	Scopes         []string  `json:"scopes,omitempty"`
+	AllowedIPs     []string  `json:"allowed_ips,omitempty"`
+	AllowedOrigins []string  `json:"allowed_origins,omitempty"`
+	ExpiresAt      time.Time `json:"expires_at,omitempty"`
+	CreatedAt      time.Time `json:"created_at"`
+	LastUsed       time.Time `json:"last_used_at,omitempty"`
 }
 
 func cloneAdminUser(user *AdminUser) *AdminUser {
@@ -305,6 +309,15 @@ func cloneAPIKeyRecord(key *APIKeyRecord) *APIKeyRecord {
 		return nil
 	}
 	clone := *key
+	if len(key.Scopes) > 0 {
+		clone.Scopes = append([]string(nil), key.Scopes...)
+	}
+	if len(key.AllowedIPs) > 0 {
+		clone.AllowedIPs = append([]string(nil), key.AllowedIPs...)
+	}
+	if len(key.AllowedOrigins) > 0 {
+		clone.AllowedOrigins = append([]string(nil), key.AllowedOrigins...)
+	}
 	return &clone
 }
 

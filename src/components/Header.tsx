@@ -8,10 +8,10 @@ export const Header = () => {
   };
 
   return (
-    <header className="sticky top-0 z-50 w-full border-b border-border/50 bg-card/95 shadow-sm backdrop-blur-md supports-[backdrop-filter]:bg-card/90">
+    <header className="sticky top-0 z-50 w-full border-b border-border/50 bg-card/95 shadow-sm -md supports-[backdrop-filter]:bg-card">
       <div className="container flex h-20 items-center justify-between">
         <div className="flex items-center gap-3">
-          <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-primary shadow-md">
+          <div className="flex h-12 w-12 items-center justify-center rounded-md bg-primary ">
             <span className="text-2xl font-bold text-primary-foreground">F</span>
           </div>
           <div>
@@ -45,7 +45,7 @@ export const Header = () => {
             Contact
           </Button>
           <Button 
-            className="ml-2 bg-primary font-semibold shadow-md transition-all hover:scale-105 hover:bg-primary-hover hover:shadow-lg"
+            className="ml-2 bg-primary font-semibold  transition-all hover:scale-105 hover:bg-primary-hover hover:"
             asChild
           >
             <a href="tel:+17203289842">
@@ -56,7 +56,7 @@ export const Header = () => {
         </nav>
 
         <Button 
-          className="bg-primary font-semibold shadow-md transition-all hover:scale-105 hover:bg-primary-hover md:hidden"
+          className="bg-primary font-semibold  transition-all hover:scale-105 hover:bg-primary-hover md:hidden"
           size="sm"
           asChild
         >

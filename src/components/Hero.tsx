@@ -15,7 +15,7 @@ export const Hero = () => {
       <div className="container relative flex min-h-[650px] flex-col items-start justify-center py-24 text-white">
         <div className="max-w-4xl space-y-8">
           <div className="space-y-4">
-            <div className="inline-block rounded-full bg-primary px-4 py-2 text-sm font-semibold shadow-lg">
+            <div className="inline-block rounded-full bg-primary px-4 py-2 text-sm font-semibold ">
               Authentic Indian & Nepali Cuisine
             </div>
             <h1 className="text-5xl font-bold leading-[1.1] tracking-tight md:text-6xl lg:text-7xl">
@@ -29,7 +29,7 @@ export const Hero = () => {
           <div className="flex flex-col gap-4 pt-2 sm:flex-row sm:items-center">
             <Button 
               size="lg" 
-              className="bg-primary text-lg font-semibold shadow-lg transition-all hover:scale-105 hover:bg-primary-hover hover:shadow-xl"
+              className="bg-primary text-lg font-semibold  transition-all hover:scale-105 hover:bg-primary-hover hover:shadow-xl"
               onClick={() => document.getElementById("menu")?.scrollIntoView({ behavior: "smooth" })}
             >
               View Menu
@@ -37,7 +37,7 @@ export const Hero = () => {
             <Button 
               size="lg" 
               variant="outline" 
-              className="border-2 border-white/30 bg-white/10 text-lg font-semibold text-white backdrop-blur-sm transition-all hover:scale-105 hover:border-white/50 hover:bg-white/20"
+              className="border-2 border-white/30 bg-white/10 text-lg font-semibold text-white  transition-all hover:scale-105 hover:border-white/50 hover:bg-white/20"
               asChild
             >
               <a href="tel:+17203289842">
@@ -47,7 +47,7 @@ export const Hero = () => {
             </Button>
           </div>
 
-          <div className="flex flex-col gap-4 border-l-4 border-primary bg-black/30 p-6 backdrop-blur-sm">
+          <div className="flex flex-col gap-4 border-l-4 border-primary bg-black/30 p-6 ">
             <div className="flex items-start gap-3">
               <MapPin className="mt-1 h-5 w-5 shrink-0 text-primary" />
               <span className="text-lg">1076 N Ogden St, Denver, CO 80218</span>

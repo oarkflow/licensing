@@ -290,7 +290,7 @@ export const FeatureScopeSelector = memo(function FeatureScopeSelector({
 
         if (featuresForTab.length === 0) {
             return (
-                <Card className="rounded-3xl border-dashed border-border/60 bg-muted/30">
+                <Card className="rounded-md border-dashed border-border bg-muted">
                     <CardContent className="py-10 text-center text-sm text-muted-foreground">
                         {emptyCopy[tab]}
                     </CardContent>
@@ -299,12 +299,12 @@ export const FeatureScopeSelector = memo(function FeatureScopeSelector({
         }
 
         return (
-            <div className="grid gap-4 lg:grid-cols-1">
+            <div className="grid gap-4">
                 {featuresForTab.map((feature) => {
                     const allGroupedScopes = buildScopeGroups(feature.feature_slug, feature.scopes);
                     const groupedScopes = filterGroupsAndScopes(allGroupedScopes, searchTerm);
                     return (
-                        <Card key={feature.feature_slug} className="rounded-3xl border bg-card/70 shadow-none">
+                        <Card key={feature.feature_slug} className="rounded-md border bg-card shadow-none">
                             <CardContent className="space-y-4 p-5">
                                 <div className="flex items-center gap-2">
                                     <Badge variant={feature.enabled ? 'default' : 'secondary'} className="rounded-full px-3 py-1 text-xs">
@@ -317,7 +317,7 @@ export const FeatureScopeSelector = memo(function FeatureScopeSelector({
                                         type="button"
                                         variant={feature.enabled ? 'default' : 'outline'}
                                         size="sm"
-                                        className="rounded-2xl"
+                                        className="rounded-md"
                                         onClick={() => handleFeatureToggle(feature.feature_slug, true)}
                                         disabled={disabled}
                                     >
@@ -327,7 +327,7 @@ export const FeatureScopeSelector = memo(function FeatureScopeSelector({
                                         type="button"
                                         variant={feature.enabled ? 'outline' : 'destructive'}
                                         size="sm"
-                                        className="rounded-2xl"
+                                        className="rounded-md"
                                         onClick={() => handleFeatureToggle(feature.feature_slug, false)}
                                         disabled={disabled}
                                     >
@@ -337,11 +337,11 @@ export const FeatureScopeSelector = memo(function FeatureScopeSelector({
                                 {groupedScopes.length === 0 ? (
                                     <p className="text-sm italic text-muted-foreground">No scopes defined for this feature yet.</p>
                                 ) : (
-                                    <div className="columns-1 gap-4 md:columns-2 md:gap-6">
+                                    <div className="grid gap-3">
                                         {groupedScopes.map((group) => (
                                             <div
                                                 key={`${feature.feature_slug}-${group.title}`}
-                                                className="mb-4 break-inside-avoid space-y-2 rounded-2xl border border-border/60 bg-muted/20 p-3"
+                                                className="space-y-2 border-y border-border bg-muted px-3 py-3"
                                             >
                                                 <div className="flex items-center justify-between text-xs uppercase tracking-[0.3em] text-muted-foreground">
                                                     <span>{group.title}</span>
@@ -349,11 +349,11 @@ export const FeatureScopeSelector = memo(function FeatureScopeSelector({
                                                         {group.scopes.length}
                                                     </Badge>
                                                 </div>
-                                                <div className="space-y-2">
+                                                <div className="grid gap-2 lg:grid-cols-2 2xl:grid-cols-3">
                                                     {group.scopes.map(({ selection, definition }) => (
                                                         <div
                                                             key={`${feature.feature_slug}-${selection.scope_slug}`}
-                                                            className="flex items-center justify-between rounded-2xl border border-border/80 bg-background/80 px-4 py-3"
+                                                            className="flex min-w-0 items-center justify-between gap-3 border-y border-border bg-background px-3 py-2"
                                                         >
                                                             <div className="space-y-1">
                                                                 <p className="text-sm font-medium">
@@ -398,7 +398,7 @@ export const FeatureScopeSelector = memo(function FeatureScopeSelector({
     }, [searchTerms, handleFeatureToggle, handleScopeToggle, disabled]);
 
     if (loading) {
-        return <Skeleton className="h-48 w-full rounded-3xl" />;
+        return <Skeleton className="h-48 w-full rounded-md" />;
     }
 
     const tabsToRender: FeatureCategory[] = [...tabOrder, 'other'];
@@ -407,7 +407,7 @@ export const FeatureScopeSelector = memo(function FeatureScopeSelector({
 
     if (!loading && selections.length === 0) {
         return (
-            <Card className="rounded-3xl border-dashed border-primary/30 bg-muted/40">
+            <Card className="rounded-md border-dashed bg-muted">
                 <CardContent className="flex flex-col items-center justify-center gap-3 py-10 text-center">
                     <ShieldCheck className="h-10 w-10 text-primary" />
                     <p className="text-sm text-muted-foreground">No feature scopes available for this plan yet.</p>
@@ -417,7 +417,7 @@ export const FeatureScopeSelector = memo(function FeatureScopeSelector({
     }
 
     return (
-        <div className="space-y-6 rounded-[32px] border border-border/60 bg-gradient-to-b from-muted/50 to-background p-6">
+        <div className="space-y-4 border-y border-border bg-background py-4">
             <div className="flex flex-wrap items-center gap-3">
                 <div>
                     <p className="text-xs uppercase tracking-[0.4em] text-muted-foreground">{title}</p>
@@ -428,7 +428,7 @@ export const FeatureScopeSelector = memo(function FeatureScopeSelector({
                         type="button"
                         variant="outline"
                         size="sm"
-                        className="ml-auto rounded-2xl"
+                        className="ml-auto rounded-md"
                         onClick={onReset}
                         disabled={disabled}
                     >
@@ -436,13 +436,13 @@ export const FeatureScopeSelector = memo(function FeatureScopeSelector({
                     </Button>
                 )}
             </div>
-            <Tabs value={activeTab} onValueChange={handleTabChange} className="space-y-6">
-                <TabsList className="flex flex-wrap gap-2 rounded-3xl bg-muted/40 p-1">
+            <Tabs value={activeTab} onValueChange={handleTabChange} className="space-y-4">
+                <TabsList className="flex flex-wrap gap-2 rounded-md bg-muted p-1">
                     {tabsToRender.map((tab) => (
                         <TabsTrigger
                             key={tab}
                             value={tab}
-                            className="rounded-2xl px-4 py-2 text-xs font-semibold uppercase tracking-[0.3em]"
+                            className="rounded-md px-4 py-2 text-xs font-semibold uppercase tracking-[0.3em]"
                         >
                             <span>{categoryLabels[tab]}</span>
                             <span className="ml-2 rounded-full bg-background/60 px-2 py-0.5 text-[10px] font-medium text-muted-foreground">
@@ -459,7 +459,7 @@ export const FeatureScopeSelector = memo(function FeatureScopeSelector({
                                 placeholder={`Search ${categoryLabels[tab]} groups, features, or scopes...`}
                                 value={searchTerms[tab]}
                                 onChange={(e) => setSearchTerms((prev) => ({ ...prev, [tab]: e.target.value }))}
-                                className="rounded-2xl pl-9 pr-4"
+                                className="rounded-md pl-9 pr-4"
                             />
                         </div>
                         {renderFeatureGrid(getFeaturesForTab(tab), tab)}
@@ -468,9 +468,9 @@ export const FeatureScopeSelector = memo(function FeatureScopeSelector({
             </Tabs>
             {changesDetail.length > 0 && createPortal(
                 <div className="fixed bottom-6 right-6 z-[9999] max-w-md">
-                    <Card className="rounded-3xl border-primary/60 bg-background/95 shadow-2xl backdrop-blur-sm">
+                    <Card className="rounded-md border-primary bg-background shadow-2xl ">
                         <CardContent className="p-0">
-                            <div className="flex items-center justify-between border-b border-border/60 px-4 py-3">
+                            <div className="flex items-center justify-between border-b border-border px-4 py-3">
                                 <div className="flex items-center gap-2">
                                     <Badge variant="default" className="rounded-full px-3 py-1">
                                         {changesDetail.length} {changesDetail.length === 1 ? 'change' : 'changes'}
@@ -503,7 +503,7 @@ export const FeatureScopeSelector = memo(function FeatureScopeSelector({
                                         return (
                                             <div
                                                 key={`${change.featureSlug}-${change.scopeSlug}-${idx}`}
-                                                className="flex items-start gap-3 rounded-2xl border border-border/60 bg-muted/30 p-3 text-sm"
+                                                className="flex items-start gap-3 rounded-md border border-border bg-muted p-3 text-sm"
                                             >
                                                 <div className="mt-0.5">
                                                     {isAllowed ? (

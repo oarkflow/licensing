@@ -252,7 +252,7 @@ export function MessagingTemplateFormPage() {
                                     }))
                                 }
                             >
-                                <SelectTrigger className="rounded-2xl border border-border bg-transparent">
+                                <SelectTrigger className="rounded-md border border-border bg-transparent">
                                     <SelectValue placeholder="Follow routing">
                                         {formState.defaultProviderId
                                             ? providers.find((p) => p.id === formState.defaultProviderId)?.name
@@ -340,7 +340,7 @@ export function MessagingTemplateFormPage() {
                 </Card>
 
                 <div className="flex flex-wrap gap-3">
-                    <Button type="submit" className="rounded-2xl" disabled={saveMutation.isPending}>
+                    <Button type="submit" className="rounded-md" disabled={saveMutation.isPending}>
                         {saveMutation.isPending ? (
                             <>
                                 <Loader2 className="mr-2 h-4 w-4 animate-spin" /> Saving...
@@ -355,7 +355,7 @@ export function MessagingTemplateFormPage() {
                     <Button
                         type="button"
                         variant="outline"
-                        className="rounded-2xl"
+                        className="rounded-md"
                         onClick={() => navigate('/messaging/templates')}
                     >
                         Cancel
@@ -364,7 +364,7 @@ export function MessagingTemplateFormPage() {
                         <Button
                             type="button"
                             variant="destructive"
-                            className="rounded-2xl"
+                            className="rounded-md"
                             disabled={deleteMutation.isPending}
                             onClick={handleDelete}
                         >

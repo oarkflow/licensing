@@ -671,10 +671,19 @@ class ApiService {
         return this.request<APIKey[]>(`/api/admin/api-keys?user_id=${userId}`);
     }
 
-    async createAPIKey(userId: string): Promise<ApiResponse<{ token: string; metadata: APIKey }>> {
+    async createAPIKey(
+        userId: string,
+        options?: {
+            scopes?: string[];
+            allowed_ips?: string[];
+            allowed_origins?: string[];
+            expires_at?: string;
+            ttl_hours?: number;
+        }
+    ): Promise<ApiResponse<{ token: string; metadata: APIKey }>> {
         return this.request<{ token: string; metadata: APIKey }>('/api/admin/api-keys', {
             method: 'POST',
-            body: JSON.stringify({ user_id: userId }),
+            body: JSON.stringify({ user_id: userId, ...(options || {}) }),
         });
     }
 

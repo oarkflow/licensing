@@ -209,7 +209,7 @@ export function AdminCouponsPage() {
                     {coupons.length === 0 ? (
                         <div className="rounded-md border border-dashed p-10 text-center text-sm text-muted-foreground">No coupons yet.</div>
                     ) : coupons.map((coupon) => (
-                        <button key={coupon.id} className="w-full rounded-xl border p-4 text-left hover:bg-muted/20" onClick={() => openEdit(coupon)}>
+                        <button key={coupon.id} className="w-full border-y px-3 py-2 text-left hover:bg-muted/40" onClick={() => openEdit(coupon)}>
                             <div className="flex items-center gap-3">
                                 <Ticket className="h-4 w-4 text-primary" />
                                 <div className="min-w-0 flex-1">
@@ -297,7 +297,7 @@ export function AdminCouponsPage() {
                                 </Button>
                             </div>
                             {form.features.map((feature, featureIndex) => (
-                                <div key={featureIndex} className="rounded-xl border p-4 space-y-4">
+                                <div key={featureIndex} className="space-y-4 border-y px-3 py-3">
                                     <div className="grid gap-4 md:grid-cols-3">
                                         <div className="space-y-2">
                                             <Label>Feature Slug</Label>

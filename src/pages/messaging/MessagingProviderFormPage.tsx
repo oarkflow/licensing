@@ -294,7 +294,7 @@ export function MessagingProviderFormPage() {
                         <div className="space-y-2">
                             <Label>Provider type</Label>
                             <select
-                                className="w-full rounded-2xl border border-border bg-transparent px-3 py-2"
+                                className="w-full rounded-md border border-border bg-transparent px-3 py-2"
                                 value={formState.type}
                                 onChange={(e) =>
                                     setFormState((prev) => ({
@@ -400,7 +400,7 @@ export function MessagingProviderFormPage() {
                                 }}
                             />
                         </div>
-                        <div className="flex items-center gap-4 rounded-2xl border border-border p-4">
+                        <div className="flex items-center gap-4 rounded-md border border-border p-4">
                             <div className="flex-1">
                                 <p className="font-medium">Default provider</p>
                                 <p className="text-sm text-muted-foreground">Use as the primary send node.</p>
@@ -410,7 +410,7 @@ export function MessagingProviderFormPage() {
                                 onCheckedChange={(checked) => setFormState((prev) => ({ ...prev, isDefault: checked }))}
                             />
                         </div>
-                        <div className="flex items-center gap-4 rounded-2xl border border-border p-4">
+                        <div className="flex items-center gap-4 rounded-md border border-border p-4">
                             <div className="flex-1">
                                 <p className="font-medium">Enabled</p>
                                 <p className="text-sm text-muted-foreground">Disable to take out of rotation.</p>
@@ -473,7 +473,7 @@ export function MessagingProviderFormPage() {
                         </div>
                         <Button
                             type="button"
-                            className="mt-6 rounded-2xl md:mt-auto"
+                            className="mt-6 rounded-md md:mt-auto"
                             disabled={testMutation.isPending || saveMutation.isPending}
                             onClick={handleTest}
                         >
@@ -491,7 +491,7 @@ export function MessagingProviderFormPage() {
                 </Card>
 
                 <div className="flex flex-wrap gap-3">
-                    <Button type="submit" className="rounded-2xl" disabled={saveMutation.isPending}>
+                    <Button type="submit" className="rounded-md" disabled={saveMutation.isPending}>
                         {saveMutation.isPending ? (
                             <>
                                 <Loader2 className="mr-2 h-4 w-4 animate-spin" /> Saving...
@@ -506,7 +506,7 @@ export function MessagingProviderFormPage() {
                     <Button
                         type="button"
                         variant="outline"
-                        className="rounded-2xl"
+                        className="rounded-md"
                         onClick={() => navigate('/messaging/providers')}
                     >
                         Cancel
@@ -515,7 +515,7 @@ export function MessagingProviderFormPage() {
                         <Button
                             type="button"
                             variant="destructive"
-                            className="rounded-2xl"
+                            className="rounded-md"
                             disabled={deleteMutation.isPending}
                             onClick={handleDelete}
                         >

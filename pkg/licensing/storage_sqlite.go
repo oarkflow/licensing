@@ -176,6 +176,10 @@ func ensureSQLiteSchema(db *squealx.DB) error {
 			client_id TEXT,
 			hash TEXT NOT NULL UNIQUE,
 			prefix TEXT NOT NULL,
+			scopes TEXT,
+			allowed_ips TEXT,
+			allowed_origins TEXT,
+			expires_at TIMESTAMP,
 			created_at TIMESTAMP NOT NULL,
 			last_used_at TIMESTAMP,
 			FOREIGN KEY(user_id) REFERENCES admin_users(id) ON DELETE CASCADE,
@@ -316,6 +320,19 @@ func ensureSQLiteSchema(db *squealx.DB) error {
 	// Ensure api_keys.client_id exists and create index after column migration
 	if err := ensureSQLiteColumn(db, "api_keys", "client_id", "TEXT"); err != nil {
 		return err
+	}
+	for _, col := range []struct {
+		name string
+		def  string
+	}{
+		{name: "scopes", def: "TEXT"},
+		{name: "allowed_ips", def: "TEXT"},
+		{name: "allowed_origins", def: "TEXT"},
+		{name: "expires_at", def: "TIMESTAMP"},
+	} {
+		if err := ensureSQLiteColumn(db, "api_keys", col.name, col.def); err != nil {
+			return err
+		}
 	}
 	if _, err := db.Exec(`CREATE INDEX IF NOT EXISTS idx_api_keys_client_id ON api_keys(client_id)`); err != nil {
 		// If there is a sqlite error due to older versions, it's fine to continue
@@ -589,13 +606,39 @@ func nullString(s string) any {
 	return s
 }
 
+func nullStringSliceJSON(values []string) any {
+	if len(values) == 0 {
+		return nil
+	}
+	data, err := json.Marshal(values)
+	if err != nil {
+		return nil
+	}
+	return string(data)
+}
+
+func parseStringSliceJSON(raw sql.NullString) []string {
+	if !raw.Valid || strings.TrimSpace(raw.String) == "" {
+		return nil
+	}
+	var values []string
+	if err := json.Unmarshal([]byte(raw.String), &values); err != nil {
+		return nil
+	}
+	return values
+}
+
 func scanAPIKeyRow(scanner rowScanner) (*APIKeyRecord, error) {
 	var key APIKeyRecord
 	var userID sql.NullString
 	var clientID sql.NullString
 	var createdAt sqliteTimeValue
 	var lastUsed sqliteNullTime
-	if err := scanner.Scan(&key.ID, &userID, &clientID, &key.Hash, &key.Prefix, &createdAt, &lastUsed); err != nil {
+	var scopes sql.NullString
+	var allowedIPs sql.NullString
+	var allowedOrigins sql.NullString
+	var expiresAt sqliteNullTime
+	if err := scanner.Scan(&key.ID, &userID, &clientID, &key.Hash, &key.Prefix, &scopes, &allowedIPs, &allowedOrigins, &expiresAt, &createdAt, &lastUsed); err != nil {
 		return nil, err
 	}
 	if userID.Valid {
@@ -603,6 +646,12 @@ func scanAPIKeyRow(scanner rowScanner) (*APIKeyRecord, error) {
 	}
 	if clientID.Valid {
 		key.ClientID = clientID.String
+	}
+	key.Scopes = parseStringSliceJSON(scopes)
+	key.AllowedIPs = parseStringSliceJSON(allowedIPs)
+	key.AllowedOrigins = parseStringSliceJSON(allowedOrigins)
+	if expiresAt.Valid {
+		key.ExpiresAt = expiresAt.Time
 	}
 	key.CreatedAt = createdAt.Time
 	if lastUsed.Valid {
@@ -1442,14 +1491,18 @@ func (s *SQLiteStorage) SaveAPIKey(ctx context.Context, key *APIKeyRecord) error
 	if key == nil {
 		return fmt.Errorf("api key is nil")
 	}
-	query := `INSERT INTO api_keys (id, user_id, client_id, hash, prefix, created_at, last_used_at)
-			  VALUES (?, ?, ?, ?, ?, ?, ?)`
+	query := `INSERT INTO api_keys (id, user_id, client_id, hash, prefix, scopes, allowed_ips, allowed_origins, expires_at, created_at, last_used_at)
+				  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 	_, err := s.db.ExecContext(ctx, query,
 		key.ID,
 		nullString(key.UserID),
 		nullString(key.ClientID),
 		key.Hash,
 		key.Prefix,
+		nullStringSliceJSON(key.Scopes),
+		nullStringSliceJSON(key.AllowedIPs),
+		nullStringSliceJSON(key.AllowedOrigins),
+		nullTime(key.ExpiresAt),
 		key.CreatedAt,
 		nullTime(key.LastUsed),
 	)
@@ -1466,12 +1519,16 @@ func (s *SQLiteStorage) UpdateAPIKey(ctx context.Context, key *APIKeyRecord) err
 	if key == nil {
 		return fmt.Errorf("api key is nil")
 	}
-	query := `UPDATE api_keys SET user_id = ?, client_id = ?, hash = ?, prefix = ?, created_at = ?, last_used_at = ? WHERE id = ?`
+	query := `UPDATE api_keys SET user_id = ?, client_id = ?, hash = ?, prefix = ?, scopes = ?, allowed_ips = ?, allowed_origins = ?, expires_at = ?, created_at = ?, last_used_at = ? WHERE id = ?`
 	res, err := s.db.ExecContext(ctx, query,
 		nullString(key.UserID),
 		nullString(key.ClientID),
 		key.Hash,
 		key.Prefix,
+		nullStringSliceJSON(key.Scopes),
+		nullStringSliceJSON(key.AllowedIPs),
+		nullStringSliceJSON(key.AllowedOrigins),
+		nullTime(key.ExpiresAt),
 		key.CreatedAt,
 		nullTime(key.LastUsed),
 		key.ID,
@@ -1500,7 +1557,7 @@ func (s *SQLiteStorage) DeleteAPIKey(ctx context.Context, keyID string) error {
 }
 
 func (s *SQLiteStorage) GetAPIKeyByHash(ctx context.Context, hash string) (*APIKeyRecord, error) {
-	query := `SELECT id, user_id, client_id, hash, prefix, created_at, last_used_at FROM api_keys WHERE hash = ?`
+	query := `SELECT id, user_id, client_id, hash, prefix, scopes, allowed_ips, allowed_origins, expires_at, created_at, last_used_at FROM api_keys WHERE hash = ?`
 	row := s.db.QueryRowContext(ctx, query, hash)
 	key, err := scanAPIKeyRow(row)
 	if err != nil {
@@ -1513,7 +1570,7 @@ func (s *SQLiteStorage) GetAPIKeyByHash(ctx context.Context, hash string) (*APIK
 }
 
 func (s *SQLiteStorage) ListAPIKeysByUser(ctx context.Context, userID string) ([]*APIKeyRecord, error) {
-	query := `SELECT id, user_id, client_id, hash, prefix, created_at, last_used_at FROM api_keys WHERE user_id = ? ORDER BY created_at ASC`
+	query := `SELECT id, user_id, client_id, hash, prefix, scopes, allowed_ips, allowed_origins, expires_at, created_at, last_used_at FROM api_keys WHERE user_id = ? ORDER BY created_at ASC`
 	rows, err := s.db.QueryContext(ctx, query, userID)
 	if err != nil {
 		return nil, err
@@ -1550,7 +1607,7 @@ func isSQLiteUniqueErr(err error) bool {
 }
 
 func (s *SQLiteStorage) ListAPIKeysByClient(ctx context.Context, clientID string) ([]*APIKeyRecord, error) {
-	query := `SELECT id, user_id, client_id, hash, prefix, created_at, last_used_at FROM api_keys WHERE client_id = ? ORDER BY created_at ASC`
+	query := `SELECT id, user_id, client_id, hash, prefix, scopes, allowed_ips, allowed_origins, expires_at, created_at, last_used_at FROM api_keys WHERE client_id = ? ORDER BY created_at ASC`
 	rows, err := s.db.QueryContext(ctx, query, clientID)
 	if err != nil {
 		return nil, err

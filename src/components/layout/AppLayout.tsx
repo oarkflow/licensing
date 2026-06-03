@@ -10,8 +10,8 @@ export function AppLayout() {
 
     if (isLoading) {
         return (
-            <div className="flex h-screen items-center justify-center">
-                <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+            <div className="flex h-screen items-center justify-center bg-background">
+                <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
             </div>
         );
     }
@@ -22,19 +22,12 @@ export function AppLayout() {
 
     return (
         <SidebarProvider>
-            <div className="relative flex min-h-screen w-full overflow-hidden">
-                {/* Ambient glows */}
-                <div className="pointer-events-none absolute inset-0 -z-10">
-                    <div className="absolute inset-0 bg-gradient-to-b from-primary/5 via-transparent to-secondary/5" />
-                    <div className="absolute -top-32 right-10 h-64 w-64 rounded-full bg-primary/20 blur-3xl" />
-                    <div className="absolute bottom-0 left-10 h-72 w-72 rounded-full bg-secondary/20 blur-[120px]" />
-                </div>
-
+            <div className="flex min-h-screen w-full bg-background">
                 <AppSidebar />
-                <SidebarInset className="bg-background/20">
+                <SidebarInset className="bg-background">
                     <AppNavbar />
-                    <main className="flex-1 overflow-auto px-4 pb-10 pt-6 lg:px-10">
-                        <div className="mx-auto flex w-full flex-col gap-8">
+                    <main className="flex-1 overflow-auto px-3 py-3 lg:px-5">
+                        <div className="mx-auto flex w-full flex-col gap-4">
                             <Outlet />
                         </div>
                     </main>

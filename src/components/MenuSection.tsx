@@ -17,7 +17,7 @@ export const MenuSection = ({ title, subtitle, children, image }: MenuSectionPro
               <img 
                 src={image} 
                 alt={title}
-                className="h-20 w-20 rounded-2xl object-cover shadow-md ring-2 ring-primary/10"
+                className="h-20 w-20 rounded-md object-cover  ring-2 ring-primary/10"
               />
               <div className="absolute -bottom-1 -right-1 h-6 w-6 rounded-full bg-primary shadow-sm" />
             </div>

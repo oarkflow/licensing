@@ -859,7 +859,7 @@ export function PlanDetailPage() {
                         <div className="space-y-6">
                             <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
                                 {highlightStats.map((stat) => (
-                                    <div key={stat.label} className="rounded-xl border bg-muted/30 p-4">
+                                    <div key={stat.label} className="border-y bg-background px-3 py-2">
                                         <p className="text-xs uppercase tracking-wide text-muted-foreground">{stat.label}</p>
                                         <p className="mt-1 text-2xl font-semibold">{stat.value}</p>
                                         {stat.helper && (

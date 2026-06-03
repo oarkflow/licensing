@@ -560,7 +560,12 @@ type createAdminUserRequest struct {
 }
 
 type createAPIKeyRequest struct {
-	UserID string `json:"user_id"`
+	UserID         string   `json:"user_id"`
+	Scopes         []string `json:"scopes,omitempty"`
+	AllowedIPs     []string `json:"allowed_ips,omitempty"`
+	AllowedOrigins []string `json:"allowed_origins,omitempty"`
+	ExpiresAt      string   `json:"expires_at,omitempty"`
+	TTLHours       int      `json:"ttl_hours,omitempty"`
 }
 
 type trialLicenseAPIRequest struct {

@@ -399,6 +399,114 @@ func TestAdminAuthorizationWithBearerToken(t *testing.T) {
 	}
 }
 
+func TestAdminAPIKeyScopesAreEnforced(t *testing.T) {
+	storage := NewInMemoryStorage()
+	lm, err := NewLicenseManager(storage)
+	if err != nil {
+		t.Fatalf("NewLicenseManager failed: %v", err)
+	}
+	s, err := NewServer(lm, ":0", nil, NewRateLimiter(100, time.Minute), "", "", "", true)
+	if err != nil {
+		t.Fatalf("NewServer failed: %v", err)
+	}
+
+	ctx := context.Background()
+	admin, err := lm.CreateAdminUser(ctx, "scoped-admin", "password")
+	if err != nil {
+		t.Fatalf("CreateAdminUser failed: %v", err)
+	}
+	token, _, err := lm.GenerateAPIKeyWithOptions(ctx, admin.ID, APIKeyOptions{Scopes: []string{"licenses:read"}})
+	if err != nil {
+		t.Fatalf("GenerateAPIKeyWithOptions failed: %v", err)
+	}
+
+	allowed := httptest.NewRequest(http.MethodGet, "/api/licenses", nil)
+	allowed.Header.Set("Authorization", "Bearer "+token)
+	allowedRecorder := httptest.NewRecorder()
+	s.handleLicenses(allowedRecorder, allowed)
+	if allowedRecorder.Code != http.StatusOK {
+		t.Fatalf("expected licenses:read key to read licenses, got %d: %s", allowedRecorder.Code, allowedRecorder.Body.String())
+	}
+
+	denied := httptest.NewRequest(http.MethodGet, "/api/clients", nil)
+	denied.Header.Set("Authorization", "Bearer "+token)
+	deniedRecorder := httptest.NewRecorder()
+	s.handleClients(deniedRecorder, denied)
+	if deniedRecorder.Code != http.StatusUnauthorized {
+		t.Fatalf("expected licenses:read key to be denied on clients, got %d: %s", deniedRecorder.Code, deniedRecorder.Body.String())
+	}
+}
+
+func TestAdminAPIKeyExpiryIPAndOriginRestrictions(t *testing.T) {
+	storage := NewInMemoryStorage()
+	lm, err := NewLicenseManager(storage)
+	if err != nil {
+		t.Fatalf("NewLicenseManager failed: %v", err)
+	}
+	s, err := NewServer(lm, ":0", nil, NewRateLimiter(100, time.Minute), "", "", "", true)
+	if err != nil {
+		t.Fatalf("NewServer failed: %v", err)
+	}
+
+	ctx := context.Background()
+	admin, err := lm.CreateAdminUser(ctx, "restricted-admin", "password")
+	if err != nil {
+		t.Fatalf("CreateAdminUser failed: %v", err)
+	}
+	expired, _, err := lm.GenerateAPIKeyWithOptions(ctx, admin.ID, APIKeyOptions{
+		Scopes:    []string{"clients:read"},
+		ExpiresAt: time.Now().Add(-time.Hour),
+	})
+	if err != nil {
+		t.Fatalf("Generate expired key failed: %v", err)
+	}
+	expiredReq := httptest.NewRequest(http.MethodGet, "/api/clients", nil)
+	expiredReq.Header.Set("Authorization", "Bearer "+expired)
+	expiredRecorder := httptest.NewRecorder()
+	s.handleClients(expiredRecorder, expiredReq)
+	if expiredRecorder.Code != http.StatusUnauthorized {
+		t.Fatalf("expected expired key denied, got %d", expiredRecorder.Code)
+	}
+
+	restricted, _, err := lm.GenerateAPIKeyWithOptions(ctx, admin.ID, APIKeyOptions{
+		Scopes:         []string{"clients:read"},
+		AllowedIPs:     []string{"203.0.113.0/24"},
+		AllowedOrigins: []string{"https://admin.example.com"},
+	})
+	if err != nil {
+		t.Fatalf("Generate restricted key failed: %v", err)
+	}
+	wrongIP := httptest.NewRequest(http.MethodGet, "/api/clients", nil)
+	wrongIP.RemoteAddr = "198.51.100.7:12345"
+	wrongIP.Header.Set("Authorization", "Bearer "+restricted)
+	wrongIP.Header.Set("Origin", "https://admin.example.com")
+	wrongIPRecorder := httptest.NewRecorder()
+	s.handleClients(wrongIPRecorder, wrongIP)
+	if wrongIPRecorder.Code != http.StatusUnauthorized {
+		t.Fatalf("expected wrong IP denied, got %d", wrongIPRecorder.Code)
+	}
+
+	wrongOrigin := httptest.NewRequest(http.MethodGet, "/api/clients", nil)
+	wrongOrigin.RemoteAddr = "203.0.113.7:12345"
+	wrongOrigin.Header.Set("Authorization", "Bearer "+restricted)
+	wrongOrigin.Header.Set("Origin", "https://evil.example.com")
+	wrongOriginRecorder := httptest.NewRecorder()
+	s.handleClients(wrongOriginRecorder, wrongOrigin)
+	if wrongOriginRecorder.Code != http.StatusUnauthorized {
+		t.Fatalf("expected wrong origin denied, got %d", wrongOriginRecorder.Code)
+	}
+
+	allowed := httptest.NewRequest(http.MethodGet, "/api/clients", nil)
+	allowed.RemoteAddr = "203.0.113.7:12345"
+	allowed.Header.Set("Authorization", "Bearer "+restricted)
+	allowed.Header.Set("Origin", "https://admin.example.com")
+	allowedRecorder := httptest.NewRecorder()
+	s.handleClients(allowedRecorder, allowed)
+	if allowedRecorder.Code != http.StatusOK {
+		t.Fatalf("expected matching IP/origin allowed, got %d: %s", allowedRecorder.Code, allowedRecorder.Body.String())
+	}
+}
+
 func TestAdminDeviceLifecycleHandlers(t *testing.T) {
 	storage := NewInMemoryStorage()
 	lm, err := NewLicenseManager(storage)

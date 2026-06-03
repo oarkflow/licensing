@@ -99,7 +99,7 @@ export function ProfilePage() {
             </div>
 
             <div className="grid gap-6 lg:grid-cols-[1.2fr_1fr]">
-                <Card className="glass-panel rounded-3xl border">
+                <Card className=" rounded-md border">
                     <CardHeader>
                         <CardTitle className="flex items-center gap-2 text-2xl">
                             <User className="h-5 w-5 text-primary" />
@@ -118,13 +118,13 @@ export function ProfilePage() {
                                     value={username}
                                     onChange={(e) => setUsername(e.target.value)}
                                     required
-                                    className="h-11 rounded-2xl border bg-muted"
+                                    className="h-11 rounded-md border bg-muted"
                                 />
                             </div>
                             <Button
                                 type="submit"
                                 disabled={updateMutation.isPending}
-                                className="rounded-2xl"
+                                className="rounded-md"
                             >
                                 {updateMutation.isPending ? 'Saving...' : 'Save Changes'}
                             </Button>
@@ -132,7 +132,7 @@ export function ProfilePage() {
                     </CardContent>
                 </Card>
 
-                <Card className="glass-panel rounded-3xl border">
+                <Card className=" rounded-md border">
                     <CardHeader>
                         <CardTitle className="flex items-center gap-2 text-2xl">
                             <Lock className="h-5 w-5 text-secondary" />
@@ -152,7 +152,7 @@ export function ProfilePage() {
                                     value={currentPassword}
                                     onChange={(e) => setCurrentPassword(e.target.value)}
                                     required
-                                    className="h-11 rounded-2xl border bg-muted"
+                                    className="h-11 rounded-md border bg-muted"
                                 />
                             </div>
 
@@ -166,7 +166,7 @@ export function ProfilePage() {
                                     value={newPassword}
                                     onChange={(e) => setNewPassword(e.target.value)}
                                     required
-                                    className="h-11 rounded-2xl border bg-muted"
+                                    className="h-11 rounded-md border bg-muted"
                                 />
                             </div>
 
@@ -178,14 +178,14 @@ export function ProfilePage() {
                                     value={confirmPassword}
                                     onChange={(e) => setConfirmPassword(e.target.value)}
                                     required
-                                    className="h-11 rounded-2xl border bg-muted"
+                                    className="h-11 rounded-md border bg-muted"
                                 />
                             </div>
 
                             <Button
                                 type="submit"
                                 disabled={changePasswordMutation.isPending}
-                                className="rounded-2xl"
+                                className="rounded-md"
                             >
                                 {changePasswordMutation.isPending
                                     ? 'Changing...'
@@ -196,7 +196,7 @@ export function ProfilePage() {
                 </Card>
             </div>
 
-            <Card className="glass-panel rounded-3xl border">
+            <Card className=" rounded-md border">
                 <CardHeader className="flex flex-col gap-2 text-sm text-muted-foreground">
                     <CardTitle className="flex items-center gap-2 text-lg">
                         <ShieldCheck className="h-5 w-5 text-primary" />

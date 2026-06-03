@@ -277,6 +277,10 @@ export interface APIKey {
     user_id: string;
     client_id?: string;
     prefix: string;
+    scopes?: string[];
+    allowed_ips?: string[];
+    allowed_origins?: string[];
+    expires_at?: string;
     created_at: string;
     last_used_at?: string;
 }

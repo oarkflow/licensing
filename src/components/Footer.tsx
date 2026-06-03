@@ -8,7 +8,7 @@ export const Footer = () => {
         <div className="grid gap-10 md:grid-cols-2 lg:grid-cols-3">
           <div className="space-y-5">
             <div className="flex items-center gap-3">
-              <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-primary shadow-md">
+              <div className="flex h-10 w-10 items-center justify-center rounded-md bg-primary">
                 <span className="text-2xl font-bold text-primary-foreground">F</span>
               </div>
               <h3 className="text-2xl font-bold text-primary">Fishtail</h3>

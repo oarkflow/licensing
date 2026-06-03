@@ -82,12 +82,16 @@ type adminUserResponse struct {
 }
 
 type apiKeyMetadata struct {
-	ID        string    `json:"id"`
-	UserID    string    `json:"user_id"`
-	ClientID  string    `json:"client_id,omitempty"`
-	Prefix    string    `json:"prefix"`
-	CreatedAt time.Time `json:"created_at"`
-	LastUsed  time.Time `json:"last_used_at,omitempty"`
+	ID             string    `json:"id"`
+	UserID         string    `json:"user_id"`
+	ClientID       string    `json:"client_id,omitempty"`
+	Prefix         string    `json:"prefix"`
+	Scopes         []string  `json:"scopes,omitempty"`
+	AllowedIPs     []string  `json:"allowed_ips,omitempty"`
+	AllowedOrigins []string  `json:"allowed_origins,omitempty"`
+	ExpiresAt      time.Time `json:"expires_at,omitempty"`
+	CreatedAt      time.Time `json:"created_at"`
+	LastUsed       time.Time `json:"last_used_at,omitempty"`
 }
 
 type apiKeyIssueResponse struct {
@@ -131,13 +135,49 @@ func newAPIKeyMetadata(record *APIKeyRecord) apiKeyMetadata {
 		return apiKeyMetadata{}
 	}
 	return apiKeyMetadata{
-		ID:        record.ID,
-		UserID:    record.UserID,
-		ClientID:  record.ClientID,
-		Prefix:    record.Prefix,
-		CreatedAt: record.CreatedAt,
-		LastUsed:  record.LastUsed,
+		ID:             record.ID,
+		UserID:         record.UserID,
+		ClientID:       record.ClientID,
+		Prefix:         record.Prefix,
+		Scopes:         record.Scopes,
+		AllowedIPs:     record.AllowedIPs,
+		AllowedOrigins: record.AllowedOrigins,
+		ExpiresAt:      record.ExpiresAt,
+		CreatedAt:      record.CreatedAt,
+		LastUsed:       record.LastUsed,
 	}
+}
+
+func apiKeyOptionsFromRequest(req createAPIKeyRequest) (APIKeyOptions, error) {
+	var opts APIKeyOptions
+	opts.Scopes = normalizeStringList(req.Scopes)
+	opts.AllowedIPs = normalizeStringList(req.AllowedIPs)
+	opts.AllowedOrigins = normalizeStringList(req.AllowedOrigins)
+	if len(opts.Scopes) == 0 {
+		opts.Scopes = []string{"admin:*"}
+	}
+	for _, raw := range opts.AllowedIPs {
+		if strings.Contains(raw, "/") {
+			if _, _, err := net.ParseCIDR(raw); err != nil {
+				return opts, fmt.Errorf("invalid allowed IP CIDR %q", raw)
+			}
+			continue
+		}
+		if net.ParseIP(raw) == nil {
+			return opts, fmt.Errorf("invalid allowed IP %q", raw)
+		}
+	}
+	if strings.TrimSpace(req.ExpiresAt) != "" {
+		expiresAt, err := time.Parse(time.RFC3339, strings.TrimSpace(req.ExpiresAt))
+		if err != nil {
+			return opts, fmt.Errorf("expires_at must be RFC3339")
+		}
+		opts.ExpiresAt = expiresAt
+	}
+	if req.TTLHours > 0 {
+		opts.ExpiresAt = time.Now().Add(time.Duration(req.TTLHours) * time.Hour)
+	}
+	return opts, nil
 }
 
 func NewServer(lm *LicenseManager, port string, apiKeys []string, limiter *RateLimiter, tlsCertPath, tlsKeyPath, clientCAPath string, allowInsecure bool) (*Server, error) {
@@ -237,7 +277,7 @@ func (s *Server) enforceRateLimit(w http.ResponseWriter, r *http.Request) bool {
 	// Also check API key for higher limits
 	providedKey := strings.TrimSpace(r.Header.Get("X-API-Key"))
 	if providedKey != "" {
-		if _, err := s.lm.ValidateAPIKey(r.Context(), providedKey); err == nil {
+		if _, record, err := s.lm.ValidateAPIKeyRecord(r.Context(), providedKey); err == nil && s.apiKeyAllowedForRequest(record, r, requiredAdminScope(r)) {
 			if !s.rateLimiter.AllowAdmin(ip) {
 				s.respondError(w, http.StatusTooManyRequests, "Too many requests")
 				return false
@@ -267,6 +307,7 @@ func (s *Server) enforceClientRateLimit(w http.ResponseWriter, r *http.Request) 
 }
 
 func (s *Server) authorizeAdmin(w http.ResponseWriter, r *http.Request) bool {
+	requiredScope := requiredAdminScope(r)
 	// First try API key authentication
 	providedKey := strings.TrimSpace(r.Header.Get("X-API-Key"))
 	if providedKey != "" {
@@ -278,7 +319,7 @@ func (s *Server) authorizeAdmin(w http.ResponseWriter, r *http.Request) bool {
 				}
 			}
 		}
-		if _, err := s.lm.ValidateAPIKey(r.Context(), providedKey); err == nil {
+		if _, record, err := s.lm.ValidateAPIKeyRecord(r.Context(), providedKey); err == nil && s.apiKeyAllowedForRequest(record, r, requiredScope) {
 			return true
 		}
 	}
@@ -290,7 +331,7 @@ func (s *Server) authorizeAdmin(w http.ResponseWriter, r *http.Request) bool {
 		if len(parts) == 2 && strings.EqualFold(parts[0], "Bearer") {
 			token := strings.TrimSpace(parts[1])
 			if token != "" {
-				if _, err := s.lm.ValidateAPIKey(r.Context(), token); err == nil {
+				if _, record, err := s.lm.ValidateAPIKeyRecord(r.Context(), token); err == nil && s.apiKeyAllowedForRequest(record, r, requiredScope) {
 					return true
 				}
 			}
@@ -309,6 +350,129 @@ func (s *Server) authorizeAdmin(w http.ResponseWriter, r *http.Request) bool {
 
 	s.respondError(w, http.StatusUnauthorized, "Unauthorized")
 	return false
+}
+
+func requiredAdminScope(r *http.Request) string {
+	if r == nil {
+		return "admin:*"
+	}
+	path := strings.TrimSpace(r.URL.Path)
+	method := strings.ToUpper(strings.TrimSpace(r.Method))
+	if method == http.MethodGet || method == http.MethodHead {
+		switch {
+		case strings.HasPrefix(path, "/api/licenses"):
+			return "licenses:read"
+		case strings.HasPrefix(path, "/api/clients"):
+			return "clients:read"
+		case strings.HasPrefix(path, "/api/products"), strings.HasPrefix(path, "/api/entitlements"):
+			return "catalog:read"
+		case strings.HasPrefix(path, "/api/coupons"):
+			return "coupons:read"
+		case strings.HasPrefix(path, "/api/admin/audit"):
+			return "audit:read"
+		case strings.HasPrefix(path, "/api/admin"):
+			return "admin:read"
+		default:
+			return "admin:read"
+		}
+	}
+	switch {
+	case strings.HasPrefix(path, "/api/licenses"):
+		return "licenses:write"
+	case strings.HasPrefix(path, "/api/clients"):
+		return "clients:write"
+	case strings.HasPrefix(path, "/api/products"), strings.HasPrefix(path, "/api/entitlements"):
+		return "catalog:write"
+	case strings.HasPrefix(path, "/api/coupons"):
+		return "coupons:write"
+	case strings.HasPrefix(path, "/api/admin"):
+		return "admin:write"
+	default:
+		return "admin:write"
+	}
+}
+
+func scopeMatches(granted, required string) bool {
+	granted = strings.TrimSpace(strings.ToLower(granted))
+	required = strings.TrimSpace(strings.ToLower(required))
+	if granted == "" || required == "" {
+		return false
+	}
+	if granted == "*" || granted == "admin:*" || granted == required {
+		return true
+	}
+	if strings.HasSuffix(granted, ":*") {
+		prefix := strings.TrimSuffix(granted, "*")
+		return strings.HasPrefix(required, prefix)
+	}
+	if strings.HasSuffix(required, ":read") && strings.HasSuffix(granted, ":write") {
+		return strings.TrimSuffix(required, ":read") == strings.TrimSuffix(granted, ":write")
+	}
+	return false
+}
+
+func (s *Server) apiKeyAllowedForRequest(record *APIKeyRecord, r *http.Request, requiredScope string) bool {
+	if record == nil {
+		return false
+	}
+	if len(record.Scopes) > 0 {
+		matched := false
+		for _, scope := range record.Scopes {
+			if scopeMatches(scope, requiredScope) {
+				matched = true
+				break
+			}
+		}
+		if !matched {
+			return false
+		}
+	}
+	if len(record.AllowedOrigins) > 0 {
+		origin := strings.TrimSpace(r.Header.Get("Origin"))
+		if origin == "" {
+			origin = strings.TrimSpace(r.Header.Get("Referer"))
+		}
+		origin = strings.TrimRight(origin, "/")
+		matched := false
+		for _, allowed := range record.AllowedOrigins {
+			if strings.TrimRight(strings.TrimSpace(allowed), "/") == origin {
+				matched = true
+				break
+			}
+		}
+		if !matched {
+			return false
+		}
+	}
+	if len(record.AllowedIPs) > 0 {
+		ip := net.ParseIP(clientIP(r))
+		if ip == nil {
+			return false
+		}
+		matched := false
+		for _, raw := range record.AllowedIPs {
+			raw = strings.TrimSpace(raw)
+			if raw == "" {
+				continue
+			}
+			if strings.Contains(raw, "/") {
+				_, network, err := net.ParseCIDR(raw)
+				if err == nil && network.Contains(ip) {
+					matched = true
+					break
+				}
+				continue
+			}
+			if allowedIP := net.ParseIP(raw); allowedIP != nil && allowedIP.Equal(ip) {
+				matched = true
+				break
+			}
+		}
+		if !matched {
+			return false
+		}
+	}
+	return true
 }
 
 func (s *Server) decodeJSONBody(w http.ResponseWriter, r *http.Request, dst interface{}, limit int64) bool {
@@ -2812,7 +2976,12 @@ func (s *Server) handleAdminAPIKeys(w http.ResponseWriter, r *http.Request) {
 			s.respondError(w, http.StatusBadRequest, "user_id is required")
 			return
 		}
-		token, record, err := s.lm.GenerateAPIKey(r.Context(), req.UserID)
+		opts, err := apiKeyOptionsFromRequest(req)
+		if err != nil {
+			s.respondError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		token, record, err := s.lm.GenerateAPIKeyWithOptions(r.Context(), req.UserID, opts)
 		if err != nil {
 			if errors.Is(err, errUserMissing) {
 				s.respondError(w, http.StatusNotFound, "admin user not found")
