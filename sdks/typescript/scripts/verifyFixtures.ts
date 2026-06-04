@@ -73,7 +73,11 @@ const activationEncrypted = hexToBuffer(activationResp.encrypted_license);
 const activationNonce = hexToBuffer(activationResp.nonce);
 const activationSignature = hexToBuffer(activationResp.signature);
 const activationKeyObject = createPublicKey(activationResp.public_key);
-assert.ok(verifySignature(activationEncrypted, activationSignature, activationKeyObject), "activation response signature invalid");
+const activationCombined = Buffer.concat([activationEncrypted, Buffer.from(activationReq.device_fingerprint, "utf8")]);
+assert.ok(
+    verifySignature(activationCombined, activationSignature, activationKeyObject) || verifySignature(activationEncrypted, activationSignature, activationKeyObject),
+    "activation response signature invalid",
+);
 
 const activationTransportKey = deriveTransportKey(activationReq.device_fingerprint, activationNonce);
 const decryptedActivation = decryptAesGcm(activationEncrypted, activationNonce, activationTransportKey);

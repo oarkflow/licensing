@@ -2,6 +2,12 @@ export interface LicensingClientOptions {
     serverUrl: string;
     allowInsecureHttp?: boolean;
     httpTimeoutMs?: number;
+    appName?: string;
+    appVersion?: string;
+    configDir?: string;
+    licenseFile?: string;
+    deviceKeyFile?: string;
+    productId?: string;
 }
 
 export interface ActivationPayload {
@@ -9,6 +15,8 @@ export interface ActivationPayload {
     clientId: string;
     licenseKey: string;
     deviceFingerprint: string;
+    productId?: string;
+    replacementToken?: string;
 }
 
 /**
@@ -30,6 +38,67 @@ export interface LicenseDevice {
     fingerprint: string;
     activated_at: string;
     last_seen_at: string;
+    status?: string;
+    label?: string;
+    hardware_fingerprint?: string;
+    hardware_confidence?: string;
+    last_ip?: string;
+    last_user_agent?: string;
+    app_version?: string;
+    proof_version?: number;
+    device_key_id?: string;
+    public_key_algorithm?: string;
+    key_provider?: string;
+    attestation_type?: string;
+    attestation_status?: string;
+    last_proof_at?: string;
+    revoked_at?: string;
+    revoked_reason?: string;
+    replaced_by_fingerprint?: string;
+    replacement_token_id?: string;
+}
+
+export type DeviceProofPurpose = 'activate' | 'verify' | 'trial';
+
+export interface DeviceChallenge {
+    challenge_id: string;
+    nonce: string;
+    purpose: DeviceProofPurpose;
+    expires_at: string;
+}
+
+export interface DeviceProof {
+    version: 2;
+    purpose: DeviceProofPurpose;
+    challenge_id: string;
+    nonce: string;
+    fingerprint: string;
+    key_id: string;
+    key_provider: string;
+    public_key_alg: 'ed25519';
+    public_key: string;
+    signature: string;
+    attestation?: Record<string, string>;
+}
+
+export interface ActivationRequest {
+    email: string;
+    client_id: string;
+    license_key: string;
+    device_fingerprint: string;
+    product_id?: string;
+    replacement_token?: string;
+    device_proof?: DeviceProof;
+}
+
+export interface ActivationResponse {
+    success: boolean;
+    message: string;
+    encrypted_license?: string;
+    nonce?: string;
+    signature?: string;
+    public_key?: string;
+    expires_at?: string;
 }
 
 export type ScopePermission = 'allow' | 'deny' | 'limit';
@@ -160,7 +229,9 @@ export interface TrialRequest {
     device_fingerprint: string;
     product_id?: string;
     plan_id?: string;
-    trial_days?: number;
+    trial_duration_days?: number;
+    subscription_url?: string;
+    device_proof?: DeviceProof;
 }
 
 /**
@@ -175,9 +246,14 @@ export interface TrialCheckRequest {
  * Response when checking trial eligibility.
  */
 export interface TrialCheckResponse {
-    eligible: boolean;
-    has_used_trial: boolean;
+    eligible?: boolean;
+    has_used_trial?: boolean;
+    eligible_for_trial?: boolean;
+    trial_used?: boolean;
+    device_fingerprint?: string;
     trial_expires_at?: string;
+    trial_started_at?: string;
+    trial_expired?: boolean;
     message: string;
     subscription_url?: string;
 }

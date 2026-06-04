@@ -19,10 +19,9 @@ import {
     decryptStoredLicense,
     loadCredentialsFile,
     hasFeature,
-    hasScope,
     canPerform,
-    getFeature,
-} from "../../src/license.js";
+    LicensingClient,
+} from "../../src/index.js";
 import type { LicenseData } from "../../src/types.js";
 
 // Parse command line arguments
@@ -30,6 +29,12 @@ const { values } = parseArgs({
     options: {
         "license-file": { type: "string", short: "l" },
         "credentials-file": { type: "string", short: "c" },
+        "server-url": { type: "string" },
+        "product-id": { type: "string" },
+        "config-dir": { type: "string" },
+        activate: { type: "boolean" },
+        verify: { type: "boolean" },
+        "allow-insecure-http": { type: "boolean" },
         help: { type: "boolean", short: "h" },
     },
 });
@@ -41,10 +46,18 @@ TypeScript Licensing SDK - Basic Example
 Usage:
   npx ts-node index.ts --license-file <path>       Load and verify a license file
   npx ts-node index.ts --credentials-file <path>  Load credentials for activation
+  npx ts-node index.ts --activate --credentials-file <path> --server-url http://localhost:6601 --allow-insecure-http
+  npx ts-node index.ts --verify --credentials-file <path> --server-url http://localhost:6601 --allow-insecure-http
 
 Options:
   -l, --license-file <path>      Path to stored license file (.license.dat)
   -c, --credentials-file <path>  Path to credentials JSON file
+  --server-url <url>             Licensing server URL
+  --product-id <id-or-slug>      Product ID/slug for activation or verification
+  --config-dir <path>            Local SDK config directory
+  --activate                     Activate and save a license file
+  --verify                       Verify with the server and refresh the license file
+  --allow-insecure-http          Permit http:// server URLs for local development
   -h, --help                     Show this help message
 
 Credentials file format:
@@ -169,13 +182,34 @@ async function main(): Promise<void> {
             console.log(`📄 Loading credentials from: ${credPath}`);
             const creds = await loadCredentialsFile(credPath);
 
+            if (values.activate || values.verify) {
+                const client = new LicensingClient({
+                    serverUrl: values["server-url"] ?? "https://localhost:6601",
+                    allowInsecureHttp: values["allow-insecure-http"],
+                    configDir: values["config-dir"],
+                    licenseFile: values["license-file"],
+                    productId: values["product-id"],
+                    appName: "typescript-basic-example",
+                    appVersion: "0.1.0",
+                });
+                const result = values.activate
+                    ? await client.activate(creds, { productId: values["product-id"], licenseFile: values["license-file"] })
+                    : await client.verify(creds, { productId: values["product-id"], licenseFile: values["license-file"] });
+                const storedPath = values["license-file"] ?? client.licenseFile();
+                console.log(`\n✅ ${values.activate ? "Activation" : "Verification"} succeeded`);
+                console.log(`Saved license: ${storedPath}`);
+                const { license } = decryptStoredLicense(result.stored, client.deviceIdentity().fingerprint);
+                printLicenseInfo(license);
+                printEntitlements(license);
+                return;
+            }
+
             console.log("\n=== Credentials Loaded ===");
             console.log(`Email:       ${creds.email}`);
             console.log(`Client ID:   ${creds.client_id}`);
             console.log(`License Key: ${creds.license_key.substring(0, 10)}...`);
             console.log("\n✅ Credentials are valid and ready for activation");
-            console.log("\nNote: This SDK currently only supports license verification.");
-            console.log("Use the Go SDK example for full activation flow.");
+            console.log("Use --activate or --verify with --server-url to contact a licensing server.");
         } catch (err) {
             console.error(`❌ Failed to load credentials: ${err}`);
             process.exit(1);

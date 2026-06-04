@@ -1,6 +1,11 @@
-export {
+export type {
+    ActivationRequest,
+    ActivationResponse,
     ActivationPayload,
     CredentialsFile,
+    DeviceChallenge,
+    DeviceProof,
+    DeviceProofPurpose,
     LicenseData,
     LicenseDevice,
     LicenseEntitlements,
@@ -8,20 +13,12 @@ export {
     ScopeGrant,
     ScopePermission,
     LicensingClientOptions,
-    TrialStatus,
     TrialInfo,
     TrialRequest,
     TrialCheckRequest,
     TrialCheckResponse
 } from "./types.js";
+export { TrialStatus } from "./types.js";
 export * from "./license.js";
-
-import { LicensingClientOptions } from "./types.js";
-
-export class LicensingClient {
-    constructor(private readonly options: LicensingClientOptions) { }
-
-    serverUrl(): string {
-        return this.options.serverUrl.replace(/\/$/, "");
-    }
-}
+export * from "./device.js";
+export * from "./client.js";

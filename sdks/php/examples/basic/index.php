@@ -19,17 +19,34 @@ declare(strict_types=1);
 require_once __DIR__ . '/../../vendor/autoload.php';
 
 use Oarkflow\Licensing\License;
+use Oarkflow\Licensing\Client;
 
 /**
  * Parse command line arguments
  */
 function parseArgs(): array
 {
-    $options = getopt('l:c:h', ['license-file:', 'credentials-file:', 'help']);
+    $options = getopt('l:c:h', [
+        'license-file:',
+        'credentials-file:',
+        'server-url:',
+        'product-id:',
+        'config-dir:',
+        'activate',
+        'verify',
+        'allow-insecure-http',
+        'help',
+    ]);
 
     return [
         'license_file' => $options['license-file'] ?? $options['l'] ?? null,
         'credentials_file' => $options['credentials-file'] ?? $options['c'] ?? null,
+        'server_url' => $options['server-url'] ?? null,
+        'product_id' => $options['product-id'] ?? null,
+        'config_dir' => $options['config-dir'] ?? null,
+        'activate' => isset($options['activate']),
+        'verify' => isset($options['verify']),
+        'allow_insecure_http' => isset($options['allow-insecure-http']),
         'help' => isset($options['help']) || isset($options['h']),
     ];
 }
@@ -46,10 +63,18 @@ PHP Licensing SDK - Basic Example
 Usage:
   php index.php --license-file <path>       Load and verify a license file
   php index.php --credentials-file <path>   Load credentials for activation
+  php index.php --activate --credentials-file <path> --server-url http://localhost:6601 --allow-insecure-http
+  php index.php --verify --credentials-file <path> --server-url http://localhost:6601 --allow-insecure-http
 
 Options:
   -l, --license-file <path>      Path to stored license file (.license.dat)
   -c, --credentials-file <path>  Path to credentials JSON file
+  --server-url <url>             Licensing server URL
+  --product-id <id-or-slug>      Product ID/slug for activation or verification
+  --config-dir <path>            Local SDK config directory
+  --activate                     Activate and save a license file
+  --verify                       Verify with the server and refresh the license file
+  --allow-insecure-http          Permit http:// server URLs for local development
   -h, --help                     Show this help message
 
 Credentials file format:
@@ -207,13 +232,33 @@ function main(): int
             echo sprintf("📄 Loading credentials from: %s\n", $credPath);
             $creds = License::loadCredentialsFile($credPath);
 
+            if ($args['activate'] || $args['verify']) {
+                $client = new Client([
+                    'server_url' => $args['server_url'] ?? 'https://localhost:6601',
+                    'allow_insecure_http' => $args['allow_insecure_http'],
+                    'config_dir' => $args['config_dir'] ?? null,
+                    'license_file' => $args['license_file'] ?? null,
+                    'product_id' => $args['product_id'] ?? null,
+                    'app_name' => 'php-basic-example',
+                    'app_version' => '0.1.0',
+                ]);
+                $result = $args['activate']
+                    ? $client->activate($creds, ['product_id' => $args['product_id'], 'license_file' => $args['license_file'] ?? null])
+                    : $client->verify($creds, ['product_id' => $args['product_id'], 'license_file' => $args['license_file'] ?? null]);
+                echo sprintf("\n✅ %s succeeded\n", $args['activate'] ? 'Activation' : 'Verification');
+                echo sprintf("Saved license: %s\n", $args['license_file'] ?? $client->licenseFile());
+                $license = License::decrypt($result['stored'], $client->deviceIdentity()['fingerprint'])['license'];
+                printLicenseInfo($license);
+                printEntitlements($license);
+                return 0;
+            }
+
             echo "\n=== Credentials Loaded ===\n";
             echo sprintf("Email:       %s\n", $creds['email']);
             echo sprintf("Client ID:   %s\n", $creds['client_id']);
             echo sprintf("License Key: %s...\n", substr($creds['license_key'], 0, 10));
             echo "\n✅ Credentials are valid and ready for activation\n";
-            echo "\nNote: This SDK currently only supports license verification.\n";
-            echo "Use the Go SDK example for full activation flow.\n";
+            echo "Use --activate or --verify with --server-url to contact a licensing server.\n";
         } catch (Exception $e) {
             echo sprintf("❌ Failed to load credentials: %s\n", $e->getMessage());
             return 1;

@@ -31,7 +31,8 @@ $storedPublicKeyPem = (static function (string $der): string {
     return "-----BEGIN PUBLIC KEY-----\n{$base64}-----END PUBLIC KEY-----\n";
 })(base64_decode($storedLicense['public_key'], true));
 
-if (!Crypto::verifySignature($storedEncrypted, $storedSignature, $storedPublicKeyPem)) {
+if (!Crypto::verifySignature($storedEncrypted . $storedLicense['device_fingerprint'], $storedSignature, $storedPublicKeyPem)
+    && !Crypto::verifySignature($storedEncrypted, $storedSignature, $storedPublicKeyPem)) {
     throw new RuntimeException('Stored license signature invalid');
 }
 
@@ -41,7 +42,8 @@ $activationSignature = hex2bin($activationResp['signature']);
 $activationKey = Crypto::deriveTransportKey($activationReq['device_fingerprint'], $activationResp['nonce']);
 $activationPublicKey = $activationResp['public_key'];
 
-if (!Crypto::verifySignature($activationEncrypted, $activationSignature, $activationPublicKey)) {
+if (!Crypto::verifySignature($activationEncrypted . $activationReq['device_fingerprint'], $activationSignature, $activationPublicKey)
+    && !Crypto::verifySignature($activationEncrypted, $activationSignature, $activationPublicKey)) {
     throw new RuntimeException('Activation response signature invalid');
 }
 

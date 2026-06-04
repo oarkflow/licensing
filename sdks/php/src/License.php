@@ -67,7 +67,7 @@ final class License
      * } $stored
      * @return array{sessionKey:string, license:array<string,mixed>}
      */
-    public static function decrypt(array $stored): array
+    public static function decrypt(array $stored, ?string $currentFingerprint = null): array
     {
         $encrypted = base64_decode($stored['encrypted_data'], true);
         $nonce = base64_decode($stored['nonce'], true);
@@ -78,11 +78,19 @@ final class License
         }
 
         $publicKeyPem = self::derToPem($publicKeyDer, 'PUBLIC KEY');
-        if (!Crypto::verifySignature($encrypted, $signature, $publicKeyPem)) {
+        $combined = $encrypted . ($stored['device_fingerprint'] ?? '');
+        if (!Crypto::verifySignature($combined, $signature, $publicKeyPem) && !Crypto::verifySignature($encrypted, $signature, $publicKeyPem)) {
             throw new RuntimeException('Stored license signature invalid');
         }
 
-        $transportKey = Crypto::deriveTransportKey($stored['device_fingerprint'], bin2hex($nonce));
+        $fingerprint = $stored['device_fingerprint'];
+        if ($currentFingerprint !== null) {
+            if ($currentFingerprint !== $fingerprint) {
+                throw new RuntimeException('device fingerprint mismatch - license is tied to different device');
+            }
+            $fingerprint = $currentFingerprint;
+        }
+        $transportKey = Crypto::deriveTransportKey($fingerprint, bin2hex($nonce));
         $decrypted = Crypto::decryptAesGcm($encrypted, $nonce, $transportKey);
         if (strlen($decrypted) <= 32) {
             throw new RuntimeException('Decrypted payload missing session key');

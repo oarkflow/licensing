@@ -1,7 +1,7 @@
 import { promises as fs } from "node:fs";
 import { createPublicKey } from "node:crypto";
 import { deriveTransportKey, decryptAesGcm, verifySignature } from "./crypto.js";
-import { LicenseData, FeatureGrant, ScopeGrant, CredentialsFile, TrialStatus, TrialInfo } from "./types.js";
+import { LicenseData, FeatureGrant, ScopeGrant, CredentialsFile, TrialStatus, TrialInfo, ActivationResponse } from "./types.js";
 import { ScopeRestriction, UsageContext } from "./types.js";
 
 export interface StoredLicenseFile {
@@ -16,6 +16,25 @@ export interface StoredLicenseFile {
 export interface DecryptedLicense {
     sessionKey: Buffer;
     license: LicenseData;
+}
+
+export function storedLicenseFromActivationResponse(resp: ActivationResponse, deviceFingerprint: string): StoredLicenseFile {
+    if (!resp.encrypted_license || !resp.nonce || !resp.signature || !resp.public_key || !resp.expires_at) {
+        throw new Error(resp.message || "activation response missing encrypted license payload");
+    }
+    const publicKeyDer = createPublicKey(resp.public_key).export({ type: "spki", format: "der" }) as Buffer;
+    return {
+        encrypted_data: Buffer.from(resp.encrypted_license, "hex").toString("base64"),
+        nonce: Buffer.from(resp.nonce, "hex").toString("base64"),
+        signature: Buffer.from(resp.signature, "hex").toString("base64"),
+        public_key: publicKeyDer.toString("base64"),
+        device_fingerprint: deviceFingerprint,
+        expires_at: resp.expires_at,
+    };
+}
+
+export async function saveStoredLicense(path: string, stored: StoredLicenseFile): Promise<void> {
+    await fs.writeFile(path, JSON.stringify(stored, null, 2), { encoding: "utf8", mode: 0o600 });
 }
 
 /**
@@ -60,9 +79,10 @@ export function decryptStoredLicense(stored: StoredLicenseFile, currentFingerpri
     const publicKeyDer = Buffer.from(stored.public_key, "base64");
     const publicKey = createPublicKey({ key: publicKeyDer, format: "der", type: "spki" });
 
-    // Servers sign SHA256(encrypted || device_fingerprint).
+    // Servers sign SHA256(encrypted || device_fingerprint). Older fixtures signed
+    // only the encrypted bytes, so keep a compatibility fallback for readers.
     const combined = Buffer.concat([encrypted, Buffer.from(stored.device_fingerprint || '', 'utf8')]);
-    if (!verifySignature(combined, signature, publicKey)) {
+    if (!verifySignature(combined, signature, publicKey) && !verifySignature(encrypted, signature, publicKey)) {
         throw new Error("stored license signature invalid");
     }
 
