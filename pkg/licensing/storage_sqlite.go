@@ -298,6 +298,9 @@ func ensureSQLiteSchema(db *squealx.DB) error {
 	if err := ensureSQLiteColumn(db, "clients", "username", "TEXT"); err != nil {
 		return err
 	}
+	if _, err := db.Exec(`UPDATE clients SET username = NULL WHERE TRIM(COALESCE(username, '')) = ''`); err != nil {
+		return fmt.Errorf("sqlite schema migration failed normalizing blank client usernames: %w", err)
+	}
 	// Use an expression index so we don't need to maintain a duplicate column in the schema.
 	if _, err := db.Exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_clients_username_lower ON clients(LOWER(username))`); err != nil {
 		// If the SQLite version does not support expression indexes, gracefully ignore and continue.
@@ -802,7 +805,7 @@ func (s *SQLiteStorage) SaveClient(ctx context.Context, client *Client) error {
 		client.ID,
 		client.Email,
 		normalizeEmail(client.Email),
-		client.Username,
+		nullString(strings.TrimSpace(client.Username)),
 		client.PasswordHash,
 		client.Name,
 		client.CompanyName,
@@ -831,7 +834,7 @@ func (s *SQLiteStorage) UpdateClient(ctx context.Context, client *Client) error 
 	res, err := s.db.ExecContext(ctx, query,
 		client.Email,
 		normalizeEmail(client.Email),
-		client.Username,
+		nullString(strings.TrimSpace(client.Username)),
 		client.PasswordHash,
 		client.Name,
 		client.CompanyName,

@@ -217,14 +217,51 @@ export interface Plan {
     description?: string;
     price: number;
     min_devices: number;
+    max_devices: number;
+    duration_days: number;
     price_per_device: number;
     currency: string;
-    billing_cycle: 'monthly' | 'yearly' | 'weekly' | 'lifetime';
+    billing_cycle: 'monthly' | 'yearly' | 'weekly' | 'lifetime' | 'one-time';
     is_trial: boolean;
     trial_days: number;
     is_active: boolean;
     created_at: string;
     updated_at: string;
+}
+
+export interface Subscription {
+    id: string;
+    client_id: string;
+    product_id: string;
+    plan_id: string;
+    license_id?: string;
+    status: 'active' | 'cancelled' | 'expired' | 'pending';
+    start_date: string;
+    end_date: string;
+    billing_cycle: string;
+    next_billing_date?: string;
+    cancelled_at?: string;
+    cancel_reason?: string;
+    created_at: string;
+    updated_at: string;
+}
+
+export interface UpgradeLicenseRequest {
+    product_id: string;
+    plan_id: string;
+    max_devices?: number;
+    duration_days?: number;
+    trial?: boolean;
+    metadata?: Record<string, string>;
+}
+
+export interface UpgradeLicenseResponse {
+    success: boolean;
+    old_license: License;
+    license: License;
+    subscription?: Subscription;
+    plan: Plan;
+    product: Product;
 }
 
 export interface Feature {

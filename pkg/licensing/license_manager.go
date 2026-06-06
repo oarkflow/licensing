@@ -815,7 +815,25 @@ func (lm *LicenseManager) UnbanClient(ctx context.Context, clientID string) (*Cl
 type GenerateLicenseOptions struct {
 	ProductID     string
 	PlanID        string
+	IsTrial       bool
 	FeatureScopes []FeatureScopeSelection
+}
+
+type UpgradeLicenseOptions struct {
+	ProductID    string
+	PlanID       string
+	MaxDevices   int
+	DurationDays int
+	Trial        bool
+	Metadata     map[string]string
+}
+
+type UpgradeLicenseResult struct {
+	OldLicense   *License      `json:"old_license"`
+	License      *License      `json:"license"`
+	Subscription *Subscription `json:"subscription,omitempty"`
+	Product      *Product      `json:"product"`
+	Plan         *Plan         `json:"plan"`
 }
 
 func (lm *LicenseManager) GenerateLicense(ctx context.Context, clientID string, duration time.Duration, maxDevices int, planSlug string, mode LicenseCheckMode, interval time.Duration) (*License, error) {
@@ -868,7 +886,7 @@ func (lm *LicenseManager) GenerateLicenseWithOptions(ctx context.Context, client
 				return nil, fmt.Errorf("plan is not active")
 			}
 			planSlug = plan.Slug
-			if plan.IsTrial {
+			if plan.IsTrial || opts.IsTrial {
 				isTrial = true
 				trialStartedAt = time.Now()
 			}
@@ -1444,6 +1462,239 @@ func (lm *LicenseManager) ReinstateLicense(ctx context.Context, licenseID string
 		return nil, fmt.Errorf("failed to reinstate license: %w", err)
 	}
 	return license, nil
+}
+
+func (lm *LicenseManager) UpgradeLicense(ctx context.Context, licenseID string, opts UpgradeLicenseOptions) (*UpgradeLicenseResult, error) {
+	licenseID = strings.TrimSpace(licenseID)
+	if licenseID == "" {
+		return nil, fmt.Errorf("license_id is required")
+	}
+	oldLicense, err := lm.storage.GetLicense(ctx, licenseID)
+	if err != nil {
+		return nil, err
+	}
+	if oldLicense.IsRevoked {
+		return nil, fmt.Errorf("license is revoked")
+	}
+
+	productID := strings.TrimSpace(opts.ProductID)
+	if productID == "" {
+		productID = strings.TrimSpace(oldLicense.ProductID)
+	}
+	planID := strings.TrimSpace(opts.PlanID)
+	if productID == "" || planID == "" {
+		return nil, fmt.Errorf("product_id and plan_id are required")
+	}
+
+	product, err := lm.storage.GetProduct(ctx, productID)
+	if err != nil {
+		return nil, fmt.Errorf("product not found: %w", err)
+	}
+	plan, err := lm.storage.GetPlan(ctx, planID)
+	if err != nil {
+		return nil, fmt.Errorf("plan not found: %w", err)
+	}
+	if plan.ProductID != product.ID {
+		return nil, fmt.Errorf("plan does not belong to the specified product")
+	}
+	if !plan.IsActive {
+		return nil, fmt.Errorf("plan is not active")
+	}
+	if strings.TrimSpace(oldLicense.ProductID) != "" && oldLicense.ProductID != product.ID {
+		return nil, fmt.Errorf("target product does not match existing license product")
+	}
+
+	carriedDevices := cloneTrustedUpgradeDevices(oldLicense.Devices)
+	carriedDeviceCount := len(carriedDevices)
+	maxDevices := resolveUpgradeMaxDevices(opts.MaxDevices, plan, oldLicense, carriedDeviceCount)
+	if maxDevices > 0 && carriedDeviceCount > maxDevices {
+		return nil, fmt.Errorf("max_devices %d is below carried device count %d", maxDevices, carriedDeviceCount)
+	}
+
+	duration := resolveUpgradeDuration(opts.DurationDays, opts.Trial, plan)
+	mode, interval := lm.DefaultCheckPolicy()
+	if oldLicense.CheckMode != "" {
+		mode = oldLicense.CheckMode
+		interval = time.Duration(oldLicense.CheckIntervalSecs) * time.Second
+	}
+	newLicense, err := lm.GenerateLicenseWithOptions(ctx, oldLicense.ClientID, duration, maxDevices, plan.Slug, mode, interval, &GenerateLicenseOptions{
+		ProductID: product.ID,
+		PlanID:    plan.ID,
+		IsTrial:   opts.Trial,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	newLicense.Devices = carriedDevices
+	newLicense.IsActivated = carriedDeviceCount > 0
+	if newLicense.IsActivated {
+		newLicense.LastActivatedAt = latestDeviceSeenAt(carriedDevices)
+	}
+	refreshLicenseDeviceStats(newLicense)
+	if err := lm.storage.UpdateLicense(ctx, newLicense); err != nil {
+		return nil, fmt.Errorf("failed to persist upgraded license devices: %w", err)
+	}
+
+	revokedOld, err := lm.RevokeLicense(ctx, oldLicense.ID, fmt.Sprintf("upgraded to %s", newLicense.ID))
+	if err != nil {
+		return nil, fmt.Errorf("failed to revoke previous license after creating upgraded license %s: %w", newLicense.ID, err)
+	}
+
+	subscription, err := lm.updateSubscriptionForUpgrade(ctx, revokedOld, newLicense, product, plan)
+	if err != nil {
+		return &UpgradeLicenseResult{
+			OldLicense: revokedOld,
+			License:    newLicense,
+			Product:    product,
+			Plan:       plan,
+		}, fmt.Errorf("failed to update subscription after creating upgraded license %s: %w", newLicense.ID, err)
+	}
+
+	return &UpgradeLicenseResult{
+		OldLicense:   revokedOld,
+		License:      newLicense,
+		Subscription: subscription,
+		Product:      product,
+		Plan:         plan,
+	}, nil
+}
+
+func (lm *LicenseManager) UpgradeSubscription(ctx context.Context, subscriptionID string, opts UpgradeLicenseOptions) (*UpgradeLicenseResult, error) {
+	subscriptionID = strings.TrimSpace(subscriptionID)
+	if subscriptionID == "" {
+		return nil, fmt.Errorf("subscription_id is required")
+	}
+	subscription, err := lm.storage.GetSubscription(ctx, subscriptionID)
+	if err != nil {
+		return nil, err
+	}
+	if strings.TrimSpace(subscription.LicenseID) == "" {
+		return nil, fmt.Errorf("subscription has no license")
+	}
+	if strings.TrimSpace(opts.ProductID) == "" {
+		opts.ProductID = subscription.ProductID
+	}
+	return lm.UpgradeLicense(ctx, subscription.LicenseID, opts)
+}
+
+func (lm *LicenseManager) updateSubscriptionForUpgrade(ctx context.Context, oldLicense, newLicense *License, product *Product, plan *Plan) (*Subscription, error) {
+	if oldLicense == nil || newLicense == nil || product == nil || plan == nil {
+		return nil, nil
+	}
+	subs, err := lm.storage.ListSubscriptionsByClient(ctx, oldLicense.ClientID)
+	if err != nil {
+		return nil, err
+	}
+	for _, sub := range subs {
+		if sub == nil || sub.LicenseID != oldLicense.ID {
+			continue
+		}
+		sub.ProductID = product.ID
+		sub.PlanID = plan.ID
+		sub.LicenseID = newLicense.ID
+		sub.Status = SubscriptionStatusActive
+		sub.BillingCycle = plan.BillingCycle
+		sub.EndDate = newLicense.ExpiresAt
+		if plan.BillingCycle == "monthly" || plan.BillingCycle == "yearly" {
+			sub.NextBillingDate = newLicense.ExpiresAt
+		} else {
+			sub.NextBillingDate = time.Time{}
+		}
+		sub.CancelledAt = time.Time{}
+		sub.CancelReason = ""
+		if err := lm.storage.UpdateSubscription(ctx, sub); err != nil {
+			return nil, err
+		}
+		return sub, nil
+	}
+	return nil, nil
+}
+
+func cloneTrustedUpgradeDevices(devices map[string]*LicenseDevice) map[string]*LicenseDevice {
+	cloned := make(map[string]*LicenseDevice)
+	for fingerprint, device := range devices {
+		if device == nil {
+			continue
+		}
+		status := normalizeDeviceStatus(device.Status)
+		if status != DeviceStatusTrusted && status != DeviceStatusReplacementPending {
+			continue
+		}
+		copyDevice := *device
+		copyDevice.Status = status
+		if len(device.TransportKey) > 0 {
+			copyDevice.TransportKey = append([]byte(nil), device.TransportKey...)
+		}
+		if len(device.DevicePublicKey) > 0 {
+			copyDevice.DevicePublicKey = append([]byte(nil), device.DevicePublicKey...)
+		}
+		cloned[fingerprint] = &copyDevice
+	}
+	return cloned
+}
+
+func latestDeviceSeenAt(devices map[string]*LicenseDevice) time.Time {
+	var latest time.Time
+	for _, device := range devices {
+		if device == nil {
+			continue
+		}
+		if device.LastSeenAt.After(latest) {
+			latest = device.LastSeenAt
+		}
+		if device.ActivatedAt.After(latest) {
+			latest = device.ActivatedAt
+		}
+	}
+	return latest
+}
+
+func resolveUpgradeMaxDevices(requested int, plan *Plan, oldLicense *License, carriedDevices int) int {
+	maxDevices := requested
+	explicit := requested > 0
+	if maxDevices <= 0 && plan != nil && plan.MaxDevices > 0 {
+		maxDevices = plan.MaxDevices
+	}
+	if maxDevices <= 0 && plan != nil && plan.MinDevices > 0 {
+		maxDevices = plan.MinDevices
+	}
+	if maxDevices <= 0 && oldLicense != nil {
+		maxDevices = oldLicense.MaxDevices
+	}
+	if explicit && maxDevices > 0 && maxDevices < carriedDevices {
+		return maxDevices
+	}
+	if maxDevices > 0 && maxDevices < carriedDevices {
+		return carriedDevices
+	}
+	if maxDevices <= 0 {
+		return carriedDevices
+	}
+	return maxDevices
+}
+
+func resolveUpgradeDuration(durationDays int, trial bool, plan *Plan) time.Duration {
+	if durationDays > 0 {
+		return time.Duration(durationDays) * 24 * time.Hour
+	}
+	if plan != nil {
+		if trial && plan.TrialDays > 0 {
+			return time.Duration(plan.TrialDays) * 24 * time.Hour
+		}
+		if plan.DurationDays > 0 {
+			return time.Duration(plan.DurationDays) * 24 * time.Hour
+		}
+		switch plan.BillingCycle {
+		case "monthly":
+			return 30 * 24 * time.Hour
+		case "lifetime":
+			return 100 * 365 * 24 * time.Hour
+		default:
+			return 365 * 24 * time.Hour
+		}
+	}
+	return 365 * 24 * time.Hour
 }
 
 func (lm *LicenseManager) BackfillLicenseCheckPolicy(ctx context.Context) error {

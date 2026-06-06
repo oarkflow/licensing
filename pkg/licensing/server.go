@@ -362,6 +362,8 @@ func requiredAdminScope(r *http.Request) string {
 		switch {
 		case strings.HasPrefix(path, "/api/licenses"):
 			return "licenses:read"
+		case strings.HasPrefix(path, "/api/subscriptions"):
+			return "subscriptions:read"
 		case strings.HasPrefix(path, "/api/clients"):
 			return "clients:read"
 		case strings.HasPrefix(path, "/api/products"), strings.HasPrefix(path, "/api/entitlements"):
@@ -379,6 +381,8 @@ func requiredAdminScope(r *http.Request) string {
 	switch {
 	case strings.HasPrefix(path, "/api/licenses"):
 		return "licenses:write"
+	case strings.HasPrefix(path, "/api/subscriptions"):
+		return "subscriptions:write"
 	case strings.HasPrefix(path, "/api/clients"):
 		return "clients:write"
 	case strings.HasPrefix(path, "/api/products"), strings.HasPrefix(path, "/api/entitlements"):
@@ -2465,7 +2469,9 @@ func (s *Server) handleSubscribe(w http.ResponseWriter, r *http.Request) {
 	var endDate time.Time
 	var nextBillingDate time.Time
 	billingCycle := plan.BillingCycle
-	if req.DurationDays > 0 {
+	if req.IsTrial && plan.TrialDays > 0 {
+		endDate = startDate.AddDate(0, 0, plan.TrialDays)
+	} else if req.DurationDays > 0 {
 		endDate = startDate.AddDate(0, 0, req.DurationDays)
 	} else {
 		switch billingCycle {
@@ -2510,6 +2516,7 @@ func (s *Server) handleSubscribe(w http.ResponseWriter, r *http.Request) {
 	opts := &GenerateLicenseOptions{
 		ProductID: productID,
 		PlanID:    planID,
+		IsTrial:   req.IsTrial,
 	}
 
 	license, err := s.lm.GenerateLicenseWithOptions(ctx, client.ID, duration, maxDevices, plan.Slug, mode, interval, opts)
@@ -2597,6 +2604,91 @@ func (s *Server) handleSubscriptions(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+func (s *Server) handleSubscriptionActions(w http.ResponseWriter, r *http.Request) {
+	if !strings.HasPrefix(r.URL.Path, "/api/subscriptions/") {
+		http.NotFound(w, r)
+		return
+	}
+	tail := strings.Trim(strings.TrimPrefix(r.URL.Path, "/api/subscriptions/"), "/")
+	parts := strings.Split(tail, "/")
+	if len(parts) < 2 || strings.TrimSpace(parts[0]) == "" {
+		http.NotFound(w, r)
+		return
+	}
+	if !s.enforceRateLimit(w, r) {
+		return
+	}
+	if !s.authorizeAdmin(w, r) {
+		return
+	}
+	subscriptionID := strings.TrimSpace(parts[0])
+	switch parts[1] {
+	case "upgrade":
+		if r.Method != http.MethodPost {
+			s.respondError(w, http.StatusMethodNotAllowed, "Method not allowed")
+			return
+		}
+		result, err := s.decodeAndUpgradeSubscription(w, r, subscriptionID)
+		if err != nil {
+			s.respondError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		if result == nil {
+			return
+		}
+		s.respondJSON(w, http.StatusOK, upgradeLicenseResponse(result))
+	default:
+		http.NotFound(w, r)
+	}
+}
+
+func (s *Server) decodeAndUpgradeLicense(w http.ResponseWriter, r *http.Request, licenseID string) (*UpgradeLicenseResult, error) {
+	var req upgradePlanRequest
+	if !s.decodeJSONBody(w, r, &req, maxAdminPayloadBytes) {
+		return nil, nil
+	}
+	return s.lm.UpgradeLicense(r.Context(), licenseID, UpgradeLicenseOptions{
+		ProductID:    req.ProductID,
+		PlanID:       req.PlanID,
+		MaxDevices:   req.MaxDevices,
+		DurationDays: req.DurationDays,
+		Trial:        req.Trial,
+		Metadata:     req.Metadata,
+	})
+}
+
+func (s *Server) decodeAndUpgradeSubscription(w http.ResponseWriter, r *http.Request, subscriptionID string) (*UpgradeLicenseResult, error) {
+	var req upgradePlanRequest
+	if !s.decodeJSONBody(w, r, &req, maxAdminPayloadBytes) {
+		return nil, nil
+	}
+	return s.lm.UpgradeSubscription(r.Context(), subscriptionID, UpgradeLicenseOptions{
+		ProductID:    req.ProductID,
+		PlanID:       req.PlanID,
+		MaxDevices:   req.MaxDevices,
+		DurationDays: req.DurationDays,
+		Trial:        req.Trial,
+		Metadata:     req.Metadata,
+	})
+}
+
+func upgradeLicenseResponse(result *UpgradeLicenseResult) map[string]interface{} {
+	resp := map[string]interface{}{
+		"success": true,
+	}
+	if result == nil {
+		return resp
+	}
+	resp["old_license"] = result.OldLicense
+	resp["license"] = result.License
+	resp["product"] = result.Product
+	resp["plan"] = result.Plan
+	if result.Subscription != nil {
+		resp["subscription"] = result.Subscription
+	}
+	return resp
+}
+
 func (s *Server) handleProvisionLicense(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		s.respondError(w, http.StatusMethodNotAllowed, "Method not allowed")
@@ -2668,7 +2760,9 @@ func (s *Server) handleProvisionLicense(w http.ResponseWriter, r *http.Request) 
 
 	// Derive duration from plan
 	var duration time.Duration
-	if plan.DurationDays > 0 {
+	if req.IsTrial && plan.TrialDays > 0 {
+		duration = time.Duration(plan.TrialDays) * 24 * time.Hour
+	} else if plan.DurationDays > 0 {
 		duration = time.Duration(plan.DurationDays) * 24 * time.Hour
 	} else {
 		// Calculate duration based on billing cycle if duration_days not set
@@ -2710,7 +2804,7 @@ func (s *Server) handleProvisionLicense(w http.ResponseWriter, r *http.Request) 
 		}
 	}
 
-	ops := &GenerateLicenseOptions{ProductID: productID, PlanID: planID}
+	ops := &GenerateLicenseOptions{ProductID: productID, PlanID: planID, IsTrial: req.IsTrial}
 	license, err := s.lm.GenerateLicenseWithOptions(ctx, client.ID, duration, maxDevices, planSlug, mode, interval, ops)
 	if err != nil {
 		s.respondError(w, http.StatusBadRequest, err.Error())
@@ -2876,6 +2970,7 @@ func (s *Server) handleLicenses(w http.ResponseWriter, r *http.Request) {
 			opts = &GenerateLicenseOptions{
 				ProductID:     productID,
 				PlanID:        planID,
+				IsTrial:       req.IsTrial,
 				FeatureScopes: req.FeatureScopes,
 			}
 		}
@@ -3452,6 +3547,20 @@ func (s *Server) handleLicenseActions(w http.ResponseWriter, r *http.Request) {
 		}
 		log.Printf("License %s reinstated", licenseID)
 		s.respondJSON(w, http.StatusOK, license)
+	case "upgrade":
+		if r.Method != http.MethodPost {
+			s.respondError(w, http.StatusMethodNotAllowed, "Method not allowed")
+			return
+		}
+		result, err := s.decodeAndUpgradeLicense(w, r, licenseID)
+		if err != nil {
+			s.respondError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		if result == nil {
+			return
+		}
+		s.respondJSON(w, http.StatusOK, upgradeLicenseResponse(result))
 	case "activations":
 		if r.Method != http.MethodGet {
 			s.respondError(w, http.StatusMethodNotAllowed, "Method not allowed")
@@ -3558,12 +3667,14 @@ func (s *Server) Start() error {
 	// API routes
 	mux.HandleFunc("/api/device/challenge", s.handleDeviceChallenge)
 	mux.HandleFunc("/api/activate", s.handleActivate)
+	mux.HandleFunc("/api/appvault/bundle-key", s.handleAppVaultBundleKey)
 	mux.HandleFunc("/api/licenses", s.handleLicenses)
 	mux.HandleFunc("/api/verify", s.handleVerify)
 	mux.HandleFunc("/api/trial", s.handleTrial)
 	mux.HandleFunc("/api/trial/check", s.handleTrialCheck)
 	mux.HandleFunc("/api/subscribe", s.handleSubscribe)
 	mux.HandleFunc("/api/subscriptions", s.handleSubscriptions)
+	mux.HandleFunc("/api/subscriptions/", s.handleSubscriptionActions)
 	mux.HandleFunc("/api/coupons", s.handleCoupons)
 	mux.HandleFunc("/api/coupons/", s.handleCouponActions)
 	mux.HandleFunc("/api/licenses/", s.handleLicenseActions)

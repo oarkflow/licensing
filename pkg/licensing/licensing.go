@@ -554,6 +554,15 @@ type licenseMutationRequest struct {
 	Reason string `json:"reason"`
 }
 
+type upgradePlanRequest struct {
+	ProductID    string            `json:"product_id"`
+	PlanID       string            `json:"plan_id"`
+	MaxDevices   int               `json:"max_devices,omitempty"`
+	DurationDays int               `json:"duration_days,omitempty"`
+	Trial        bool              `json:"trial,omitempty"`
+	Metadata     map[string]string `json:"metadata,omitempty"`
+}
+
 type createAdminUserRequest struct {
 	Username string `json:"username"`
 	Password string `json:"password"`

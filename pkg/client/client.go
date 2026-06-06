@@ -33,6 +33,7 @@ const (
 	DefaultLicenseFile = ".license.dat"
 	DefaultConfigDir   = ".licensing"
 	DefaultServerURL   = "https://localhost:6601"
+	EnvServerURL       = "LICENSE_CLIENT_SERVER"
 )
 
 const (

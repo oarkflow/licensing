@@ -437,6 +437,112 @@ func TestAdminAPIKeyScopesAreEnforced(t *testing.T) {
 	}
 }
 
+func TestLicenseUpgradeAPIWithScopedAPIKey(t *testing.T) {
+	f := newUpgradeFixture(t)
+	s, err := NewServer(f.lm, ":0", nil, NewRateLimiter(100, time.Minute), "", "", "", true)
+	if err != nil {
+		t.Fatalf("NewServer failed: %v", err)
+	}
+	admin, err := f.lm.CreateAdminUser(f.ctx, "upgrade-admin", "password")
+	if err != nil {
+		t.Fatalf("CreateAdminUser failed: %v", err)
+	}
+	writeToken, _, err := f.lm.GenerateAPIKeyWithOptions(f.ctx, admin.ID, APIKeyOptions{Scopes: []string{"licenses:write"}})
+	if err != nil {
+		t.Fatalf("GenerateAPIKeyWithOptions write failed: %v", err)
+	}
+	readToken, _, err := f.lm.GenerateAPIKeyWithOptions(f.ctx, admin.ID, APIKeyOptions{Scopes: []string{"licenses:read"}})
+	if err != nil {
+		t.Fatalf("GenerateAPIKeyWithOptions read failed: %v", err)
+	}
+	license := f.issueBasicLicense(t, false)
+
+	body, _ := json.Marshal(map[string]any{"product_id": f.product.ID, "plan_id": f.pro.ID})
+	denied := httptest.NewRequest(http.MethodPost, "/api/licenses/"+license.ID+"/upgrade", bytes.NewReader(body))
+	denied.Header.Set("Authorization", "Bearer "+readToken)
+	deniedRecorder := httptest.NewRecorder()
+	s.handleLicenseActions(deniedRecorder, denied)
+	if deniedRecorder.Code != http.StatusUnauthorized {
+		t.Fatalf("expected read-only key to be denied, got %d: %s", deniedRecorder.Code, deniedRecorder.Body.String())
+	}
+
+	body, _ = json.Marshal(map[string]any{"product_id": f.product.ID, "plan_id": f.pro.ID, "max_devices": 5})
+	req := httptest.NewRequest(http.MethodPost, "/api/licenses/"+license.ID+"/upgrade", bytes.NewReader(body))
+	req.Header.Set("X-API-Key", writeToken)
+	rec := httptest.NewRecorder()
+	s.handleLicenseActions(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected license upgrade 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var resp struct {
+		Success    bool     `json:"success"`
+		OldLicense *License `json:"old_license"`
+		License    *License `json:"license"`
+		Plan       *Plan    `json:"plan"`
+		Product    *Product `json:"product"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode response failed: %v", err)
+	}
+	if !resp.Success || resp.License == nil || resp.License.PlanID != f.pro.ID || resp.OldLicense == nil || !resp.OldLicense.IsRevoked {
+		t.Fatalf("unexpected upgrade response: %+v", resp)
+	}
+}
+
+func TestSubscriptionUpgradeAPIUpdatesSubscriptionAndLicense(t *testing.T) {
+	f := newUpgradeFixture(t)
+	s, err := NewServer(f.lm, ":0", nil, NewRateLimiter(100, time.Minute), "", "", "", true)
+	if err != nil {
+		t.Fatalf("NewServer failed: %v", err)
+	}
+	admin, err := f.lm.CreateAdminUser(f.ctx, "sub-upgrade-admin", "password")
+	if err != nil {
+		t.Fatalf("CreateAdminUser failed: %v", err)
+	}
+	token, _, err := f.lm.GenerateAPIKeyWithOptions(f.ctx, admin.ID, APIKeyOptions{Scopes: []string{"subscriptions:write"}})
+	if err != nil {
+		t.Fatalf("GenerateAPIKeyWithOptions failed: %v", err)
+	}
+	license := f.issueBasicLicense(t, false)
+	sub := &Subscription{
+		ID:           "sub-api-upgrade",
+		ClientID:     f.client.ID,
+		ProductID:    f.product.ID,
+		PlanID:       f.basic.ID,
+		LicenseID:    license.ID,
+		Status:       SubscriptionStatusActive,
+		StartDate:    license.IssuedAt,
+		EndDate:      license.ExpiresAt,
+		BillingCycle: f.basic.BillingCycle,
+	}
+	if err := f.storage.SaveSubscription(f.ctx, sub); err != nil {
+		t.Fatalf("SaveSubscription failed: %v", err)
+	}
+
+	body, _ := json.Marshal(map[string]any{"product_id": f.product.ID, "plan_id": f.pro.ID})
+	req := httptest.NewRequest(http.MethodPost, "/api/subscriptions/"+sub.ID+"/upgrade", bytes.NewReader(body))
+	req.Header.Set("Authorization", "Bearer "+token)
+	rec := httptest.NewRecorder()
+	s.handleSubscriptionActions(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected subscription upgrade 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var resp struct {
+		Success      bool          `json:"success"`
+		License      *License      `json:"license"`
+		Subscription *Subscription `json:"subscription"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode response failed: %v", err)
+	}
+	if !resp.Success || resp.License == nil || resp.Subscription == nil {
+		t.Fatalf("unexpected response: %+v", resp)
+	}
+	if resp.Subscription.LicenseID != resp.License.ID || resp.Subscription.PlanID != f.pro.ID || resp.Subscription.BillingCycle != f.pro.BillingCycle {
+		t.Fatalf("subscription not updated with upgraded license: %+v", resp.Subscription)
+	}
+}
+
 func TestAdminAPIKeyExpiryIPAndOriginRestrictions(t *testing.T) {
 	storage := NewInMemoryStorage()
 	lm, err := NewLicenseManager(storage)

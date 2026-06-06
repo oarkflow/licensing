@@ -167,7 +167,48 @@ SDKs must expose these fields to applications and surface revocation/expiry erro
   - `custom`: use `check_interval_seconds`; long-running processes should run background verification loops.
 - When `next_check_at` is in the past, verification should begin immediately but allow retries/backoff if the server is unreachable. Revocation errors must halt the host application.
 
-## 6. Configuration Layering
+## 6. AppVault Bundle Key Release
+
+AppVault distributions request bundle keys from the licensing server instead of
+deriving them locally from the visible license key.
+
+Endpoint:
+
+```text
+POST /api/appvault/bundle-key
+```
+
+Request body:
+
+```json
+{
+  "license_key": "XXXXX-...",
+  "email": "user@example.com",
+  "client_id": "client-id",
+  "product_id": "appvault",
+  "feature": "appvault.runtime",
+  "bundle": {
+    "app_id": "laravel-app",
+    "bundle_id": "appvault-laravel-app-alice-darwin-arm64-docker"
+  }
+}
+```
+
+Response body:
+
+```json
+{ "bundle_key_base64": "..." }
+```
+
+The server requires `LICENSE_SERVER_APPVAULT_KEY_SECRET`. It uses that secret as
+the HMAC-SHA256 key over the AppVault v1 derivation identity, including the
+license, product, feature, and bundle identity. The endpoint validates that the
+license exists, is not revoked or expired, matches the supplied client/email
+when present, matches the product id or slug, and has the enabled entitlement
+feature. Runtime requests that include a device fingerprint must match an
+activated trusted device.
+
+## 7. Configuration Layering
 
 The reference Go CLI resolves security-sensitive configuration in this order: command-line flags → SDK configuration → defaults. Environment variables are intentionally not used for verification endpoints, local license paths, device proof key selection, or diagnostic hardware identity.
 
@@ -181,7 +222,7 @@ The reference Go CLI resolves security-sensitive configuration in this order: co
 
 Containerized clients must place the device proof key file on a persistent mount by passing explicit SDK configuration or the CLI `--device-key-file` flag. Environment variables are intentionally ignored for device proof key selection and diagnostic hardware identifiers, so ambient process env cannot redirect identity material. If no key path is configured, the Go SDK tries common mounted directories such as `/var/lib/licensing`, `/data/licensing`, and `/persistent/licensing` before falling back to the config directory.
 
-## 7. Compliance Checklist
+## 8. Compliance Checklist
 
 Before publishing a new SDK:
 
@@ -193,7 +234,7 @@ Before publishing a new SDK:
 
 This document will grow as we formalize the OpenAPI specification and publish ready-to-use fixtures for other languages.
 
-## 8. Golden Fixture Plan
+## 9. Golden Fixture Plan
 
 To keep every SDK aligned with the Go reference implementation, we will publish deterministic fixtures under `docs/fixtures/` and mirror them in automated tests. Each fixture bundle will contain:
 

@@ -68,7 +68,7 @@ type Plan struct {
 
 // TrialDuration returns the trial duration as time.Duration.
 func (p *Plan) TrialDuration() time.Duration {
-	if !p.IsTrial || p.TrialDays <= 0 {
+	if p.TrialDays <= 0 {
 		return 0
 	}
 	return time.Duration(p.TrialDays) * 24 * time.Hour
@@ -229,6 +229,14 @@ func clonePlan(p *Plan) *Plan {
 			clone.Metadata[k] = v
 		}
 	}
+	return &clone
+}
+
+func cloneSubscription(s *Subscription) *Subscription {
+	if s == nil {
+		return nil
+	}
+	clone := *s
 	return &clone
 }
 

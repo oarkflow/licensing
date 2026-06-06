@@ -340,6 +340,8 @@ type InMemoryStorage struct {
 	productsBySlug map[string]string
 	plans          map[string]*Plan
 	plansBySlug    map[string]string // key: "productID:slug"
+	subscriptions  map[string]*Subscription
+	subsByClient   map[string]map[string]struct{}
 	features       map[string]*Feature
 	featuresBySlug map[string]string // key: "productID:slug"
 	featureScopes  map[string]*FeatureScope
@@ -388,6 +390,8 @@ func NewInMemoryStorage() *InMemoryStorage {
 		productsBySlug:                make(map[string]string),
 		plans:                         make(map[string]*Plan),
 		plansBySlug:                   make(map[string]string),
+		subscriptions:                 make(map[string]*Subscription),
+		subsByClient:                  make(map[string]map[string]struct{}),
 		features:                      make(map[string]*Feature),
 		featuresBySlug:                make(map[string]string),
 		featureScopes:                 make(map[string]*FeatureScope),
@@ -428,6 +432,7 @@ type storageSnapshot struct {
 	EmailEvents             map[string][]*email.EmailEvent       `json:"email_events,omitempty"`
 	SigningKeys             map[string]*SigningKey               `json:"signing_keys,omitempty"`
 	ActiveSigningKeyID      string                               `json:"active_signing_key_id,omitempty"`
+	Subscriptions           map[string]*Subscription             `json:"subscriptions,omitempty"`
 	Coupons                 map[string]*CouponCode               `json:"coupons,omitempty"`
 	CouponRedemptions       map[string]*CouponRedemption         `json:"coupon_redemptions,omitempty"`
 	DeviceReplacementTokens map[string]*DeviceReplacementToken   `json:"device_replacement_tokens,omitempty"`
@@ -1538,29 +1543,110 @@ func (s *InMemoryStorage) FindOfflineValidationLogsByClient(_ context.Context, c
 	return logs, nil
 }
 
-// Subscription methods for InMemoryStorage - not fully implemented for in-memory
-func (s *InMemoryStorage) SaveSubscription(_ context.Context, _ *Subscription) error {
-	return fmt.Errorf("subscriptions not supported in in-memory storage")
+func (s *InMemoryStorage) SaveSubscription(_ context.Context, sub *Subscription) error {
+	if sub == nil {
+		return fmt.Errorf("subscription is nil")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, exists := s.subscriptions[sub.ID]; exists {
+		return errSubscriptionExists
+	}
+	now := time.Now()
+	clone := cloneSubscription(sub)
+	if clone.CreatedAt.IsZero() {
+		clone.CreatedAt = now
+	}
+	clone.UpdatedAt = now
+	s.subscriptions[clone.ID] = clone
+	if _, ok := s.subsByClient[clone.ClientID]; !ok {
+		s.subsByClient[clone.ClientID] = make(map[string]struct{})
+	}
+	s.subsByClient[clone.ClientID][clone.ID] = struct{}{}
+	return nil
 }
 
-func (s *InMemoryStorage) UpdateSubscription(_ context.Context, _ *Subscription) error {
-	return fmt.Errorf("subscriptions not supported in in-memory storage")
+func (s *InMemoryStorage) UpdateSubscription(_ context.Context, sub *Subscription) error {
+	if sub == nil {
+		return fmt.Errorf("subscription is nil")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	current, exists := s.subscriptions[sub.ID]
+	if !exists {
+		return errSubscriptionMissing
+	}
+	if current.ClientID != sub.ClientID {
+		delete(s.subsByClient[current.ClientID], sub.ID)
+		if len(s.subsByClient[current.ClientID]) == 0 {
+			delete(s.subsByClient, current.ClientID)
+		}
+	}
+	clone := cloneSubscription(sub)
+	if clone.CreatedAt.IsZero() {
+		clone.CreatedAt = current.CreatedAt
+	}
+	clone.UpdatedAt = time.Now()
+	s.subscriptions[clone.ID] = clone
+	if _, ok := s.subsByClient[clone.ClientID]; !ok {
+		s.subsByClient[clone.ClientID] = make(map[string]struct{})
+	}
+	s.subsByClient[clone.ClientID][clone.ID] = struct{}{}
+	return nil
 }
 
-func (s *InMemoryStorage) GetSubscription(_ context.Context, _ string) (*Subscription, error) {
-	return nil, fmt.Errorf("subscriptions not supported in in-memory storage")
+func (s *InMemoryStorage) GetSubscription(_ context.Context, subID string) (*Subscription, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	sub, ok := s.subscriptions[subID]
+	if !ok {
+		return nil, errSubscriptionMissing
+	}
+	return cloneSubscription(sub), nil
 }
 
 func (s *InMemoryStorage) ListSubscriptions(_ context.Context) ([]*Subscription, error) {
-	return []*Subscription{}, nil
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	subs := make([]*Subscription, 0, len(s.subscriptions))
+	for _, sub := range s.subscriptions {
+		subs = append(subs, cloneSubscription(sub))
+	}
+	sort.Slice(subs, func(i, j int) bool {
+		return subs[i].CreatedAt.After(subs[j].CreatedAt)
+	})
+	return subs, nil
 }
 
-func (s *InMemoryStorage) ListSubscriptionsByClient(_ context.Context, _ string) ([]*Subscription, error) {
-	return []*Subscription{}, nil
+func (s *InMemoryStorage) ListSubscriptionsByClient(_ context.Context, clientID string) ([]*Subscription, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	ids := s.subsByClient[clientID]
+	subs := make([]*Subscription, 0, len(ids))
+	for id := range ids {
+		if sub := s.subscriptions[id]; sub != nil {
+			subs = append(subs, cloneSubscription(sub))
+		}
+	}
+	sort.Slice(subs, func(i, j int) bool {
+		return subs[i].CreatedAt.After(subs[j].CreatedAt)
+	})
+	return subs, nil
 }
 
-func (s *InMemoryStorage) DeleteSubscription(_ context.Context, _ string) error {
-	return fmt.Errorf("subscriptions not supported in in-memory storage")
+func (s *InMemoryStorage) DeleteSubscription(_ context.Context, subID string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	sub, ok := s.subscriptions[subID]
+	if !ok {
+		return errSubscriptionMissing
+	}
+	delete(s.subscriptions, subID)
+	delete(s.subsByClient[sub.ClientID], subID)
+	if len(s.subsByClient[sub.ClientID]) == 0 {
+		delete(s.subsByClient, sub.ClientID)
+	}
+	return nil
 }
 
 func (s *InMemoryStorage) snapshot() *storageSnapshot {
@@ -1572,6 +1658,7 @@ func (s *InMemoryStorage) snapshot() *storageSnapshot {
 		Activations:             make(map[string][]*ActivationRecord, len(s.activations)),
 		AdminUsers:              make(map[string]*AdminUser, len(s.adminUsers)),
 		APIKeys:                 make(map[string]*APIKeyRecord, len(s.apiKeys)),
+		Subscriptions:           make(map[string]*Subscription, len(s.subscriptions)),
 		EmailProviders:          make(map[string]*email.EmailProvider, len(s.emailProviders)),
 		EmailTemplates:          make(map[string]*email.EmailTemplate, len(s.emailTemplates)),
 		EmailRoutes:             make(map[string]*email.EmailTemplateRoute, len(s.emailRoutes)),
@@ -1597,6 +1684,9 @@ func (s *InMemoryStorage) snapshot() *storageSnapshot {
 	}
 	for id, key := range s.apiKeys {
 		snapshot.APIKeys[id] = cloneAPIKeyRecord(key)
+	}
+	for id, sub := range s.subscriptions {
+		snapshot.Subscriptions[id] = cloneSubscription(sub)
 	}
 	for id, provider := range s.emailProviders {
 		snapshot.EmailProviders[id] = provider.Clone()
@@ -1688,6 +1778,7 @@ func (s *InMemoryStorage) loadSnapshot(snapshot *storageSnapshot) {
 	s.apiKeys = make(map[string]*APIKeyRecord, len(snapshot.APIKeys))
 	s.apiKeysByHash = make(map[string]string, len(snapshot.APIKeys))
 	s.apiKeysByUser = make(map[string]map[string]struct{})
+	s.apiKeysByClient = make(map[string]map[string]struct{})
 	for id, key := range snapshot.APIKeys {
 		cloned := cloneAPIKeyRecord(key)
 		s.apiKeys[id] = cloned
@@ -1696,6 +1787,22 @@ func (s *InMemoryStorage) loadSnapshot(snapshot *storageSnapshot) {
 			s.apiKeysByUser[cloned.UserID] = make(map[string]struct{})
 		}
 		s.apiKeysByUser[cloned.UserID][id] = struct{}{}
+		if cloned.ClientID != "" {
+			if _, ok := s.apiKeysByClient[cloned.ClientID]; !ok {
+				s.apiKeysByClient[cloned.ClientID] = make(map[string]struct{})
+			}
+			s.apiKeysByClient[cloned.ClientID][id] = struct{}{}
+		}
+	}
+	s.subscriptions = make(map[string]*Subscription, len(snapshot.Subscriptions))
+	s.subsByClient = make(map[string]map[string]struct{})
+	for id, sub := range snapshot.Subscriptions {
+		cloned := cloneSubscription(sub)
+		s.subscriptions[id] = cloned
+		if _, ok := s.subsByClient[cloned.ClientID]; !ok {
+			s.subsByClient[cloned.ClientID] = make(map[string]struct{})
+		}
+		s.subsByClient[cloned.ClientID][id] = struct{}{}
 	}
 	s.emailProviders = make(map[string]*email.EmailProvider, len(snapshot.EmailProviders))
 	s.emailProvidersBySlug = make(map[string]string, len(snapshot.EmailProviders))
@@ -2026,11 +2133,17 @@ func (ps *PersistentStorage) FindOfflineValidationLogsByClient(ctx context.Conte
 
 // Subscription methods - forward to backend
 func (ps *PersistentStorage) SaveSubscription(ctx context.Context, sub *Subscription) error {
-	return ps.backend.SaveSubscription(ctx, sub)
+	if err := ps.backend.SaveSubscription(ctx, sub); err != nil {
+		return err
+	}
+	return ps.persist()
 }
 
 func (ps *PersistentStorage) UpdateSubscription(ctx context.Context, sub *Subscription) error {
-	return ps.backend.UpdateSubscription(ctx, sub)
+	if err := ps.backend.UpdateSubscription(ctx, sub); err != nil {
+		return err
+	}
+	return ps.persist()
 }
 
 func (ps *PersistentStorage) GetSubscription(ctx context.Context, subID string) (*Subscription, error) {
@@ -2046,7 +2159,10 @@ func (ps *PersistentStorage) ListSubscriptionsByClient(ctx context.Context, clie
 }
 
 func (ps *PersistentStorage) DeleteSubscription(ctx context.Context, subID string) error {
-	return ps.backend.DeleteSubscription(ctx, subID)
+	if err := ps.backend.DeleteSubscription(ctx, subID); err != nil {
+		return err
+	}
+	return ps.persist()
 }
 
 func (ps *PersistentStorage) SaveCouponCode(ctx context.Context, coupon *CouponCode) error {

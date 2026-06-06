@@ -36,6 +36,8 @@ import type {
     SaveEmailProviderRequest,
     SaveEmailTemplateRequest,
     SigningKeyMeta,
+    UpgradeLicenseRequest,
+    UpgradeLicenseResponse,
     User,
 } from '@/types/api';
 
@@ -279,6 +281,20 @@ class ApiService {
     async reinstateLicense(id: string): Promise<ApiResponse<License>> {
         return this.request<License>(`/api/licenses/${id}/reinstate`, {
             method: 'POST',
+        });
+    }
+
+    async upgradeLicense(id: string, data: UpgradeLicenseRequest): Promise<ApiResponse<UpgradeLicenseResponse>> {
+        return this.request<UpgradeLicenseResponse>(`/api/licenses/${id}/upgrade`, {
+            method: 'POST',
+            body: JSON.stringify(data),
+        });
+    }
+
+    async upgradeSubscription(id: string, data: UpgradeLicenseRequest): Promise<ApiResponse<UpgradeLicenseResponse>> {
+        return this.request<UpgradeLicenseResponse>(`/api/subscriptions/${id}/upgrade`, {
+            method: 'POST',
+            body: JSON.stringify(data),
         });
     }
 

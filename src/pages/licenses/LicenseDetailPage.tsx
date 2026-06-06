@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import type { ReactNode } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useParams, useNavigate, Link } from 'react-router-dom';
@@ -14,6 +14,7 @@ import {
     Ticket,
     ShieldCheck,
     RefreshCw,
+    ArrowUpCircle,
 } from 'lucide-react';
 import {
     Tooltip,
@@ -54,9 +55,11 @@ import {
 } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Switch } from '@/components/ui/switch';
 import { Textarea } from '@/components/ui/textarea';
 import { useToast } from '@/hooks/use-toast';
-import type { CouponRedemption, DeviceReplacementToken, FeatureScopeSelection, License, LicenseDevice } from '@/types/api';
+import type { CouponRedemption, DeviceReplacementToken, FeatureScopeSelection, License, LicenseDevice, Plan, UpgradeLicenseResponse } from '@/types/api';
 import { FeatureScopeSelector } from '@/components/licenses/FeatureScopeSelector';
 import { entitlementsToSelections, slugToLabel, groupScopesForFeature, categorizeSelections } from '@/lib/entitlements';
 import { DataPanel, EmptyState, MetricTile, PageHeader } from '@/components/layout/PageShell';
@@ -143,6 +146,12 @@ export function LicenseDetailPage() {
     const [tokenValidity, setTokenValidity] = useState<number | undefined>(30);
     const [issuedTokenBundle, setIssuedTokenBundle] = useState<any | null>(null);
     const [issuedReplacementToken, setIssuedReplacementToken] = useState<{ token: string; token_record: DeviceReplacementToken } | null>(null);
+    const [upgradeDialogOpen, setUpgradeDialogOpen] = useState(false);
+    const [upgradePlanId, setUpgradePlanId] = useState('');
+    const [upgradeMaxDevices, setUpgradeMaxDevices] = useState<number | undefined>();
+    const [upgradeDurationDays, setUpgradeDurationDays] = useState<number | undefined>();
+    const [upgradeTrial, setUpgradeTrial] = useState(false);
+    const [upgradeResult, setUpgradeResult] = useState<UpgradeLicenseResponse | null>(null);
 
     const issueMutation = useMutation({
         mutationFn: (payload: { license_key: string; device_fingerprint: string; max_uses?: number; validity_days?: number }) => api.createOfflineToken(payload),
@@ -173,6 +182,16 @@ export function LicenseDetailPage() {
     });
     const license = licenseResponse?.data;
     const canEditScopes = Boolean(license?.product_id && license?.plan_id);
+    const { data: upgradePlansResponse, isFetching: upgradePlansLoading } = useQuery({
+        queryKey: ['product-plans', license?.product_id],
+        queryFn: () => api.listPlans(license!.product_id!),
+        enabled: upgradeDialogOpen && Boolean(license?.product_id),
+    });
+    const upgradePlans: Plan[] = useMemo(
+        () => (upgradePlansResponse?.data || []).filter((plan) => plan.is_active),
+        [upgradePlansResponse?.data]
+    );
+    const selectedUpgradePlan = upgradePlans.find((plan) => plan.id === upgradePlanId);
 
     const { data: planEntitlementsResponse, isFetching: planEntitlementsLoading } = useQuery({
         queryKey: ['license-plan-entitlements', license?.product_id, license?.plan_id],
@@ -215,6 +234,36 @@ export function LicenseDetailPage() {
         onError: (error) => {
             toast({
                 title: 'Failed to reinstate license',
+                description: error instanceof Error ? error.message : 'Unknown error',
+                variant: 'destructive',
+            });
+        },
+    });
+
+    const upgradeMutation = useMutation({
+        mutationFn: () => api.upgradeLicense(id!, {
+            product_id: license!.product_id!,
+            plan_id: upgradePlanId,
+            max_devices: upgradeMaxDevices,
+            duration_days: upgradeDurationDays,
+            trial: upgradeTrial,
+            metadata: { source: 'admin-ui' },
+        }),
+        onSuccess: (response) => {
+            if (response.success && response.data?.license) {
+                setUpgradeResult(response.data);
+                queryClient.invalidateQueries({ queryKey: ['license', id] });
+                queryClient.invalidateQueries({ queryKey: ['licenses'] });
+                queryClient.invalidateQueries({ queryKey: ['subscriptions'] });
+                queryClient.invalidateQueries({ queryKey: ['license', response.data.license.id] });
+                toast({ title: 'License upgraded' });
+            } else {
+                toast({ title: 'Failed to upgrade license', description: response.error || 'Unknown error', variant: 'destructive' });
+            }
+        },
+        onError: (error) => {
+            toast({
+                title: 'Failed to upgrade license',
                 description: error instanceof Error ? error.message : 'Unknown error',
                 variant: 'destructive',
             });
@@ -305,6 +354,33 @@ export function LicenseDetailPage() {
             setInitialFeatureScopes(initial);
         }
     }, [entitlementDialogOpen, license?.entitlements, planEntitlementsResponse?.data]);
+
+    useEffect(() => {
+        if (!upgradeDialogOpen) {
+            return;
+        }
+        if (!upgradePlanId && upgradePlans.length > 0) {
+            const currentIndex = upgradePlans.findIndex((plan) => plan.id === license?.plan_id);
+            const nextPlan = upgradePlans.find((plan, index) => plan.id !== license?.plan_id && index > currentIndex)
+                || upgradePlans.find((plan) => plan.id !== license?.plan_id)
+                || upgradePlans[0];
+            setUpgradePlanId(nextPlan.id);
+        }
+    }, [upgradeDialogOpen, upgradePlanId, upgradePlans, license?.plan_id]);
+
+    useEffect(() => {
+        if (!selectedUpgradePlan || upgradeResult) {
+            return;
+        }
+        const carriedDevices = license?.current_activations || license?.device_count || 0;
+        const planMax = selectedUpgradePlan.max_devices || undefined;
+        const nextMax = Math.max(carriedDevices, planMax || license?.max_devices || carriedDevices || 1);
+        setUpgradeMaxDevices(nextMax);
+        setUpgradeDurationDays(selectedUpgradePlan.duration_days || undefined);
+        if (!selectedUpgradePlan.trial_days) {
+            setUpgradeTrial(false);
+        }
+    }, [selectedUpgradePlan?.id, selectedUpgradePlan?.max_devices, selectedUpgradePlan?.duration_days, selectedUpgradePlan?.trial_days, license?.current_activations, license?.device_count, license?.max_devices, upgradeResult]);
 
     const updateEntitlementsMutation = useMutation({
         mutationFn: (scopes: FeatureScopeSelection[]) => api.updateLicenseEntitlements(id!, scopes),
@@ -463,6 +539,145 @@ export function LicenseDetailPage() {
                                     <Button onClick={() => issueMutation.mutate({ license_key: license.license_key, device_fingerprint: deviceFingerprint, max_uses: tokenMaxUses, validity_days: tokenValidity })}>
                                         {issueMutation.isPending ? 'Issuing...' : 'Issue Token'}
                                     </Button>
+                                </DialogFooter>
+                            </DialogContent>
+                        </Dialog>
+
+                        <Dialog
+                            open={upgradeDialogOpen}
+                            onOpenChange={(open) => {
+                                setUpgradeDialogOpen(open);
+                                if (open) {
+                                    setUpgradeResult(null);
+                                }
+                            }}
+                        >
+                            <DialogTrigger asChild>
+                                <Button variant="outline" size="sm" disabled={!license.product_id || license.is_revoked}>
+                                    <ArrowUpCircle className="h-3.5 w-3.5" />
+                                    Upgrade
+                                </Button>
+                            </DialogTrigger>
+                            <DialogContent>
+                                <DialogHeader>
+                                    <DialogTitle>Upgrade License</DialogTitle>
+                                    <DialogDescription>
+                                        A new license key will be issued and this license will be revoked.
+                                    </DialogDescription>
+                                </DialogHeader>
+                                {upgradeResult?.license ? (
+                                    <div className="space-y-3 py-2">
+                                        <div className="space-y-1">
+                                            <Label>New license key</Label>
+                                            <div className="flex gap-2">
+                                                <Input readOnly value={upgradeResult.license.license_key} className="font-mono text-xs" />
+                                                <Button type="button" variant="outline" size="icon" onClick={() => copyToClipboard(upgradeResult.license.license_key)}>
+                                                    <Copy className="h-4 w-4" />
+                                                </Button>
+                                            </div>
+                                        </div>
+                                        <div className="grid gap-2 sm:grid-cols-2">
+                                            <div className="space-y-1">
+                                                <Label>Email</Label>
+                                                <Input readOnly value={upgradeResult.license.email || ''} />
+                                            </div>
+                                            <div className="space-y-1">
+                                                <Label>Client ID</Label>
+                                                <Input readOnly value={upgradeResult.license.client_id || ''} className="font-mono text-xs" />
+                                            </div>
+                                        </div>
+                                        <Textarea
+                                            readOnly
+                                            value={JSON.stringify({
+                                                email: upgradeResult.license.email ?? '',
+                                                client_id: upgradeResult.license.client_id ?? '',
+                                                license_key: upgradeResult.license.license_key ?? '',
+                                            }, null, 2)}
+                                            className="min-h-28 font-mono text-xs"
+                                        />
+                                    </div>
+                                ) : (
+                                    <div className="space-y-4 py-2">
+                                        <div className="space-y-1">
+                                            <Label>Target plan</Label>
+                                            <Select value={upgradePlanId} onValueChange={setUpgradePlanId} disabled={upgradePlansLoading || upgradeMutation.isPending}>
+                                                <SelectTrigger>
+                                                    <SelectValue placeholder={upgradePlansLoading ? 'Loading plans...' : 'Select plan'} />
+                                                </SelectTrigger>
+                                                <SelectContent>
+                                                    {upgradePlans.map((plan) => (
+                                                        <SelectItem key={plan.id} value={plan.id}>
+                                                            {plan.name} ({plan.slug})
+                                                        </SelectItem>
+                                                    ))}
+                                                </SelectContent>
+                                            </Select>
+                                        </div>
+                                        <div className="grid gap-3 sm:grid-cols-2">
+                                            <div className="space-y-1">
+                                                <Label>Max devices</Label>
+                                                <Input
+                                                    type="number"
+                                                    min={license.current_activations || license.device_count || 1}
+                                                    value={upgradeMaxDevices ?? ''}
+                                                    onChange={(e) => setUpgradeMaxDevices(e.target.value ? Number(e.target.value) : undefined)}
+                                                    disabled={upgradeMutation.isPending}
+                                                />
+                                            </div>
+                                            <div className="space-y-1">
+                                                <Label>Duration days</Label>
+                                                <Input
+                                                    type="number"
+                                                    min={1}
+                                                    value={upgradeDurationDays ?? ''}
+                                                    onChange={(e) => setUpgradeDurationDays(e.target.value ? Number(e.target.value) : undefined)}
+                                                    disabled={upgradeMutation.isPending}
+                                                />
+                                            </div>
+                                        </div>
+                                        {selectedUpgradePlan?.trial_days ? (
+                                            <div className="flex items-center justify-between rounded-md border px-3 py-2">
+                                                <div>
+                                                    <Label htmlFor="upgrade-trial">Trial</Label>
+                                                    <p className="text-xs text-muted-foreground">{selectedUpgradePlan.trial_days} days</p>
+                                                </div>
+                                                <Switch id="upgrade-trial" checked={upgradeTrial} onCheckedChange={setUpgradeTrial} disabled={upgradeMutation.isPending} />
+                                            </div>
+                                        ) : null}
+                                    </div>
+                                )}
+                                <DialogFooter>
+                                    {upgradeResult?.license ? (
+                                        <>
+                                            <Button
+                                                type="button"
+                                                variant="outline"
+                                                onClick={() => copyToClipboard(JSON.stringify({
+                                                    email: upgradeResult.license.email ?? '',
+                                                    client_id: upgradeResult.license.client_id ?? '',
+                                                    license_key: upgradeResult.license.license_key ?? '',
+                                                }, null, 2))}
+                                            >
+                                                Copy JSON
+                                            </Button>
+                                            <Button type="button" onClick={() => navigate(`/licenses/${upgradeResult.license.id}`)}>
+                                                Open License
+                                            </Button>
+                                        </>
+                                    ) : (
+                                        <>
+                                            <Button type="button" variant="ghost" onClick={() => setUpgradeDialogOpen(false)} disabled={upgradeMutation.isPending}>
+                                                Cancel
+                                            </Button>
+                                            <Button
+                                                type="button"
+                                                onClick={() => upgradeMutation.mutate()}
+                                                disabled={!upgradePlanId || !license.product_id || upgradeMutation.isPending}
+                                            >
+                                                {upgradeMutation.isPending ? 'Upgrading...' : 'Upgrade'}
+                                            </Button>
+                                        </>
+                                    )}
                                 </DialogFooter>
                             </DialogContent>
                         </Dialog>

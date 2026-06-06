@@ -18,6 +18,8 @@ import (
 	"github.com/oarkflow/licensing/pkg/web"
 )
 
+var buildVersion = "dev"
+
 // ==================== Main ====================
 
 func main() {
@@ -143,9 +145,16 @@ func runServerCommand() {
 	fmt.Println("║    Hardware-Secured Licensing System      ║")
 	fmt.Println("╚═══════════════════════════════════════════╝")
 	fmt.Println()
+	ctx := context.Background()
+
+	runWithDistributionLicense(ctx, func(ctx context.Context) {
+		runLicensedServer(ctx, *httpServer, *allowInsecureHTTP)
+	})
+}
+
+func runLicensedServer(ctx context.Context, httpServer string, allowInsecureHTTP bool) {
 	// os.Setenv("LICENSE_SERVER_BOOTSTRAP_DEMO", "true")
 	// Initialize storage + License Manager
-	ctx := context.Background()
 	storage, storageMode, err := licensing.BuildStorageFromEnv()
 	if err != nil {
 		log.Fatalf("Failed to configure storage: %v", err)
@@ -209,10 +218,10 @@ func runServerCommand() {
 	tlsCert := os.Getenv("LICENSE_SERVER_TLS_CERT")
 	tlsKey := os.Getenv("LICENSE_SERVER_TLS_KEY")
 	clientCA := os.Getenv("LICENSE_SERVER_CLIENT_CA")
-	if err := validateServerRuntime(*allowInsecureHTTP, tlsCert, tlsKey, apiKeys); err != nil {
+	if err := validateServerRuntime(allowInsecureHTTP, tlsCert, tlsKey, apiKeys); err != nil {
 		log.Fatalf("Invalid runtime configuration: %v", err)
 	}
-	server, err := licensing.NewServer(lm, *httpServer, apiKeys, rateLimiter, tlsCert, tlsKey, clientCA, *allowInsecureHTTP)
+	server, err := licensing.NewServer(lm, httpServer, apiKeys, rateLimiter, tlsCert, tlsKey, clientCA, allowInsecureHTTP)
 	if err != nil {
 		log.Fatalf("Failed to initialize server: %v", err)
 	}
@@ -225,7 +234,7 @@ func runServerCommand() {
 	webServer.SetServer(server)
 	server.SetWebHandler(webServer.Handler())
 	server.SetSessionValidator(webServer) // Enable session-based auth for API endpoints
-	log.Printf("🖥️  Web Admin UI available at %s", *httpServer)
+	log.Printf("🖥️  Web Admin UI available at %s", httpServer)
 
 	// Start HTTP server
 	if err := server.Start(); err != nil {
@@ -366,6 +375,12 @@ func seedDatabase(ctx context.Context, storage licensing.Storage) error {
 
 	log.Printf("✅ Seeded Secretr catalog (%d features / %d plans)", len(catalog.Features), len(catalog.Plans))
 
+	distributionCatalog, err := licensing.BootstrapLicensingServerProduct(ctx, storage)
+	if err != nil {
+		return fmt.Errorf("bootstrap Licensing Server catalog: %w", err)
+	}
+	log.Printf("✅ Seeded Licensing Server catalog (%d features / %d plans)", len(distributionCatalog.Features), len(distributionCatalog.Plans))
+
 	// Seed default email provider
 	if err := seedDefaultEmailProvider(ctx, storage); err != nil {
 		log.Printf("⚠️ Failed to seed default email provider: %v", err)
@@ -489,6 +504,7 @@ func createDemoData(ctx context.Context, lm *licensing.LicenseManager) error {
 	}
 
 	product := catalog.Product
+	const demoDeviceCount = 10
 
 	type demoSeed struct {
 		label        string
@@ -546,8 +562,12 @@ func createDemoData(ctx context.Context, lm *licensing.LicenseManager) error {
 			duration = 365 * 24 * time.Hour
 		}
 
+		maxDevices := seed.maxDevices
+		if maxDevices < demoDeviceCount {
+			maxDevices = demoDeviceCount
+		}
 		opts := &licensing.GenerateLicenseOptions{ProductID: product.ID, PlanID: plan.ID}
-		license, err := lm.GenerateLicenseWithOptions(ctx, client.ID, duration, seed.maxDevices, plan.Slug, mode, interval, opts)
+		license, err := lm.GenerateLicenseWithOptions(ctx, client.ID, duration, maxDevices, plan.Slug, mode, interval, opts)
 		if err != nil {
 			log.Printf("⚠️ Failed to create demo license for %s: %v", client.Email, err)
 			continue

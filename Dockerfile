@@ -4,7 +4,9 @@
 # Backend build stage  #
 ########################
 ARG PLATFORM=linux/amd64
+ARG GO_BUILD_TAGS=""
 FROM --platform=$PLATFORM golang:1.25-alpine AS backend-build
+ARG GO_BUILD_TAGS
 WORKDIR /src
 ENV CGO_ENABLED=0
 ENV GOOS=linux
@@ -12,7 +14,11 @@ ENV GOARCH=amd64
 COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
-RUN go build -o /out/crm ./cmd
+RUN if [ -n "$GO_BUILD_TAGS" ]; then \
+      go build -tags "$GO_BUILD_TAGS" -o /out/crm ./cmd; \
+    else \
+      go build -o /out/crm ./cmd; \
+    fi
 
 ########################
 # Backend runtime      #
