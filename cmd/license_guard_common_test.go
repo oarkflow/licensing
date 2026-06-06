@@ -1,6 +1,7 @@
 package main
 
 import (
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -91,5 +92,30 @@ func TestLoadDistributionLicenseConfigRequiresEnv(t *testing.T) {
 	}
 	if cfg.ProductID != "product-runtime" || cfg.FeatureSlug != "runtime.start" {
 		t.Fatalf("unexpected config: %+v", cfg)
+	}
+}
+
+func TestDistributionLicenseStorageOverrides(t *testing.T) {
+	configDir := filepath.Join(t.TempDir(), "license-cache")
+	deviceKey := filepath.Join(t.TempDir(), "device.pem")
+	t.Setenv("LICENSE_SERVER_DISTRIBUTION_CONFIG_DIR", configDir)
+	t.Setenv("LICENSE_SERVER_DISTRIBUTION_DEVICE_KEY_FILE", deviceKey)
+
+	if got := distributionLicenseConfigDir(); got != configDir {
+		t.Fatalf("unexpected distribution config dir: got %s want %s", got, configDir)
+	}
+	if got := distributionLicenseDeviceKeyFile(); got != deviceKey {
+		t.Fatalf("unexpected distribution device key file: got %s want %s", got, deviceKey)
+	}
+}
+
+func TestDistributionLicenseDeviceKeyDefaultsUnderConfigDir(t *testing.T) {
+	configDir := filepath.Join(t.TempDir(), "license-cache")
+	t.Setenv("LICENSE_SERVER_DISTRIBUTION_CONFIG_DIR", configDir)
+	t.Setenv("LICENSE_SERVER_DISTRIBUTION_DEVICE_KEY_FILE", "")
+
+	want := filepath.Join(configDir, "device_ed25519.pem")
+	if got := distributionLicenseDeviceKeyFile(); got != want {
+		t.Fatalf("unexpected default distribution device key file: got %s want %s", got, want)
 	}
 }

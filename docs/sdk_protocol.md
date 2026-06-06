@@ -71,7 +71,7 @@ Hardware identifiers such as DMI UUID, serial numbers, machine IDs, persistent v
 hardware_fingerprint = "hw:v1:" + lowercase_hex( SHA256(stable_hardware_components) )
 ```
 
-Unstable identifiers such as hostname, MAC address, IP address, CPU brand, container ID, Kubernetes pod UID, Kubernetes pod name, and environment-provided device IDs must not be part of the canonical authorization fingerprint. Container deployments should prefer a mounted persistent device key first, then mounted persistent volume IDs or Kubernetes PVC marker files for diagnostics. TPM-backed keys should only be used in containers when the TPM is intentionally exposed.
+Unstable identifiers such as hostname, MAC address, IP address, CPU brand, container ID, Kubernetes pod UID, Kubernetes pod name, and environment-provided device IDs must not be part of the canonical authorization fingerprint. Container deployments should keep both the encrypted license cache and device proof key on a mounted persistent volume, for example `/data/.licensing/.license.dat` and `/data/.licensing/device_ed25519.pem`. A stopped, removed, and recreated container then presents the same fingerprint and does not consume a new device slot. Mounted persistent volume IDs or Kubernetes PVC marker files are diagnostics only. TPM-backed keys should only be used in containers when the TPM is intentionally exposed.
 
 Device proof attestations may include diagnostic fields such as `hardware_fingerprint`, `hardware_confidence`, `label`, `platform`, and `is_container`. Servers may store these for audit, support, and suspicious-drift analysis, but authorization must continue to be based on proof-key possession. Confidence values are recorded per component as `high`, `medium`, or `low`.
 

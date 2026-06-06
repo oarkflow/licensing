@@ -14,6 +14,8 @@ services:
       LICENSE_SERVER_STORAGE_SQLITE_PATH: "/data/licensing.db"
       LICENSE_SERVER_AUDIT_DB_PATH: "/data/audit.db"
       LICENSE_SERVER_BACKUP_MARKER_FILE: "/backups/latest.json"
+      LICENSE_SERVER_DISTRIBUTION_CONFIG_DIR: "/data/.licensing"
+      LICENSE_SERVER_DISTRIBUTION_DEVICE_KEY_FILE: "/data/.licensing/device_ed25519.pem"
       LICENSE_SERVER_METRICS_ENABLED: "true"
       LICENSE_SERVER_AUDIT_ENABLED: "true"
       LICENSE_SERVER_ALLOW_LEGACY_ENV_KEYS_IN_PROD: "false"

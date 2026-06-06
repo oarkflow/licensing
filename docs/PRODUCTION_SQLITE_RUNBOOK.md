@@ -74,6 +74,23 @@ make single-node-rehearse
 
 The generated signing key is a local operator fixture. Replace it with managed production secrets before sending a customer deployment. TLS should terminate at NPM for this local single-node profile.
 
+## Container Device Identity
+
+Distribution builds use the same device-proof licensing model as client SDKs.
+For Docker, keep the cached distribution license and device proof key on a
+persistent mounted volume:
+
+```text
+LICENSE_SERVER_DISTRIBUTION_CONFIG_DIR=/data/.licensing
+LICENSE_SERVER_DISTRIBUTION_DEVICE_KEY_FILE=/data/.licensing/device_ed25519.pem
+```
+
+The production compose file mounts `/data`, so stopping, removing, and recreating
+the container keeps the same fingerprint and does not consume another device
+activation. If you intentionally run multiple independent containers for the
+same customer, give each container its own persistent licensing volume and size
+`max_devices` accordingly.
+
 ## Migrations And Seeds
 
 Use the migrator as the operator path:

@@ -226,7 +226,30 @@ go run ./client --server-url https://licensing.example.com --config-dir /var/lib
   --device-key-file /var/lib/myapp-licenses/device/device_ed25519.pem
 ```
 
-For containers, pass `--device-key-file` or set `Config.DeviceKeyFile` to a persistent volume path. The canonical fingerprint is derived from this proof key, so container restarts and image rebuilds keep the same device ID as long as the mounted key survives. Device key selection intentionally does not read environment variables.
+For containers, mount a persistent config directory and pass `--config-dir` plus
+`--device-key-file`, or set `Config.ConfigDir` plus `Config.DeviceKeyFile`, to
+paths on that volume. The canonical fingerprint is derived from this proof key,
+and the encrypted license cache is stored in the config directory, so container
+stop/remove/recreate cycles keep the same device ID as long as the mounted data
+survives.
+
+```yaml
+services:
+  app:
+    image: your-app
+    volumes:
+      - app_license:/data/.licensing
+    command:
+      - --config-dir=/data/.licensing
+      - --device-key-file=/data/.licensing/device_ed25519.pem
+
+volumes:
+  app_license:
+```
+
+If you intentionally run multiple replicas as one licensed deployment, share the
+same mounted licensing volume. If each replica should count as its own device,
+give each replica its own volume/key.
 
 ### Wrapping Your Application
 

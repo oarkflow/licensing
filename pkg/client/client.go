@@ -602,7 +602,12 @@ func normalizeConfig(cfg Config) (Config, error) {
 
 	cfg.ConfigDir = strings.TrimSpace(cfg.ConfigDir)
 	if cfg.ConfigDir == "" {
-		cfg.ConfigDir = DefaultConfigDir
+		if device.IsRunningInContainer() {
+			cfg.ConfigDir = containerPersistentConfigDir()
+		}
+		if cfg.ConfigDir == "" {
+			cfg.ConfigDir = DefaultConfigDir
+		}
 	}
 	if !filepath.IsAbs(cfg.ConfigDir) {
 		cfg.ConfigDir = filepath.Join(homeDir, cfg.ConfigDir)

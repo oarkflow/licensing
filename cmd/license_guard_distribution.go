@@ -18,6 +18,8 @@ func runWithDistributionLicense(ctx context.Context, run func(context.Context)) 
 		AppName:           "Licensing Server",
 		AppVersion:        buildVersion,
 		ProductID:         cfg.ProductID,
+		ConfigDir:         distributionLicenseConfigDir(),
+		DeviceKeyFile:     distributionLicenseDeviceKeyFile(),
 		DeviceKeyProvider: "auto",
 	})
 	if err != nil {

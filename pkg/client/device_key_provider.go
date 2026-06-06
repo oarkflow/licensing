@@ -80,9 +80,16 @@ func softwareDeviceKeyPath(cfg Config) string {
 }
 
 func containerPersistentDeviceKeyPath() string {
+	if dir := containerPersistentConfigDir(); dir != "" {
+		return filepath.Join(dir, defaultDeviceKeyFile)
+	}
+	return ""
+}
+
+func containerPersistentConfigDir() string {
 	for _, dir := range []string{
+		"/var/lib/licensing/.licensing",
 		"/var/lib/licensing",
-		"/var/lib/licensing/device",
 		"/data/licensing",
 		"/data/.licensing",
 		"/persistent/licensing",
@@ -90,7 +97,16 @@ func containerPersistentDeviceKeyPath() string {
 		"/app/.licensing",
 	} {
 		if directoryExists(dir) {
-			return filepath.Join(dir, defaultDeviceKeyFile)
+			return dir
+		}
+	}
+	for _, parent := range []string{
+		"/data",
+		"/persistent",
+		"/var/lib/licensing",
+	} {
+		if directoryExists(parent) {
+			return filepath.Join(parent, ".licensing")
 		}
 	}
 	return ""

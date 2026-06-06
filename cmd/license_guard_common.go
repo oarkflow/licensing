@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 )
@@ -51,4 +52,30 @@ func validateDistributionLicense(cfg distributionLicenseConfig, productID string
 		return fmt.Errorf("distribution license missing required feature %q", cfg.FeatureSlug)
 	}
 	return nil
+}
+
+func distributionLicenseConfigDir() string {
+	if dir := strings.TrimSpace(os.Getenv("LICENSE_SERVER_DISTRIBUTION_CONFIG_DIR")); dir != "" {
+		return dir
+	}
+	for _, dir := range []string{
+		"/data/.licensing",
+		"/var/lib/licensing/.licensing",
+		"/persistent/.licensing",
+	} {
+		if info, err := os.Stat(filepath.Dir(dir)); err == nil && info.IsDir() {
+			return dir
+		}
+	}
+	return ""
+}
+
+func distributionLicenseDeviceKeyFile() string {
+	if path := strings.TrimSpace(os.Getenv("LICENSE_SERVER_DISTRIBUTION_DEVICE_KEY_FILE")); path != "" {
+		return path
+	}
+	if dir := distributionLicenseConfigDir(); dir != "" {
+		return filepath.Join(dir, "device_ed25519.pem")
+	}
+	return ""
 }
