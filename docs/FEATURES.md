@@ -27,7 +27,7 @@ This feature catalog highlights the capabilities provided by the licensing stack
 ## Storage & Deployment
 
 - **Pluggable storage backends:** Swap between in-memory, SQLite, or JSON snapshots via environment configuration.
-- **Bootstrap automation:** Optional demo seeding creates example clients and licenses for testing new deployments.
+- **Explicit catalog setup:** Product, plan, feature, and scope data is managed through the Admin UI/API or explicitly run SQL seed files.
 - **Health endpoints:** Lightweight probes report readiness for load balancers and orchestration systems.
 
 ## Client Experience

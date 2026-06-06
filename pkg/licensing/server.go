@@ -56,17 +56,26 @@ type Server struct {
 	auditLogger       *audit.AuditLogger
 	auditIncludePing  bool
 	auditDB           *sql.DB
+	emailQueueCancel  context.CancelFunc
+	emailQueueWG      sync.WaitGroup
 }
 
 type serverMetrics struct {
-	startedAt     time.Time
-	requestsTotal atomic.Uint64
-	requestsLive  atomic.Uint64
-	requests2xx   atomic.Uint64
-	requests4xx   atomic.Uint64
-	requests5xx   atomic.Uint64
-	latencyNanos  atomic.Uint64
-	responseBytes atomic.Uint64
+	startedAt            time.Time
+	requestsTotal        atomic.Uint64
+	requestsLive         atomic.Uint64
+	requests2xx          atomic.Uint64
+	requests4xx          atomic.Uint64
+	requests5xx          atomic.Uint64
+	latencyNanos         atomic.Uint64
+	responseBytes        atomic.Uint64
+	auditWriteFailures   atomic.Uint64
+	rateLimitHits        atomic.Uint64
+	activationRequests   atomic.Uint64
+	verificationRequests atomic.Uint64
+	emailQueueSent       atomic.Uint64
+	emailQueueFailures   atomic.Uint64
+	emailQueueRetries    atomic.Uint64
 }
 
 // SessionValidator validates session cookies for authentication
@@ -234,6 +243,9 @@ func (s *Server) SetSessionValidator(v SessionValidator) {
 }
 
 func clientIP(r *http.Request) string {
+	if r == nil {
+		return ""
+	}
 	if forwarded := r.Header.Get("X-Forwarded-For"); forwarded != "" {
 		parts := strings.Split(forwarded, ",")
 		return strings.TrimSpace(parts[0])
@@ -266,6 +278,7 @@ func (s *Server) enforceRateLimit(w http.ResponseWriter, r *http.Request) bool {
 			if _, _, ok := s.sessionValidator.ValidateSession(cookie.Value); ok {
 				// Admin session gets higher rate limits
 				if !s.rateLimiter.AllowAdmin(ip) {
+					s.recordRateLimitHit(r, "admin")
 					s.respondError(w, http.StatusTooManyRequests, "Too many requests")
 					return false
 				}
@@ -279,6 +292,7 @@ func (s *Server) enforceRateLimit(w http.ResponseWriter, r *http.Request) bool {
 	if providedKey != "" {
 		if _, record, err := s.lm.ValidateAPIKeyRecord(r.Context(), providedKey); err == nil && s.apiKeyAllowedForRequest(record, r, requiredAdminScope(r)) {
 			if !s.rateLimiter.AllowAdmin(ip) {
+				s.recordRateLimitHit(r, "admin_api_key")
 				s.respondError(w, http.StatusTooManyRequests, "Too many requests")
 				return false
 			}
@@ -287,7 +301,8 @@ func (s *Server) enforceRateLimit(w http.ResponseWriter, r *http.Request) bool {
 	}
 
 	// Regular rate limit for unauthenticated requests
-	if !s.rateLimiter.Allow(ip) {
+	if !s.allowByRequestClass(ip, r) {
+		s.recordRateLimitHit(r, "default")
 		s.respondError(w, http.StatusTooManyRequests, "Too many requests")
 		return false
 	}
@@ -299,11 +314,53 @@ func (s *Server) enforceClientRateLimit(w http.ResponseWriter, r *http.Request) 
 		return true
 	}
 	ip := clientIP(r)
-	if !s.rateLimiter.Allow(ip) {
+	if !s.allowByRequestClass(ip, r) {
+		s.recordRateLimitHit(r, "client")
 		s.respondClientError(w, http.StatusTooManyRequests, "Too many requests", nil)
 		return false
 	}
 	return true
+}
+
+func (s *Server) allowByRequestClass(ip string, r *http.Request) bool {
+	path := ""
+	if r != nil && r.URL != nil {
+		path = r.URL.Path
+	}
+	switch {
+	case path == "/api/activate":
+		return s.rateLimiter.AllowActivation(ip)
+	case path == "/api/verify":
+		return s.rateLimiter.AllowVerification(ip)
+	case strings.HasPrefix(path, "/api/client/auth/"):
+		return s.rateLimiter.AllowClientAuth(ip)
+	default:
+		return s.rateLimiter.Allow(ip)
+	}
+}
+
+func (s *Server) recordRateLimitHit(r *http.Request, bucket string) {
+	if s.metrics != nil {
+		s.metrics.rateLimitHits.Add(1)
+	}
+	path := ""
+	method := ""
+	ctx := context.Background()
+	if r != nil {
+		ctx = r.Context()
+		method = r.Method
+		if r.URL != nil {
+			path = r.URL.Path
+		}
+	}
+	actorID, actorType := s.resolveAuditActor(r)
+	event := audit.NewEvent(audit.EventAPIRateLimited, audit.SeverityWarning, "rate_limit", fmt.Sprintf("rate limit hit for %s", path)).
+		WithActor(actorID, actorType, clientIP(r)).
+		WithResult("failure").
+		WithMetadata("path", path).
+		WithMetadata("method", method).
+		WithMetadata("bucket", bucket)
+	s.auditLog(ctx, event)
 }
 
 func (s *Server) authorizeAdmin(w http.ResponseWriter, r *http.Request) bool {
@@ -349,6 +406,12 @@ func (s *Server) authorizeAdmin(w http.ResponseWriter, r *http.Request) bool {
 	}
 
 	s.respondError(w, http.StatusUnauthorized, "Unauthorized")
+	actorID, actorType := s.resolveAuditActor(r)
+	s.auditLog(r.Context(), audit.NewEvent(audit.EventSecurityUnauthorized, audit.SeverityWarning, "admin_authorize", fmt.Sprintf("unauthorized admin request: %s %s", r.Method, r.URL.Path)).
+		WithActor(actorID, actorType, clientIP(r)).
+		WithResult("failure").
+		WithMetadata("path", r.URL.Path).
+		WithMetadata("required_scope", requiredScope))
 	return false
 }
 
@@ -812,6 +875,161 @@ func (s *Server) sendEmailNow(ctx context.Context, to, subject, htmlBody, textBo
 	return &emailDispatchResult{Queued: false, Sent: true, MessageID: msgID}, nil
 }
 
+func (s *Server) startEmailQueueWorker() {
+	if !envBoolDefault("LICENSE_SERVER_EMAIL_QUEUE_ENABLED", true) {
+		log.Printf("📭 Email queue worker disabled")
+		return
+	}
+	if s.lm == nil || s.lm.Storage() == nil {
+		log.Printf("📭 Email queue worker skipped: storage unavailable")
+		return
+	}
+	interval := envDurationDefault("LICENSE_SERVER_EMAIL_QUEUE_POLL_INTERVAL", 15*time.Second)
+	if interval <= 0 {
+		interval = 15 * time.Second
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	s.emailQueueCancel = cancel
+	s.emailQueueWG.Add(1)
+	go func() {
+		defer s.emailQueueWG.Done()
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+		log.Printf("📬 Email queue worker started (poll interval: %s)", interval)
+		for {
+			s.processQueuedEmailBatch(ctx)
+			select {
+			case <-ctx.Done():
+				log.Printf("📭 Email queue worker stopped")
+				return
+			case <-ticker.C:
+			}
+		}
+	}()
+}
+
+func (s *Server) stopEmailQueueWorker() {
+	if s.emailQueueCancel == nil {
+		return
+	}
+	s.emailQueueCancel()
+	s.emailQueueWG.Wait()
+	s.emailQueueCancel = nil
+}
+
+func (s *Server) processQueuedEmailBatch(ctx context.Context) {
+	maxPerTick := envIntOrDefault("LICENSE_SERVER_EMAIL_QUEUE_MAX_PER_TICK", 10)
+	if maxPerTick <= 0 {
+		maxPerTick = 10
+	}
+	for i := 0; i < maxPerTick; i++ {
+		if ctx.Err() != nil {
+			return
+		}
+		msg, err := s.lm.Storage().LeaseNextEmail(ctx, time.Now().UTC())
+		if err != nil {
+			log.Printf("email queue lease failed: %v", err)
+			return
+		}
+		if msg == nil {
+			return
+		}
+		s.processQueuedEmail(ctx, msg)
+	}
+}
+
+func (s *Server) processQueuedEmail(ctx context.Context, msg *email.EmailMessage) {
+	if msg == nil {
+		return
+	}
+	if _, err := s.sendEmailNow(ctx, msg.To, msg.Subject, msg.RenderedHTML, msg.RenderedText, msg.Attachments); err != nil {
+		s.markQueuedEmailFailed(ctx, msg, err)
+		return
+	}
+	msg.Status = email.MessageStatusSent
+	msg.LastError = ""
+	msg.UpdatedAt = time.Now().UTC()
+	if err := s.lm.Storage().UpdateEmailMessage(ctx, msg); err != nil {
+		log.Printf("failed to mark queued email %s as sent: %v", msg.ID, err)
+		if s.metrics != nil {
+			s.metrics.emailQueueFailures.Add(1)
+		}
+		return
+	}
+	if s.metrics != nil {
+		s.metrics.emailQueueSent.Add(1)
+	}
+}
+
+func (s *Server) markQueuedEmailFailed(ctx context.Context, msg *email.EmailMessage, sendErr error) {
+	now := time.Now().UTC()
+	msg.RetryCount++
+	msg.LastError = sendErr.Error()
+	msg.UpdatedAt = now
+	if msg.MaxRetries <= 0 {
+		msg.MaxRetries = 3
+	}
+	if msg.RetryCount >= msg.MaxRetries {
+		msg.Status = email.MessageStatusFailed
+		if s.metrics != nil {
+			s.metrics.emailQueueFailures.Add(1)
+		}
+	} else {
+		msg.Status = email.MessageStatusRetrying
+		msg.NextAttemptAt = now.Add(emailRetryDelay(msg.RetryCount))
+		if s.metrics != nil {
+			s.metrics.emailQueueRetries.Add(1)
+		}
+	}
+	if err := s.lm.Storage().UpdateEmailMessage(ctx, msg); err != nil {
+		log.Printf("failed to update queued email %s after send failure: %v", msg.ID, err)
+		if s.metrics != nil {
+			s.metrics.emailQueueFailures.Add(1)
+		}
+	}
+}
+
+func emailRetryDelay(retryCount int) time.Duration {
+	if retryCount <= 0 {
+		return time.Minute
+	}
+	delay := time.Minute * time.Duration(1<<(retryCount-1))
+	maxDelay := envDurationDefault("LICENSE_SERVER_EMAIL_QUEUE_MAX_RETRY_DELAY", 30*time.Minute)
+	if maxDelay <= 0 {
+		maxDelay = 30 * time.Minute
+	}
+	if delay > maxDelay {
+		return maxDelay
+	}
+	return delay
+}
+
+func envDurationDefault(key string, fallback time.Duration) time.Duration {
+	raw := strings.TrimSpace(os.Getenv(key))
+	if raw == "" {
+		return fallback
+	}
+	parsed, err := time.ParseDuration(raw)
+	if err != nil {
+		log.Printf("invalid %s=%q, using %s: %v", key, raw, fallback, err)
+		return fallback
+	}
+	return parsed
+}
+
+func envIntOrDefault(key string, fallback int) int {
+	raw := strings.TrimSpace(os.Getenv(key))
+	if raw == "" {
+		return fallback
+	}
+	parsed, err := strconv.Atoi(raw)
+	if err != nil {
+		log.Printf("invalid %s=%q, using %d: %v", key, raw, fallback, err)
+		return fallback
+	}
+	return parsed
+}
+
 // Helper functions for config parsing
 func getConfigString(m map[string]any, key string) string {
 	if m == nil {
@@ -935,8 +1153,20 @@ func (s *Server) sendLicenseEmailToClient(ctx context.Context, clientID string, 
 		Size:        int64(len(licenseJSON)),
 	}
 
-	if res, err := s.sendEmailNow(ctx, client.Email, licenseSubject, licenseHTML, licenseText, []*email.EmailAttachment{licenseAttachment}); err != nil {
+	attachments := []*email.EmailAttachment{licenseAttachment}
+	if res, err := s.sendEmailNow(ctx, client.Email, licenseSubject, licenseHTML, licenseText, attachments); err != nil {
 		log.Printf("❌ failed to send license email for %s: %v", client.Email, err)
+		queued, queueErr := s.enqueueEmailWithAttachments(ctx, client.Email, licenseSubject, licenseHTML, licenseText, map[string]string{
+			"kind":       "license_credentials",
+			"client_id":  client.ID,
+			"license_id": license.ID,
+			"product_id": license.ProductID,
+		}, attachments)
+		if queueErr != nil {
+			log.Printf("❌ failed to queue license email for %s after send failure: %v", client.Email, queueErr)
+			return
+		}
+		log.Printf("📬 license email queued for %s after send failure (message ID: %s)", client.Email, queued.MessageID)
 	} else {
 		log.Printf("✅ license email sent successfully to %s (message ID: %s)", client.Email, res.MessageID)
 	}
@@ -1157,6 +1387,9 @@ func (s *Server) auditLog(ctx context.Context, event *audit.Event) {
 		return
 	}
 	if err := s.auditLogger.Log(ctx, event); err != nil {
+		if s.metrics != nil {
+			s.metrics.auditWriteFailures.Add(1)
+		}
 		log.Printf("failed to write audit event: %v", err)
 	}
 }
@@ -1219,7 +1452,8 @@ func (s *Server) withAudit(next http.Handler) http.Handler {
 		if status >= 500 {
 			severity = audit.SeverityError
 		}
-		event := audit.NewEvent(audit.EventAPIRequest, severity, "http_request", fmt.Sprintf("%s %s", r.Method, r.URL.Path)).
+		eventType, resourceType, action := auditClassification(r, status)
+		event := audit.NewEvent(eventType, severity, action, fmt.Sprintf("%s %s", r.Method, r.URL.Path)).
 			WithActor(actorID, actorType, clientIP(r)).
 			WithResult(result).
 			WithRequest(uuid.New().String(), "", r.UserAgent()).
@@ -1228,8 +1462,93 @@ func (s *Server) withAudit(next http.Handler) http.Handler {
 			WithMetadata("status_code", status).
 			WithMetadata("duration_ms", time.Since(start).Milliseconds()).
 			WithMetadata("response_bytes", rec.bytes)
+		if resourceType != "" {
+			event.WithResource("", resourceType)
+		}
 		s.auditLog(r.Context(), event)
 	})
+}
+
+func auditClassification(r *http.Request, status int) (audit.EventType, string, string) {
+	if r == nil || r.URL == nil {
+		return audit.EventAPIRequest, "http_request", "http_request"
+	}
+	method := strings.ToUpper(r.Method)
+	path := r.URL.Path
+	if path == "/api/auth/login" {
+		if status >= 400 {
+			return audit.EventAuthFailed, "auth", "auth_login"
+		}
+		return audit.EventAuthLogin, "auth", "auth_login"
+	}
+	if path == "/api/auth/logout" {
+		return audit.EventAuthLogout, "auth", "auth_logout"
+	}
+	if method == http.MethodGet || method == http.MethodHead || method == http.MethodOptions {
+		return audit.EventAPIRequest, "http_request", "http_request"
+	}
+	switch {
+	case strings.HasPrefix(path, "/api/products"):
+		if strings.Contains(path, "/scopes") {
+			return audit.EventConfigChanged, "scope", "scope_mutation"
+		}
+		if strings.Contains(path, "/plans") {
+			return planAuditEvent(method), "plan", "plan_mutation"
+		}
+		if strings.Contains(path, "/features") {
+			return featureAuditEvent(method), "feature", "feature_mutation"
+		}
+		return productAuditEvent(method), "product", "product_mutation"
+	case strings.Contains(path, "/upgrade") && strings.HasPrefix(path, "/api/licenses/"):
+		return audit.EventLicenseUpdated, "license", "license_upgrade"
+	case strings.Contains(path, "/revoke") && strings.HasPrefix(path, "/api/licenses/"):
+		return audit.EventLicenseRevoked, "license", "license_revoke"
+	case strings.HasPrefix(path, "/api/licenses"), strings.HasPrefix(path, "/api/admin/licenses/provision"):
+		return audit.EventLicenseCreated, "license", "license_mutation"
+	case strings.Contains(path, "/upgrade") && strings.HasPrefix(path, "/api/subscriptions/"):
+		return audit.EventLicenseUpdated, "subscription", "subscription_upgrade"
+	case strings.HasPrefix(path, "/api/subscriptions"):
+		return audit.EventAdminAction, "subscription", "subscription_mutation"
+	case strings.HasPrefix(path, "/api/admin/api-keys"):
+		return audit.EventAdminAction, "api_key", "api_key_mutation"
+	case strings.HasPrefix(path, "/api/admin/signing-keys"):
+		return audit.EventKeyRotated, "signing_key", "signing_key_mutation"
+	default:
+		return audit.EventAPIRequest, "http_request", "http_request"
+	}
+}
+
+func productAuditEvent(method string) audit.EventType {
+	switch method {
+	case http.MethodPost:
+		return audit.EventProductCreated
+	case http.MethodDelete:
+		return audit.EventProductDeleted
+	default:
+		return audit.EventProductUpdated
+	}
+}
+
+func planAuditEvent(method string) audit.EventType {
+	switch method {
+	case http.MethodPost:
+		return audit.EventPlanCreated
+	case http.MethodDelete:
+		return audit.EventPlanDeleted
+	default:
+		return audit.EventPlanUpdated
+	}
+}
+
+func featureAuditEvent(method string) audit.EventType {
+	switch method {
+	case http.MethodPost:
+		return audit.EventConfigChanged
+	case http.MethodDelete:
+		return audit.EventConfigChanged
+	default:
+		return audit.EventConfigChanged
+	}
 }
 
 type statusRecorder struct {
@@ -1339,6 +1658,67 @@ func (s *Server) handleMetrics(w http.ResponseWriter, _ *http.Request) {
 	fmt.Fprintf(w, "# HELP licensing_process_goroutines Number of goroutines.\n")
 	fmt.Fprintf(w, "# TYPE licensing_process_goroutines gauge\n")
 	fmt.Fprintf(w, "licensing_process_goroutines %d\n", runtime.NumGoroutine())
+	fmt.Fprintf(w, "# HELP licensing_audit_write_failures_total Total audit write failures.\n")
+	fmt.Fprintf(w, "# TYPE licensing_audit_write_failures_total counter\n")
+	fmt.Fprintf(w, "licensing_audit_write_failures_total %d\n", s.metrics.auditWriteFailures.Load())
+	fmt.Fprintf(w, "# HELP licensing_rate_limit_hits_total Total rate limit denials.\n")
+	fmt.Fprintf(w, "# TYPE licensing_rate_limit_hits_total counter\n")
+	fmt.Fprintf(w, "licensing_rate_limit_hits_total %d\n", s.metrics.rateLimitHits.Load())
+	fmt.Fprintf(w, "# HELP licensing_activation_requests_total Total activation endpoint requests.\n")
+	fmt.Fprintf(w, "# TYPE licensing_activation_requests_total counter\n")
+	fmt.Fprintf(w, "licensing_activation_requests_total %d\n", s.metrics.activationRequests.Load())
+	fmt.Fprintf(w, "# HELP licensing_verification_requests_total Total verification endpoint requests.\n")
+	fmt.Fprintf(w, "# TYPE licensing_verification_requests_total counter\n")
+	fmt.Fprintf(w, "licensing_verification_requests_total %d\n", s.metrics.verificationRequests.Load())
+	fmt.Fprintf(w, "# HELP licensing_email_queue_sent_total Total queued emails sent by the worker.\n")
+	fmt.Fprintf(w, "# TYPE licensing_email_queue_sent_total counter\n")
+	fmt.Fprintf(w, "licensing_email_queue_sent_total %d\n", s.metrics.emailQueueSent.Load())
+	fmt.Fprintf(w, "# HELP licensing_email_queue_failures_total Total queued email permanent or update failures.\n")
+	fmt.Fprintf(w, "# TYPE licensing_email_queue_failures_total counter\n")
+	fmt.Fprintf(w, "licensing_email_queue_failures_total %d\n", s.metrics.emailQueueFailures.Load())
+	fmt.Fprintf(w, "# HELP licensing_email_queue_retries_total Total queued email retry schedules.\n")
+	fmt.Fprintf(w, "# TYPE licensing_email_queue_retries_total counter\n")
+	fmt.Fprintf(w, "licensing_email_queue_retries_total %d\n", s.metrics.emailQueueRetries.Load())
+	fmt.Fprintf(w, "# HELP licensing_sqlite_health_ok SQLite health status, 1 when quick_check succeeds.\n")
+	fmt.Fprintf(w, "# TYPE licensing_sqlite_health_ok gauge\n")
+	fmt.Fprintf(w, "licensing_sqlite_health_ok %d\n", s.sqliteHealthValue())
+	if ts, ok := backupMarkerTimestamp(); ok {
+		fmt.Fprintf(w, "# HELP licensing_sqlite_backup_last_success_timestamp_seconds Last successful SQLite backup timestamp from marker file.\n")
+		fmt.Fprintf(w, "# TYPE licensing_sqlite_backup_last_success_timestamp_seconds gauge\n")
+		fmt.Fprintf(w, "licensing_sqlite_backup_last_success_timestamp_seconds %d\n", ts)
+	}
+}
+
+type storageHealthChecker interface {
+	HealthCheck(context.Context) error
+}
+
+func (s *Server) sqliteHealthValue() int {
+	if s == nil || s.lm == nil || s.lm.storage == nil {
+		return 0
+	}
+	checker, ok := s.lm.storage.(storageHealthChecker)
+	if !ok {
+		return 0
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	if err := checker.HealthCheck(ctx); err != nil {
+		return 0
+	}
+	return 1
+}
+
+func backupMarkerTimestamp() (int64, bool) {
+	path := strings.TrimSpace(os.Getenv("LICENSE_SERVER_BACKUP_MARKER_FILE"))
+	if path == "" {
+		return 0, false
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		return 0, false
+	}
+	return info.ModTime().Unix(), true
 }
 
 func (s *Server) getAllowedOrigins() []string {
@@ -1439,6 +1819,9 @@ func (s *Server) buildTLSConfig() (*tls.Config, error) {
 }
 
 func (s *Server) handleActivate(w http.ResponseWriter, r *http.Request) {
+	if s.metrics != nil {
+		s.metrics.activationRequests.Add(1)
+	}
 	if r.Method != http.MethodPost {
 		s.respondClientError(w, http.StatusMethodNotAllowed, "Method not allowed", nil)
 		return
@@ -2253,6 +2636,9 @@ func (s *Server) handleListOfflineLogs(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleVerify(w http.ResponseWriter, r *http.Request) {
+	if s.metrics != nil {
+		s.metrics.verificationRequests.Add(1)
+	}
 	if r.Method != http.MethodPost {
 		s.respondClientError(w, http.StatusMethodNotAllowed, "Method not allowed", nil)
 		return
@@ -2562,13 +2948,134 @@ func (s *Server) handleSubscribe(w http.ResponseWriter, r *http.Request) {
 		},
 	}
 
-	// TODO: Send welcome email if requested
 	if req.SendEmail {
-		resp["email_sent"] = false
-		resp["email_message"] = "Email sending not yet implemented"
+		emails := s.sendSubscriptionEmails(ctx, client, product, plan, subscription, license)
+		resp["emails"] = emails
+		resp["email_sent"] = emailResultsSent(emails)
 	}
 
 	s.respondJSON(w, http.StatusCreated, resp)
+}
+
+func (s *Server) sendSubscriptionEmails(ctx context.Context, client *Client, product *Product, plan *Plan, subscription *Subscription, license *License) map[string]emailDispatchResult {
+	emails := make(map[string]emailDispatchResult)
+	if client == nil || product == nil || plan == nil || license == nil {
+		emails["error"] = emailDispatchResult{Sent: false, Error: "missing subscription email data"}
+		return emails
+	}
+	clientLabel := client.Name
+	if clientLabel == "" {
+		clientLabel = client.Email
+	}
+	productLabel := product.Name
+	if productLabel == "" {
+		productLabel = product.Slug
+	}
+	planLabel := plan.Name
+	if planLabel == "" {
+		planLabel = plan.Slug
+	}
+	baseMetadata := map[string]string{
+		"client_id":  client.ID,
+		"license_id": license.ID,
+		"product_id": license.ProductID,
+		"plan_id":    license.PlanID,
+	}
+	if subscription != nil {
+		baseMetadata["subscription_id"] = subscription.ID
+	}
+
+	welcomeSubject := fmt.Sprintf("Welcome to %s", productLabel)
+	welcomeTemplateData := EmailTemplateData{
+		ClientName:  clientLabel,
+		PlanName:    planLabel,
+		ProductName: productLabel,
+		Email:       client.Email,
+		SupportURL:  "https://support.example.com",
+		DocsURL:     "https://docs.example.com",
+	}
+	welcomeHTML, err := s.emailTemplateLoader.RenderTemplate("welcome_email", welcomeTemplateData)
+	if err != nil {
+		log.Printf("failed to render subscribe welcome email template: %v", err)
+		welcomeHTML = fmt.Sprintf("<p>Hi %s,</p><p>You're now set up on the <strong>%s</strong> plan for %s.</p><p>We'll send your license JSON separately. Save it securely before activating devices.</p><p>Thanks,<br/>The Licensing Team</p>", html.EscapeString(clientLabel), html.EscapeString(planLabel), html.EscapeString(productLabel))
+	}
+	welcomeText := fmt.Sprintf("Hi %s,\n\nYou're now set up on the %s plan for %s. We'll send your license JSON separately. Save it securely before activating devices.\n\nThanks,\nThe Licensing Team", clientLabel, planLabel, productLabel)
+	emails["welcome"] = s.sendOrQueueEmail(ctx, client.Email, welcomeSubject, welcomeHTML, welcomeText, cloneStringMetadata(baseMetadata, "kind", "subscription_welcome"), nil)
+
+	licensePayload := map[string]any{
+		"email":       client.Email,
+		"client_id":   client.ID,
+		"license_key": license.LicenseKey,
+		"plan_slug":   license.PlanSlug,
+		"plan_id":     license.PlanID,
+		"product_id":  license.ProductID,
+		"expires_at":  license.ExpiresAt,
+		"max_devices": license.MaxDevices,
+	}
+	licenseJSON, err := json.MarshalIndent(licensePayload, "", "  ")
+	if err != nil {
+		emails["license"] = emailDispatchResult{Sent: false, Error: fmt.Sprintf("failed to marshal license payload: %v", err)}
+		return emails
+	}
+	licenseSubject := fmt.Sprintf("%s license credentials", productLabel)
+	licenseTemplateData := EmailTemplateData{
+		ClientName:  clientLabel,
+		ProductName: productLabel,
+		Email:       client.Email,
+		LicenseJSON: string(licenseJSON),
+		SupportURL:  "https://support.example.com",
+		DocsURL:     "https://docs.example.com",
+	}
+	licenseHTML, err := s.emailTemplateLoader.RenderTemplate("license_email", licenseTemplateData)
+	if err != nil {
+		log.Printf("failed to render subscribe license email template: %v", err)
+		licenseHTML = fmt.Sprintf("<p>Hi %s,</p><p>Here are your license credentials. We have also attached <code>license.json</code>.</p><pre style=\"padding:12px;background:#0f172a;color:#e2e8f0;border-radius:8px;white-space:pre-wrap;\">%s</pre><p>Keep this file private and secure.</p><p>Thanks,<br/>The Licensing Team</p>", html.EscapeString(clientLabel), html.EscapeString(string(licenseJSON)))
+	}
+	licenseText := fmt.Sprintf("Hi %s,\n\nHere are your license credentials. We have also attached license.json.\n\nKeep this file private and secure.\n\nThanks,\nThe Licensing Team", clientLabel)
+	licenseAttachment := &email.EmailAttachment{
+		Filename:    "license.json",
+		ContentType: "application/json",
+		Data:        licenseJSON,
+		Size:        int64(len(licenseJSON)),
+	}
+	emails["license"] = s.sendOrQueueEmail(ctx, client.Email, licenseSubject, licenseHTML, licenseText, cloneStringMetadata(baseMetadata, "kind", "license_credentials"), []*email.EmailAttachment{licenseAttachment})
+	return emails
+}
+
+func (s *Server) sendOrQueueEmail(ctx context.Context, to, subject, htmlBody, textBody string, metadata map[string]string, attachments []*email.EmailAttachment) emailDispatchResult {
+	if res, err := s.sendEmailNow(ctx, to, subject, htmlBody, textBody, attachments); err == nil && res != nil {
+		return *res
+	} else if err != nil {
+		queued, queueErr := s.enqueueEmailWithAttachments(ctx, to, subject, htmlBody, textBody, metadata, attachments)
+		if queueErr != nil {
+			return emailDispatchResult{Sent: false, Error: fmt.Sprintf("%s; queue failed: %v", err.Error(), queueErr)}
+		}
+		return *queued
+	}
+	return emailDispatchResult{Sent: false, Error: "email send returned no result"}
+}
+
+func cloneStringMetadata(src map[string]string, extraKey, extraValue string) map[string]string {
+	dst := make(map[string]string, len(src)+1)
+	for k, v := range src {
+		dst[k] = v
+	}
+	if extraKey != "" {
+		dst[extraKey] = extraValue
+	}
+	return dst
+}
+
+func emailResultsSent(results map[string]emailDispatchResult) bool {
+	if len(results) == 0 {
+		return false
+	}
+	for _, res := range results {
+		if !res.Sent {
+			return false
+		}
+	}
+	return true
 }
 
 func (s *Server) handleSubscriptions(w http.ResponseWriter, r *http.Request) {
@@ -2897,8 +3404,19 @@ func (s *Server) handleProvisionLicense(w http.ResponseWriter, r *http.Request) 
 		Size:        int64(len(licenseJSON)),
 	}
 
-	if res, err := s.sendEmailNow(ctx, client.Email, licenseSubject, licenseHTML, licenseText, []*email.EmailAttachment{licenseAttachment}); err != nil {
-		emails["license"] = emailDispatchResult{Sent: false, Error: err.Error()}
+	licenseAttachments := []*email.EmailAttachment{licenseAttachment}
+	if res, err := s.sendEmailNow(ctx, client.Email, licenseSubject, licenseHTML, licenseText, licenseAttachments); err != nil {
+		queued, queueErr := s.enqueueEmailWithAttachments(ctx, client.Email, licenseSubject, licenseHTML, licenseText, map[string]string{
+			"kind":       "license_credentials",
+			"client_id":  client.ID,
+			"license_id": license.ID,
+			"product_id": license.ProductID,
+		}, licenseAttachments)
+		if queueErr != nil {
+			emails["license"] = emailDispatchResult{Sent: false, Error: fmt.Sprintf("%s; queue failed: %v", err.Error(), queueErr)}
+		} else {
+			emails["license"] = *queued
+		}
 		log.Printf("failed to send license email for %s: %v", client.Email, err)
 	} else {
 		emails["license"] = *res
@@ -3221,7 +3739,64 @@ func (s *Server) handleAuditComplianceReport(w http.ResponseWriter, r *http.Requ
 		s.respondError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	if s.metrics != nil && s.metrics.auditWriteFailures.Load() > 0 {
+		report.Violations = append(report.Violations, audit.ComplianceViolation{
+			ID:          fmt.Sprintf("audit-write-failures-%d", time.Now().Unix()),
+			Type:        "audit_write_failures",
+			Severity:    audit.SeverityError,
+			Description: fmt.Sprintf("Audit write failures observed by this process: %d", s.metrics.auditWriteFailures.Load()),
+			Timestamp:   time.Now().UTC(),
+			Remediation: "Inspect audit storage health, disk permissions, and database availability; treat missing audit writes as a compliance incident.",
+		})
+		report.Recommendations = append(report.Recommendations, "Investigate audit write failures and verify the audit chain after storage recovery.")
+	}
 	s.respondJSON(w, http.StatusOK, report)
+}
+
+func (s *Server) handleAuditVerify(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		s.respondError(w, http.StatusMethodNotAllowed, "Method not allowed")
+		return
+	}
+	if !s.enforceRateLimit(w, r) {
+		return
+	}
+	if !s.authorizeAdmin(w, r) {
+		return
+	}
+	if s.auditLogger == nil {
+		s.respondError(w, http.StatusServiceUnavailable, "audit logger is not enabled")
+		return
+	}
+	limit := 5000
+	if raw := strings.TrimSpace(r.URL.Query().Get("limit")); raw != "" {
+		if parsed, err := strconv.Atoi(raw); err == nil && parsed > 0 && parsed <= 50000 {
+			limit = parsed
+		}
+	}
+	filter := &audit.AuditFilter{Limit: limit}
+	events, err := s.auditLogger.Query(r.Context(), filter)
+	if err != nil {
+		s.respondError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	for i, j := 0, len(events)-1; i < j; i, j = i+1, j-1 {
+		events[i], events[j] = events[j], events[i]
+	}
+	valid, errors := s.auditLogger.VerifyChain(r.Context(), events)
+	if errors == nil {
+		errors = []string{}
+	}
+	status := http.StatusOK
+	if !valid {
+		status = http.StatusConflict
+	}
+	s.respondJSON(w, status, map[string]any{
+		"valid":   valid,
+		"errors":  errors,
+		"checked": len(events),
+		"limit":   limit,
+	})
 }
 
 func (s *Server) handleClients(w http.ResponseWriter, r *http.Request) {
@@ -3685,6 +4260,7 @@ func (s *Server) Start() error {
 	mux.HandleFunc("/api/admin/api-keys/", s.handleAdminAPIKeyActions)
 	mux.HandleFunc("/api/admin/audit", s.handleAuditLogs)
 	mux.HandleFunc("/api/admin/audit/compliance", s.handleAuditComplianceReport)
+	mux.HandleFunc("/api/admin/audit/verify", s.handleAuditVerify)
 	mux.HandleFunc("/api/admin/signing-keys", s.handleAdminSigningKeys)
 	mux.HandleFunc("/api/admin/signing-keys/", s.handleAdminSigningKeyActions)
 	mux.HandleFunc("/api/admin/licenses/provision", s.handleProvisionLicense)
@@ -3755,6 +4331,8 @@ func (s *Server) Start() error {
 		return fmt.Errorf("tls required: set LICENSE_SERVER_TLS_CERT/KEY or start with --allow-insecure-http for development")
 	}
 	log.Printf("🌐 Listening on %s://%s", scheme, displayAddr)
+	s.startEmailQueueWorker()
+	defer s.stopEmailQueueWorker()
 	if useTLS {
 		tlsConfig, err := s.buildTLSConfig()
 		if err != nil {
@@ -3763,6 +4341,10 @@ func (s *Server) Start() error {
 		server.TLSConfig = tlsConfig
 		return server.ListenAndServeTLS(s.tlsCertPath, s.tlsKeyPath)
 	}
-	log.Printf("WARNING: starting licensing server without TLS; traffic will be unencrypted")
+	if envBoolDefault("LICENSE_SERVER_TLS_TERMINATED_BY_PROXY", false) {
+		log.Printf("🌐 Local TLS disabled because LICENSE_SERVER_TLS_TERMINATED_BY_PROXY=true; ensure NPM forwards only trusted HTTPS traffic")
+	} else {
+		log.Printf("WARNING: starting licensing server without TLS; traffic will be unencrypted")
+	}
 	return server.ListenAndServe()
 }

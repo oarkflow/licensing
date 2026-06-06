@@ -24,7 +24,7 @@ rm /var/lib/licensing/licensing.db
 # restart the server; it will create the new schema on boot
 ```
 
-Next, recreate demo data or import clients through the admin APIs.
+Next, create catalog/client data through the Admin UI/API or run explicit SQL seed files.
 
 ### Option B: In-Place Migration
 

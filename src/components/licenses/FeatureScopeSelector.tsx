@@ -2,7 +2,6 @@ import { memo, useCallback, useEffect, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { ShieldCheck, Ban, RefreshCw, Search, X, ChevronDown, ChevronUp } from 'lucide-react';
 import type { FeatureScopeSelection, ScopePermissionValue, ScopeSelection } from '@/types/api';
-import { cliScopes, guiScopes, apiScopes, type CategorizedScopes, type ScopeDefinition } from '@/data/menuData';
 import { slugToLabel } from '@/lib/entitlements';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -28,15 +27,8 @@ const emptyCopy: Record<FeatureCategory, string> = {
     other: 'No uncategorized features available yet.',
 };
 
-const catalogByFeatureSlug: Record<'cli' | 'gui' | 'api', CategorizedScopes> = {
-    cli: cliScopes,
-    gui: guiScopes,
-    api: apiScopes,
-};
-
 interface ScopeGroupEntry {
     selection: ScopeSelection;
-    definition?: ScopeDefinition;
 }
 
 interface ScopeGroup {
@@ -61,40 +53,13 @@ function buildScopeGroups(featureSlug: string, scopes?: ScopeSelection[]): Scope
         return [];
     }
 
-    const catalog = catalogByFeatureSlug[featureSlug as keyof typeof catalogByFeatureSlug];
-    if (!catalog) {
-        return [
-            {
-                title: 'Scopes',
-                scopes: scopes.map((selection) => ({ selection })),
-            },
-        ];
-    }
-
-    const scopeMap = new Map(scopes.map((scope) => [scope.scope_slug, scope]));
-    const consumed = new Set<string>();
-    const groups: ScopeGroup[] = [];
-
-    Object.entries(catalog).forEach(([groupTitle, definitions]) => {
-        const matches: ScopeGroupEntry[] = [];
-        definitions.forEach((definition) => {
-            const selection = scopeMap.get(definition.slug);
-            if (selection) {
-                consumed.add(selection.scope_slug);
-                matches.push({ selection, definition });
-            }
-        });
-        if (matches.length > 0) {
-            groups.push({ title: groupTitle, scopes: matches });
-        }
+    const groups = new Map<string, ScopeGroupEntry[]>();
+    scopes.forEach((selection) => {
+        const title = selection.metadata?.category || selection.metadata?.group || slugToLabel(featureSlug) || 'Scopes';
+        groups.set(title, [...(groups.get(title) || []), { selection }]);
     });
 
-    const remainder = scopes.filter((scope) => !consumed.has(scope.scope_slug));
-    if (remainder.length > 0) {
-        groups.push({ title: 'Other', scopes: remainder.map((selection) => ({ selection })) });
-    }
-
-    return groups;
+    return Array.from(groups.entries()).map(([title, groupScopes]) => ({ title, scopes: groupScopes }));
 }
 
 function buildCategorizedFeatures(selections: FeatureScopeSelection[]): CategorizedFeatureMap {
@@ -133,10 +98,10 @@ function filterGroupsAndScopes(groups: ScopeGroup[], searchTerm: string): ScopeG
             if (groupMatches) {
                 return group;
             }
-            const filteredScopes = group.scopes.filter(({ selection, definition }) => {
-                const scopeName = (definition?.name ?? slugToLabel(selection.scope_slug)).toLowerCase();
+            const filteredScopes = group.scopes.filter(({ selection }) => {
+                const scopeName = (selection.metadata?.name ?? selection.metadata?.label ?? slugToLabel(selection.scope_slug)).toLowerCase();
                 const scopeSlug = selection.scope_slug.toLowerCase();
-                const scopeDesc = definition?.description?.toLowerCase() ?? '';
+                const scopeDesc = selection.metadata?.description?.toLowerCase() ?? '';
                 return scopeName.includes(query) || scopeSlug.includes(query) || scopeDesc.includes(query);
             });
             if (filteredScopes.length > 0) {
@@ -350,17 +315,17 @@ export const FeatureScopeSelector = memo(function FeatureScopeSelector({
                                                     </Badge>
                                                 </div>
                                                 <div className="grid gap-2 lg:grid-cols-2 2xl:grid-cols-3">
-                                                    {group.scopes.map(({ selection, definition }) => (
+                                                    {group.scopes.map(({ selection }) => (
                                                         <div
                                                             key={`${feature.feature_slug}-${selection.scope_slug}`}
                                                             className="flex min-w-0 items-center justify-between gap-3 border-y border-border bg-background px-3 py-2"
                                                         >
                                                             <div className="space-y-1">
                                                                 <p className="text-sm font-medium">
-                                                                    {definition?.name ?? slugToLabel(selection.scope_slug)}
+                                                                    {selection.metadata?.name ?? selection.metadata?.label ?? slugToLabel(selection.scope_slug)}
                                                                 </p>
-                                                                {definition?.description ? (
-                                                                    <p className="text-xs text-muted-foreground">{definition.description}</p>
+                                                                {selection.metadata?.description ? (
+                                                                    <p className="text-xs text-muted-foreground">{selection.metadata.description}</p>
                                                                 ) : null}
                                                                 <div className="flex flex-wrap gap-2">
                                                                     {selection.permission === 'limit' && selection.limit ? (
@@ -368,9 +333,9 @@ export const FeatureScopeSelector = memo(function FeatureScopeSelector({
                                                                             Limit {selection.limit}
                                                                         </Badge>
                                                                     ) : null}
-                                                                    {definition?.minPlan ? (
+                                                                    {selection.metadata?.min_plan ? (
                                                                         <Badge variant="outline" className="text-[10px] uppercase tracking-tight">
-                                                                            Min {definition.minPlan}
+                                                                            Min {selection.metadata.min_plan}
                                                                         </Badge>
                                                                     ) : null}
                                                                 </div>

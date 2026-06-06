@@ -185,8 +185,8 @@ Request body:
   "license_key": "XXXXX-...",
   "email": "user@example.com",
   "client_id": "client-id",
-  "product_id": "appvault",
-  "feature": "appvault.runtime",
+  "product_id": "your-product-id",
+  "feature": "your-runtime-feature",
   "bundle": {
     "app_id": "laravel-app",
     "bundle_id": "appvault-laravel-app-alice-darwin-arm64-docker"
@@ -200,9 +200,11 @@ Response body:
 { "bundle_key_base64": "..." }
 ```
 
-The server requires `LICENSE_SERVER_APPVAULT_KEY_SECRET`. It uses that secret as
-the HMAC-SHA256 key over the AppVault v1 derivation identity, including the
-license, product, feature, and bundle identity. The endpoint validates that the
+The server requires `LICENSE_SERVER_APPVAULT_KEY_SECRET`. The entitlement feature
+must be supplied as request `feature` or configured as `LICENSE_SERVER_APPVAULT_FEATURE`;
+the server does not create or assume a built-in AppVault feature. It uses the
+secret as the HMAC-SHA256 key over the AppVault v1 derivation identity, including
+the license, product, feature, and bundle identity. The endpoint validates that the
 license exists, is not revoked or expired, matches the supplied client/email
 when present, matches the product id or slug, and has the enabled entitlement
 feature. Runtime requests that include a device fingerprint must match an

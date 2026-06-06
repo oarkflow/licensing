@@ -2,7 +2,7 @@
 
 ## Overview
 
-Your licensing system now has **bank-grade security** suitable for enterprises, financial institutions, and high-security environments. This document summarizes the security enhancements implemented.
+Your licensing system now has multiple security controls suitable for serious deployments once the operational hardening runbook has been completed. This document summarizes the security enhancements implemented.
 
 ## 🔒 Security Components Implemented
 
@@ -481,7 +481,7 @@ For enterprise deployments, consider:
 
 ## ✅ What You Have Now
 
-A **production-ready, enterprise-grade licensing system** with:
+A licensing system with:
 
 - 🔐 Bank-level cryptography (Ed25519, AES-256-GCM)
 - 📝 Immutable audit trails with event chaining

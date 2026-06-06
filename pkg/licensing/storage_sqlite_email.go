@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	email "github.com/oarkflow/licensing/pkg/email"
 	"github.com/oarkflow/squealx"
 )
@@ -473,37 +474,38 @@ func (s *SQLiteStorage) EnqueueEmail(ctx context.Context, msg *email.EmailMessag
 		return err
 	}
 
-	query := `INSERT INTO email_messages
+	return s.withTx(ctx, func(tx squealx.SQLTx) error {
+		query := `INSERT INTO email_messages
         (id, template_id, provider_id, to_address, cc, bcc, subject, rendered_html, rendered_text,
          variables, metadata, status, retry_count, failover_count, max_retries, last_error,
          next_attempt_at, last_attempt_at, created_at, updated_at)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-	_, err = s.db.ExecContext(ctx, query,
-		msg.ID,
-		templateID,
-		providerID,
-		msg.To,
-		ccJSON,
-		bccJSON,
-		msg.Subject,
-		msg.RenderedHTML,
-		msg.RenderedText,
-		variablesJSON,
-		metadataJSON,
-		msg.Status,
-		msg.RetryCount,
-		msg.FailoverCount,
-		msg.MaxRetries,
-		msg.LastError,
-		msg.NextAttemptAt,
-		sql.NullTime{Time: msg.LastAttemptAt, Valid: !msg.LastAttemptAt.IsZero()},
-		msg.CreatedAt,
-		msg.UpdatedAt,
-	)
-	if err != nil {
-		return err
-	}
-	return nil
+		if _, err := tx.ExecContext(ctx, query,
+			msg.ID,
+			templateID,
+			providerID,
+			msg.To,
+			ccJSON,
+			bccJSON,
+			msg.Subject,
+			msg.RenderedHTML,
+			msg.RenderedText,
+			variablesJSON,
+			metadataJSON,
+			msg.Status,
+			msg.RetryCount,
+			msg.FailoverCount,
+			msg.MaxRetries,
+			msg.LastError,
+			msg.NextAttemptAt,
+			sql.NullTime{Time: msg.LastAttemptAt, Valid: !msg.LastAttemptAt.IsZero()},
+			msg.CreatedAt,
+			msg.UpdatedAt,
+		); err != nil {
+			return err
+		}
+		return saveEmailAttachments(ctx, tx, msg.ID, msg.Attachments, now)
+	})
 }
 
 func (s *SQLiteStorage) UpdateEmailMessage(ctx context.Context, msg *email.EmailMessage) error {
@@ -535,33 +537,69 @@ func (s *SQLiteStorage) UpdateEmailMessage(ctx context.Context, msg *email.Email
             variables = ?, metadata = ?, status = ?, retry_count = ?, failover_count = ?, max_retries = ?, last_error = ?,
             next_attempt_at = ?, last_attempt_at = ?, updated_at = ?
         WHERE id = ?`
-	result, err := s.db.ExecContext(ctx, query,
-		msg.TemplateID,
-		providerID,
-		msg.To,
-		ccJSON,
-		bccJSON,
-		msg.Subject,
-		msg.RenderedHTML,
-		msg.RenderedText,
-		variablesJSON,
-		metadataJSON,
-		msg.Status,
-		msg.RetryCount,
-		msg.FailoverCount,
-		msg.MaxRetries,
-		msg.LastError,
-		msg.NextAttemptAt,
-		sql.NullTime{Time: msg.LastAttemptAt, Valid: !msg.LastAttemptAt.IsZero()},
-		msg.UpdatedAt,
-		msg.ID,
-	)
-	if err != nil {
-		return err
-	}
-	rows, _ := result.RowsAffected()
-	if rows == 0 {
-		return errEmailMessageMissing
+	return s.withTx(ctx, func(tx squealx.SQLTx) error {
+		result, err := tx.ExecContext(ctx, query,
+			msg.TemplateID,
+			providerID,
+			msg.To,
+			ccJSON,
+			bccJSON,
+			msg.Subject,
+			msg.RenderedHTML,
+			msg.RenderedText,
+			variablesJSON,
+			metadataJSON,
+			msg.Status,
+			msg.RetryCount,
+			msg.FailoverCount,
+			msg.MaxRetries,
+			msg.LastError,
+			msg.NextAttemptAt,
+			sql.NullTime{Time: msg.LastAttemptAt, Valid: !msg.LastAttemptAt.IsZero()},
+			msg.UpdatedAt,
+			msg.ID,
+		)
+		if err != nil {
+			return err
+		}
+		rows, _ := result.RowsAffected()
+		if rows == 0 {
+			return errEmailMessageMissing
+		}
+		if _, err := tx.ExecContext(ctx, `DELETE FROM email_attachments WHERE message_id = ?`, msg.ID); err != nil {
+			return err
+		}
+		return saveEmailAttachments(ctx, tx, msg.ID, msg.Attachments, msg.UpdatedAt)
+	})
+}
+
+func saveEmailAttachments(ctx context.Context, execer interface {
+	ExecContext(context.Context, string, ...any) (sql.Result, error)
+}, messageID string, attachments []*email.EmailAttachment, createdAt time.Time) error {
+	for _, att := range attachments {
+		if att == nil {
+			continue
+		}
+		filename := strings.TrimSpace(att.Filename)
+		if filename == "" {
+			return fmt.Errorf("email attachment filename is required")
+		}
+		contentType := strings.TrimSpace(att.ContentType)
+		if contentType == "" {
+			contentType = "application/octet-stream"
+		}
+		data := att.Data
+		size := att.Size
+		if size <= 0 {
+			size = int64(len(data))
+		}
+		if _, err := execer.ExecContext(ctx, `INSERT INTO email_attachments
+			(id, message_id, filename, content_type, data, size, created_at)
+			VALUES (?, ?, ?, ?, ?, ?, ?)`,
+			uuid.NewString(), messageID, filename, contentType, data, size, createdAt,
+		); err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -576,6 +614,9 @@ func (s *SQLiteStorage) GetEmailMessage(ctx context.Context, messageID string) (
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, errEmailMessageMissing
 		}
+		return nil, err
+	}
+	if err := loadEmailAttachments(ctx, s.db, msg); err != nil {
 		return nil, err
 	}
 	return msg, nil
@@ -618,6 +659,9 @@ func (s *SQLiteStorage) LeaseNextEmail(ctx context.Context, dueBefore time.Time)
 		if err != nil {
 			return err
 		}
+		if err := loadEmailAttachments(ctx, tx, msg); err != nil {
+			return err
+		}
 		leased = msg
 		return nil
 	})
@@ -625,6 +669,32 @@ func (s *SQLiteStorage) LeaseNextEmail(ctx context.Context, dueBefore time.Time)
 		return nil, err
 	}
 	return leased, nil
+}
+
+func loadEmailAttachments(ctx context.Context, querier interface {
+	QueryContext(context.Context, string, ...any) (squealx.SQLRows, error)
+}, msg *email.EmailMessage) error {
+	if msg == nil {
+		return nil
+	}
+	rows, err := querier.QueryContext(ctx, `SELECT filename, content_type, data, size FROM email_attachments WHERE message_id = ? ORDER BY created_at ASC, id ASC`, msg.ID)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	var attachments []*email.EmailAttachment
+	for rows.Next() {
+		att := &email.EmailAttachment{}
+		if err := rows.Scan(&att.Filename, &att.ContentType, &att.Data, &att.Size); err != nil {
+			return err
+		}
+		attachments = append(attachments, att)
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	msg.Attachments = attachments
+	return nil
 }
 
 func (s *SQLiteStorage) AppendEmailEvent(ctx context.Context, event *email.EmailEvent) error {
@@ -805,6 +875,7 @@ func scanEmailTemplateRoute(scanner rowScanner) (*email.EmailTemplateRoute, erro
 func scanEmailMessage(scanner rowScanner) (*email.EmailMessage, error) {
 	var (
 		msg           email.EmailMessage
+		templateID    sql.NullString
 		providerID    sql.NullString
 		ccJSON        sql.NullString
 		bccJSON       sql.NullString
@@ -818,7 +889,7 @@ func scanEmailMessage(scanner rowScanner) (*email.EmailMessage, error) {
 	)
 	if err := scanner.Scan(
 		&msg.ID,
-		&msg.TemplateID,
+		&templateID,
 		&providerID,
 		&msg.To,
 		&ccJSON,
@@ -839,6 +910,9 @@ func scanEmailMessage(scanner rowScanner) (*email.EmailMessage, error) {
 		&updatedAt,
 	); err != nil {
 		return nil, err
+	}
+	if templateID.Valid {
+		msg.TemplateID = templateID.String
 	}
 	if providerID.Valid {
 		msg.ProviderID = providerID.String

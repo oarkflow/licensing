@@ -8,6 +8,7 @@ import (
 
 func TestValidateDistributionLicense(t *testing.T) {
 	t.Parallel()
+	cfg := distributionLicenseConfig{ProductID: "product-runtime", FeatureSlug: "runtime.start"}
 
 	tests := map[string]struct {
 		productID  string
@@ -17,43 +18,43 @@ func TestValidateDistributionLicense(t *testing.T) {
 		wantErr    string
 	}{
 		"valid": {
-			productID: distributionProductID,
+			productID: cfg.ProductID,
 			hasFeature: func(slug string) bool {
-				return slug == distributionFeatureSlug
+				return slug == cfg.FeatureSlug
 			},
 		},
 		"wrong product": {
-			productID: "secretr",
+			productID: "other-product",
 			hasFeature: func(slug string) bool {
-				return slug == distributionFeatureSlug
+				return slug == cfg.FeatureSlug
 			},
 			wantErr: "product",
 		},
 		"revoked": {
-			productID: distributionProductID,
+			productID: cfg.ProductID,
 			revoked:   true,
 			hasFeature: func(slug string) bool {
-				return slug == distributionFeatureSlug
+				return slug == cfg.FeatureSlug
 			},
 			wantErr: "revoked",
 		},
 		"expired": {
-			productID: distributionProductID,
+			productID: cfg.ProductID,
 			expiresAt: time.Now().Add(-time.Hour),
 			hasFeature: func(slug string) bool {
-				return slug == distributionFeatureSlug
+				return slug == cfg.FeatureSlug
 			},
 			wantErr: "expired",
 		},
 		"missing feature": {
-			productID: distributionProductID,
+			productID: cfg.ProductID,
 			hasFeature: func(string) bool {
 				return false
 			},
 			wantErr: "feature",
 		},
 		"nil feature checker": {
-			productID: distributionProductID,
+			productID: cfg.ProductID,
 			wantErr:   "feature",
 		},
 	}
@@ -61,7 +62,7 @@ func TestValidateDistributionLicense(t *testing.T) {
 	for name, tt := range tests {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
-			err := validateDistributionLicense(tt.productID, tt.revoked, tt.expiresAt, tt.hasFeature)
+			err := validateDistributionLicense(cfg, tt.productID, tt.revoked, tt.expiresAt, tt.hasFeature)
 			if tt.wantErr == "" {
 				if err != nil {
 					t.Fatalf("expected valid license, got %v", err)
@@ -72,5 +73,23 @@ func TestValidateDistributionLicense(t *testing.T) {
 				t.Fatalf("expected error containing %q, got %v", tt.wantErr, err)
 			}
 		})
+	}
+}
+
+func TestLoadDistributionLicenseConfigRequiresEnv(t *testing.T) {
+	t.Setenv(distributionProductIDEnv, "")
+	t.Setenv(distributionFeatureSlugEnv, "")
+	if _, err := loadDistributionLicenseConfig(); err == nil {
+		t.Fatal("expected missing env to fail")
+	}
+
+	t.Setenv(distributionProductIDEnv, "product-runtime")
+	t.Setenv(distributionFeatureSlugEnv, "runtime.start")
+	cfg, err := loadDistributionLicenseConfig()
+	if err != nil {
+		t.Fatalf("expected config to load: %v", err)
+	}
+	if cfg.ProductID != "product-runtime" || cfg.FeatureSlug != "runtime.start" {
+		t.Fatalf("unexpected config: %+v", cfg)
 	}
 }

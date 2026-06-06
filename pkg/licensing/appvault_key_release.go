@@ -12,8 +12,8 @@ import (
 )
 
 const (
-	appVaultDefaultFeature = "appvault.runtime"
-	appVaultKeySecretEnv   = "LICENSE_SERVER_APPVAULT_KEY_SECRET"
+	appVaultFeatureEnv   = "LICENSE_SERVER_APPVAULT_FEATURE"
+	appVaultKeySecretEnv = "LICENSE_SERVER_APPVAULT_KEY_SECRET"
 )
 
 type AppVaultBundleIdentity struct {
@@ -51,7 +51,10 @@ func (lm *LicenseManager) ReleaseAppVaultBundleKey(ctx context.Context, req AppV
 	}
 	featureSlug := strings.TrimSpace(req.Feature)
 	if featureSlug == "" {
-		featureSlug = appVaultDefaultFeature
+		featureSlug = strings.TrimSpace(os.Getenv(appVaultFeatureEnv))
+	}
+	if featureSlug == "" {
+		return nil, fmt.Errorf("feature is required; set request feature or %s", appVaultFeatureEnv)
 	}
 	license, err := lm.storage.GetLicenseByKey(ctx, req.LicenseKey)
 	if err != nil {

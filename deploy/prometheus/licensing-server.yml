@@ -1,0 +1,10 @@
+scrape_configs:
+  - job_name: licensing-server
+    scheme: https
+    metrics_path: /metrics
+    static_configs:
+      - targets:
+          - licensing.example.com:6601
+    tls_config:
+      # Prefer a trusted CA in production. Set this only for private/self-signed rehearsals.
+      insecure_skip_verify: false

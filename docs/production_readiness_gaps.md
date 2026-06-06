@@ -1,7 +1,7 @@
 # Production Readiness Gap Analysis
 
 ## Current Snapshot
-- `cmd/main.go` wires the HTTP server, builds storage from env, and unconditionally seeds demo clients/licenses every start.
+- `cmd/main.go` wires the HTTP server and builds storage from env without creating catalog data.
 - `pkg/licensing/server.go` exposes activation, verification, basic admin CRUD, and rate-limited health endpoints protected only by `X-API-Key`.
 - `pkg/licensing/storage.go` provides an in-memory map or JSON snapshot file; there is no transactional database, migrations, or multi-node coordination.
 - The CLI (`client/app.go`, `pkg/client`) handles activation/verification and wraps an example HTTP server but lacks packaging, background renewal, or secure OS-specific storage.
@@ -15,7 +15,6 @@
 | TLS is optional and defaults to HTTP; admin/API secrets are taken directly from env vars with no rotation or vault integration. | Plaintext traffic and leaked env vars expose licenses and admin privileges. | Require TLS by default, support ACME/Let's Encrypt, hot-reload certs, integrate with secret managers (HashiCorp Vault, AWS/GCP secrets), and add automatic rotation policies. | `cmd/main.go` (TLS env handling) |
 | Admin access relies solely on a shared `X-API-Key`; `AdminUser` passwords are never used and there is no RBAC, MFA, or session management. | No per-user accountability, impossible to grant least privilege, keys cannot be scoped or revoked individually. | Implement real login/token issuance, scoped API keys tied to roles, MFA support, and per-endpoint authorization policies; expose CRUD for admin users via secure flows. | `pkg/licensing/server.go` (`authorizeAdmin`, admin handlers) |
 | There is no tamper-proof audit log for admin mutations, license changes, or authentication attempts; only activation attempts are recorded in storage. | Breach investigations, compliance reviews, and anomaly detection are impossible. | Persist append-only audit events (e.g., to Postgres, Cloud Logging, or immutability service) for every admin/API action with request metadata and signatures. | `pkg/licensing/license_manager.go` (`recordActivationAttempt` only covers activations) |
-| The server unconditionally seeds demo clients/licenses on startup. | Production data can be overwritten or polluted; operators cannot distinguish seed/test records. | Move seeding into a separate command or gate it behind an explicit `LICENSE_SERVER_BOOTSTRAP_DEMO=true` flag. | `cmd/main.go` ("Creating demo clients and licenses") |
 
 ## Priority 1 (High Value)
 

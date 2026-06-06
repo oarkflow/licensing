@@ -1,0 +1,15 @@
+[Unit]
+Description=Create an online SQLite backup for Licensing Server
+Wants=licensing.service
+
+[Service]
+Type=oneshot
+User=licensing
+Group=licensing
+Environment=LICENSE_SERVER_BACKUP_MARKER_FILE=/var/backups/licensing/latest.json
+ExecStart=/usr/local/bin/licensing-backup-sqlite /var/lib/licensing/licensing.db /var/backups/licensing 30
+PrivateTmp=true
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/licensing /var/backups/licensing

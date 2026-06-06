@@ -2,7 +2,7 @@
 
 ## ✅ Implementation Status
 
-All security components have been successfully implemented for enterprise-grade, tamper-proof licensing system.
+Core security components have been implemented. Production use still requires the operational controls in `docs/PRODUCTION_SQLITE_RUNBOOK.md`, including deployment rehearsal, backups, audit verification, and monitoring.
 
 ### Core Components
 
@@ -171,21 +171,11 @@ backend/pkg/
 ### Quick Setup
 
 ```bash
-# Navigate to backend
-cd backend
-
-# Run secure setup script
-chmod +x scripts/setup_secure.sh
-./scripts/setup_secure.sh
-
-# This will:
-# - Create directory structure
-# - Generate encryption keys
-# - Generate signing keys
-# - Create TLS certificates
-# - Initialize database
-# - Create configuration files
+make single-node-prepare
+make single-node-check
 ```
+
+For production operations, follow `docs/PRODUCTION_SQLITE_RUNBOOK.md`.
 
 ### Using the Secure Server
 
@@ -333,12 +323,12 @@ This implementation is suitable for:
 
 ### Backups
 ```bash
-# Run backup script
-./backup.sh
-
-# Backups stored in /opt/licensing/backups
-# Automatically rotates, keeping last 7 backups
+make backup-sqlite SQLITE_DB=/data/licensing.db BACKUP_DIR=/backups
+make restore-sqlite-verify BACKUP_FILE=/backups/licensing.db.20260606T000000Z.bak SQLITE_DB=/data/licensing.db
 ```
+
+Backup scheduling, retention, and restore drills are documented in
+`docs/PRODUCTION_SQLITE_RUNBOOK.md`.
 
 ### Health Checks
 ```bash
@@ -379,7 +369,7 @@ All code is documented with:
 
 ## 🎉 Summary
 
-You now have a **production-ready, enterprise-grade, tamper-proof licensing system** with:
+You now have a licensing system with:
 
 - ✅ Military-grade cryptography
 - ✅ Comprehensive audit logging

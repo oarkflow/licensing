@@ -1,8 +1,8 @@
-# 🔐 Enterprise-Grade Secure Licensing System
+# Secure Licensing System
 
-## ✅ Implementation Complete
+## Implementation Status
 
-A **production-ready, tamper-proof, auditable licensing system** suitable for banks, enterprises, healthcare, government, and any high-security environment.
+This repository includes strong licensing, audit, and integrity controls. Treat production readiness as an operational state: complete the hardening checks, deployment rehearsal, backups, audit verification, and monitoring in `docs/PRODUCTION_SQLITE_RUNBOOK.md` before using it for customer production workloads.
 
 ## 🎯 What You Have
 
@@ -107,17 +107,13 @@ Expected output: `✓ All components verified!`
 ### 2. Setup Security Infrastructure
 
 ```bash
-# Run automated setup
-./scripts/setup_secure.sh
-
-# This creates:
-# - Directory structure (/opt/licensing/{data,keys,certs,logs,backups})
-# - Encryption keys (AES-256)
-# - Signing keys (Ed25519)
-# - TLS certificates
-# - Environment configuration
-# - Database schema
+make single-node-prepare
+make single-node-check
 ```
+
+Use `docs/PRODUCTION_SQLITE_RUNBOOK.md` as the production source of truth.
+`scripts/setup_secure.sh` is retained only as an older reference script and
+should not be used as the deployment path for new installs.
 
 ### 3. Configure Environment
 
@@ -241,7 +237,7 @@ Comprehensive guides available:
 
 ## 🎯 Use Cases
 
-This system is production-ready for:
+After the production runbook is completed and rehearsed, this system can be evaluated for:
 
 ### ✅ Financial Services
 - Banking applications
@@ -303,12 +299,12 @@ This system is production-ready for:
 
 ### Backups
 ```bash
-# Run backup script
-./scripts/backup.sh
-
-# Automated rotation (keeps last 7)
-# Includes: database, keys, configuration
+make backup-sqlite SQLITE_DB=/data/licensing.db BACKUP_DIR=/backups
+make restore-sqlite-verify BACKUP_FILE=/backups/licensing.db.20260606T000000Z.bak SQLITE_DB=/data/licensing.db
 ```
+
+Use `scripts/backup_sqlite.sh` for online SQLite backups and verify restores as
+described in `docs/PRODUCTION_SQLITE_RUNBOOK.md`.
 
 ### Health Monitoring
 ```bash
@@ -439,7 +435,7 @@ All code is thoroughly documented:
 
 ## 🎉 Summary
 
-You now have a **battle-tested, production-ready, enterprise-grade** licensing system with:
+You now have a licensing system with important security controls, including:
 
 - ✅ **Military-grade cryptography** (Ed25519, RSA-PSS, AES-256-GCM)
 - ✅ **Comprehensive audit logging** (immutable, signed, chained)

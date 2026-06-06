@@ -252,19 +252,19 @@ If you omit the wrapped command the client simply verifies the license and exits
 | Mode | Flow | When to use | Example |
 | --- | --- | --- | --- |
 | `auto` | Runs verification if a license already exists. Otherwise falls back to the interactive prompt. | Production defaults where you want to reuse existing activations but still allow manual entry. | `go run ./client --activation-mode auto` |
-| `prompt` | Always prompt for email, license key, and client ID. | Local development, demos, or manual activation scripts. | `go run ./client --activation-mode prompt --server-url https://licensing.example.com` |
+| `prompt` | Always prompt for email, license key, and client ID. | Local development, examples, or manual activation scripts. | `go run ./client --activation-mode prompt --server-url https://licensing.example.com` |
 | `verify` | Only verifies an already-activated license; never prompts, uses env credentials, or runs the wrapped command. | Hardened production startups where activations happen during image build time. | `go run ./client --activation-mode verify --config-dir /var/lib/myapp-licenses` |
 
 ### Exercising Each Mode
 
 Use the new flags to test every path without touching code:
 
-1. **Auto (default layering demo):**
+1. **Auto (default layering example):**
    ```bash
    go run ./client \
      --activation-mode auto \
      --config-dir /tmp/myapp-licenses \
-     --license-file demo.lic \
+     --license-file activation.json \
      --server-url http://localhost:8080
    ```
    Verifies existing licenses, then prompts as a last resort.

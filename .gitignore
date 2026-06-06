@@ -28,3 +28,20 @@ dist-ssr
 *.sln
 *.sw?
 *.tsbuildinfo
+
+# Local databases and operator state
+*.db
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite-wal
+*.sqlite-shm
+licensing.db
+data/
+backups/
+runtime/
+.env.single-node
+*.bak
+*.sha256
+.migrator/
+migrate.state*

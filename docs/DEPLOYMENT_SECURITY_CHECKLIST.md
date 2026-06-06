@@ -310,10 +310,10 @@ curl -X DELETE https://api.example.com/api/v1/users/123/data
 **Verification Commands:**
 ```bash
 # Test backup
-./backup.sh
+make backup-sqlite SQLITE_DB=/data/licensing.db BACKUP_DIR=/backups
 
 # Test restore
-./restore.sh --dry-run
+make restore-sqlite-verify BACKUP_FILE=/backups/licensing.db.20260606T000000Z.bak SQLITE_DB=/tmp/licensing-restore.db
 
 # Verify backup encryption
 gpg --decrypt backup.gpg > /dev/null

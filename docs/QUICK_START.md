@@ -2,7 +2,7 @@
 
 ## ✅ What Has Been Implemented
 
-Your licensing system now has **enterprise-grade security** with the following components:
+Your licensing system now has several security controls with the following components:
 
 ### 1. **Cryptographic Security** (backend/pkg/crypto/)
 - ✅ Ed25519 & RSA-PSS digital signatures
@@ -336,7 +336,7 @@ newSigner, _ := crypto.NewEd25519Signer("key-v2")
 
 ## ✅ Success Criteria
 
-You're ready for production when:
+You're ready for production review when:
 
 - ✅ All tests pass
 - ✅ Audit logging captures all events
@@ -345,10 +345,12 @@ You're ready for production when:
 - ✅ Access control enforced
 - ✅ Security monitoring active
 - ✅ Documentation complete
+- ✅ `docs/PRODUCTION_SQLITE_RUNBOOK.md` completed and rehearsed
+- ✅ Backups, restore drills, audit verification, and monitoring are owned by operators
 
 ## 🎉 You Now Have
 
-A **production-ready, bank-grade licensing system** that can handle:
+A licensing system that can be prepared for:
 - ✅ Enterprises
 - ✅ Financial institutions
 - ✅ Healthcare applications

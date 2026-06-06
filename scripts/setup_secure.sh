@@ -1,7 +1,8 @@
 #!/bin/bash
 
-# Secure License Server Setup Script
-# This script initializes all security components for production deployment
+# Legacy secure setup reference.
+# New single-node SQLite deployments should use docs/PRODUCTION_SQLITE_RUNBOOK.md
+# and scripts/local_single_node_setup.sh instead.
 
 set -e
 

@@ -3,7 +3,6 @@ package web
 import (
 	"context"
 	"encoding/json"
-	"log"
 	"net/http"
 	"sort"
 	"strings"
@@ -304,9 +303,6 @@ func (ws *WebServer) createPlan(w http.ResponseWriter, r *http.Request, ctx cont
 	if err := ws.lm.Storage().SavePlan(ctx, plan); err != nil {
 		ws.respondAPIError(w, http.StatusBadRequest, err.Error())
 		return
-	}
-	if plan.IsTrial {
-		ws.seedTrialPlanFeatures(ctx, plan)
 	}
 	ws.respondJSON(w, http.StatusCreated, plan)
 }
@@ -887,38 +883,5 @@ func (ws *WebServer) handleAPIProductFeatureScopeDetail(w http.ResponseWriter, r
 		w.WriteHeader(http.StatusNoContent)
 	default:
 		ws.respondAPIError(w, http.StatusMethodNotAllowed, "Method not allowed")
-	}
-}
-
-func (ws *WebServer) seedTrialPlanFeatures(ctx context.Context, plan *licensing.Plan) {
-	features, err := ws.lm.Storage().ListFeaturesByProduct(ctx, plan.ProductID)
-	if err != nil {
-		log.Printf("failed to list features for trial plan: %v", err)
-		return
-	}
-	now := time.Now()
-	for _, feature := range features {
-		pf := &licensing.PlanFeature{
-			ID:        uuid.New().String(),
-			PlanID:    plan.ID,
-			FeatureID: feature.ID,
-			Enabled:   true,
-			CreatedAt: now,
-			UpdatedAt: now,
-		}
-		scopes, err := ws.lm.Storage().ListFeatureScopes(ctx, feature.ID)
-		if err == nil && len(scopes) > 0 {
-			overrides := make(map[string]licensing.ScopeOverride, len(scopes))
-			for _, scope := range scopes {
-				overrides[scope.Slug] = licensing.ScopeOverride{
-					Permission: licensing.ScopePermissionAllow,
-					Limit:      scope.Limit,
-				}
-			}
-			pf.ScopeOverrides = overrides
-		}
-		if err := ws.lm.Storage().SavePlanFeature(ctx, pf); err != nil {
-			log.Printf("failed to seed trial plan feature %s: %v", feature.ID, err)
-		}
 	}
 }

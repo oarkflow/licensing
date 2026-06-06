@@ -61,6 +61,23 @@ func configureSQLite(db *squealx.DB) error {
 	return db.Ping()
 }
 
+func (s *SQLiteStorage) HealthCheck(ctx context.Context) error {
+	if s == nil || s.db == nil {
+		return fmt.Errorf("sqlite storage is not initialized")
+	}
+	if err := s.db.PingContext(ctx); err != nil {
+		return err
+	}
+	var result string
+	if err := s.db.QueryRowContext(ctx, "PRAGMA quick_check;").Scan(&result); err != nil {
+		return err
+	}
+	if !strings.EqualFold(strings.TrimSpace(result), "ok") {
+		return fmt.Errorf("sqlite quick_check failed: %s", result)
+	}
+	return nil
+}
+
 func ensureSQLiteSchema(db *squealx.DB) error {
 	stmts := []string{
 		`CREATE TABLE IF NOT EXISTS clients (
@@ -267,6 +284,16 @@ func ensureSQLiteSchema(db *squealx.DB) error {
 		);`,
 		`CREATE INDEX IF NOT EXISTS idx_email_messages_status_next_attempt ON email_messages(status, next_attempt_at);`,
 		`CREATE INDEX IF NOT EXISTS idx_email_messages_template ON email_messages(template_id);`,
+		`CREATE TABLE IF NOT EXISTS email_attachments (
+			id TEXT PRIMARY KEY,
+			message_id TEXT NOT NULL REFERENCES email_messages(id) ON DELETE CASCADE,
+			filename TEXT NOT NULL,
+			content_type TEXT NOT NULL,
+			data BLOB NOT NULL,
+			size INTEGER NOT NULL DEFAULT 0,
+			created_at TIMESTAMP NOT NULL
+		);`,
+		`CREATE INDEX IF NOT EXISTS idx_email_attachments_message ON email_attachments(message_id);`,
 		`CREATE TABLE IF NOT EXISTS email_events (
 			id TEXT PRIMARY KEY,
 			message_id TEXT NOT NULL REFERENCES email_messages(id) ON DELETE CASCADE,
@@ -1916,8 +1943,7 @@ func scanDeviceReplacementToken(scanner deviceReplacementTokenScanner) (*DeviceR
 	return &token, nil
 }
 
-// ResetTables drops and recreates product-related tables (products, plans, features, scopes)
-// This is used for the reset command to clear seeded data
+// ResetTables drops and recreates product-related tables (products, plans, features, scopes).
 func (s *SQLiteStorage) ResetTables(ctx context.Context) error {
 	// Disable foreign key constraints temporarily
 	if _, err := s.db.ExecContext(ctx, "PRAGMA foreign_keys = OFF"); err != nil {

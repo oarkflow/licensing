@@ -1,18 +1,19 @@
 #!/bin/bash
 
-# Build script for Secretr Landing Page
+# Build and deploy the licensing server image.
 # Builds Docker image, exports it, and deploys to server via SSH
 
 set -e
 
-# Configuration - Update these variables
-SERVER_USER="spbaniya"
-SERVER_HOST="144.126.143.123"
-SERVER_PATH="/home/spbaniya/Sites/secretr/crm"
-IMAGE_NAME="crm:latest"
-PORT=32689
-CONTAINER_NAME="crm"
-TAR_FILE="crm.tar"
+SERVER_USER="${SERVER_USER:?set SERVER_USER}"
+SERVER_HOST="${SERVER_HOST:?set SERVER_HOST}"
+SERVER_PATH="${SERVER_PATH:?set SERVER_PATH}"
+IMAGE_NAME="${IMAGE_NAME:-crm:latest}"
+PORT="${SSH_PORT:-22}"
+CONTAINER_NAME="${CONTAINER_NAME:-licensing-server}"
+TAR_FILE="${TAR_FILE:-licensing-server.tar}"
+HTTP_PORT="${LICENSE_SERVER_PORT:-6601}"
+SQLITE_PATH="${LICENSE_SERVER_STORAGE_SQLITE_PATH:-/data/licensing.db}"
 
 echo "Building Docker image..."
 docker compose build --build-arg PLATFORM=linux/amd64
@@ -39,10 +40,10 @@ ssh $SERVER_USER@$SERVER_HOST -p $PORT << EOF
   echo "Starting new container..."
   docker run -d \
     --name $CONTAINER_NAME \
-    -p 6601:6601 \
-    -e LICENSE_SERVER_HTTP_ADDR=":6601" \
+    -p $HTTP_PORT:$HTTP_PORT \
+    -e LICENSE_SERVER_HTTP_ADDR=":$HTTP_PORT" \
     -e LICENSE_SERVER_STORAGE="sqlite" \
-    -e LICENSE_SERVER_STORAGE_SQLITE_PATH="/data/licensing.db" \
+    -e LICENSE_SERVER_STORAGE_SQLITE_PATH="$SQLITE_PATH" \
     -v $SERVER_PATH/data:/data \
     $IMAGE_NAME
   echo "Cleaning up tar file..."
@@ -52,4 +53,4 @@ EOF
 echo "Cleaning up local tar file..."
 rm $TAR_FILE
 
-echo "Deployment complete! Application should be running on $SERVER_HOST:6601"
+echo "Deployment complete! Application should be running on $SERVER_HOST:$HTTP_PORT"

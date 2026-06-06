@@ -1,26 +1,30 @@
 services:
   licensing:
-    image: crm:latest
+    image: licensing-server:latest
     restart: unless-stopped
+    user: "licensing"
     ports:
-      - "6601:6601"
+      - "127.0.0.1:6601:6601"
     environment:
       APP_ENV: "production"
       LICENSE_SERVER_HTTP_ADDR: ":6601"
-      LICENSE_SERVER_ALLOW_INSECURE_HTTP: "false"
+      LICENSE_SERVER_ALLOW_INSECURE_HTTP: "true"
+      LICENSE_SERVER_TLS_TERMINATED_BY_PROXY: "true"
       LICENSE_SERVER_STORAGE: "sqlite"
       LICENSE_SERVER_STORAGE_SQLITE_PATH: "/data/licensing.db"
-      LICENSE_SERVER_TLS_CERT: "/certs/tls.crt"
-      LICENSE_SERVER_TLS_KEY: "/certs/tls.key"
+      LICENSE_SERVER_AUDIT_DB_PATH: "/data/audit.db"
+      LICENSE_SERVER_BACKUP_MARKER_FILE: "/backups/latest.json"
       LICENSE_SERVER_METRICS_ENABLED: "true"
+      LICENSE_SERVER_AUDIT_ENABLED: "true"
+      LICENSE_SERVER_ALLOW_LEGACY_ENV_KEYS_IN_PROD: "false"
       # Strongly recommended: use file/tpm provider in production.
       # LICENSE_SERVER_KEY_PROVIDER: "file"
       # LICENSE_SERVER_KEY_FILE: "/certs/signing.key"
-      # Configure at least one admin API key in production.
-      # LICENSE_SERVER_API_KEYS: "key-one,key-two"
+      # Legacy env API keys are break-glass only. Create stored scoped API keys in the Admin UI/API.
+      # LICENSE_SERVER_API_KEYS: "break-glass-key"
     volumes:
       - licensing_data:/data
-      - ./certs:/certs:ro
+      - licensing_backups:/backups
     read_only: true
     tmpfs:
       - /tmp
@@ -35,3 +39,4 @@ services:
 
 volumes:
   licensing_data:
+  licensing_backups:

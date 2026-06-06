@@ -57,7 +57,7 @@ This document walks through everything you need to operate the licensing server,
    }
    JSON
    ```
-6. **Run the client and wrap demo app:**
+6. **Run the client and wrap an example app:**
    ```bash
    go run ./client \
      --activation-mode auto \
@@ -86,7 +86,6 @@ This document walks through everything you need to operate the licensing server,
 | `LICENSE_SERVER_TPM_DEVICE` | Device path for TPM provider. | `/dev/tpmrm0` |
 | `LICENSE_SERVER_DEFAULT_CHECK_MODE` | Applied when new licenses omit `check_mode`. | `yearly` |
 | `LICENSE_SERVER_DEFAULT_CHECK_INTERVAL` | Go duration string used when default mode is `custom`. | — |
-| `LICENSE_SERVER_BOOTSTRAP_DEMO` | `true` seeds demo clients/licenses on startup. | `false` |
 
 ### Default Check Policy & Backfill
 
@@ -97,9 +96,9 @@ export LICENSE_SERVER_DEFAULT_CHECK_MODE="monthly"
 export LICENSE_SERVER_DEFAULT_CHECK_INTERVAL="720h"   # only used when mode=custom
 ```
 
-### Demo Data
+### Catalog Data
 
-Set `LICENSE_SERVER_BOOTSTRAP_DEMO=true` before launching the server to automatically create three sample clients (`starter`, `standard`, `enterprise`). Each license uses the current default check policy so you can test various plans immediately.
+Server startup does not create products, plans, features, scopes, clients, or licenses. Manage catalog data through the Admin UI/API. Optional SQL seed files can be placed under `migrations/seeds` and run explicitly with the migrator.
 
 ### Admin Authentication
 

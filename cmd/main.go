@@ -2,20 +2,22 @@ package main
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"flag"
 	"fmt"
 	"log"
 	"os"
-	"sort"
+	"path/filepath"
 	"strings"
 	"time"
 
+	"github.com/oarkflow/licensing/pkg/audit"
 	licensingclient "github.com/oarkflow/licensing/pkg/client"
-	"github.com/oarkflow/licensing/pkg/email"
 	"github.com/oarkflow/licensing/pkg/licensing"
 	"github.com/oarkflow/licensing/pkg/utils"
 	"github.com/oarkflow/licensing/pkg/web"
+	_ "modernc.org/sqlite"
 )
 
 var buildVersion = "dev"
@@ -54,10 +56,10 @@ func main() {
 	switch command {
 	case "device-fingerprint", "fingerprint", "device":
 		runDeviceFingerprintCommand()
-	case "seed":
-		runSeedCommand()
-	case "reset":
-		runResetCommand()
+	case "check-config":
+		runCheckConfigCommand()
+	case "audit-verify":
+		runAuditVerifyCommand()
 	case "server", "":
 		runServerCommand()
 	case "--help", "-h", "help":
@@ -70,9 +72,9 @@ func main() {
 func printUsage() {
 	fmt.Println("Usage:")
 	fmt.Println("  licensing-server server    - Start the license server")
+	fmt.Println("  licensing-server check-config - Validate production configuration without binding HTTP")
+	fmt.Println("  licensing-server audit-verify - Verify the local audit hash chain without binding HTTP")
 	fmt.Println("  licensing-server device-fingerprint - Print local device fingerprint info")
-	fmt.Println("  licensing-server seed      - Seed the database with plans, features, and scopes")
-	fmt.Println("  licensing-server reset     - Reset and reseed the database")
 	fmt.Println()
 	fmt.Println("Server options:")
 	flag.PrintDefaults()
@@ -134,8 +136,8 @@ func runDeviceFingerprintCommand() {
 
 func runServerCommand() {
 	httpServer := flag.String("http-addr", defaultHTTPAddr(), "HTTP server address")
-	defaultAllowInsecure := envBool("LICENSE_SERVER_ALLOW_INSECURE_HTTP")
-	allowInsecureHTTP := flag.Bool("allow-insecure-http", defaultAllowInsecure, "Allow HTTP without TLS (development only)")
+	defaultAllowInsecure := envBool("LICENSE_SERVER_ALLOW_INSECURE_HTTP") || envBool("LICENSE_SERVER_TLS_TERMINATED_BY_PROXY")
+	allowInsecureHTTP := flag.Bool("allow-insecure-http", defaultAllowInsecure, "Allow HTTP without local TLS (development or trusted reverse proxy only)")
 	flag.Parse()
 	if *httpServer == "" {
 		*httpServer = ":6601"
@@ -152,8 +154,64 @@ func runServerCommand() {
 	})
 }
 
+func runCheckConfigCommand() {
+	httpServer := flag.String("http-addr", defaultHTTPAddr(), "HTTP server address")
+	defaultAllowInsecure := envBool("LICENSE_SERVER_ALLOW_INSECURE_HTTP") || envBool("LICENSE_SERVER_TLS_TERMINATED_BY_PROXY")
+	allowInsecureHTTP := flag.Bool("allow-insecure-http", defaultAllowInsecure, "Allow HTTP without local TLS (development or trusted reverse proxy only)")
+	flag.Parse()
+	apiKeys := legacyAPIKeysFromEnv()
+	cfg := productionConfigFromEnv(*httpServer, *allowInsecureHTTP, apiKeys)
+	if err := validateProductionConfig(cfg); err != nil {
+		log.Fatalf("Configuration check failed: %v", err)
+	}
+	fmt.Println("configuration ok")
+}
+
+func runAuditVerifyCommand() {
+	limit := flag.Int("limit", 50000, "Maximum audit events to verify")
+	auditPath := flag.String("audit-db", defaultAuditDBPath(), "SQLite audit database path")
+	flag.Parse()
+	if strings.TrimSpace(*auditPath) == "" {
+		log.Fatalf("Audit database path is required")
+	}
+	db, err := sql.Open("sqlite", filepath.Clean(*auditPath))
+	if err != nil {
+		log.Fatalf("Failed to open audit database: %v", err)
+	}
+	defer db.Close()
+	storage, err := audit.NewSQLiteStorage(db)
+	if err != nil {
+		log.Fatalf("Failed to initialize audit storage: %v", err)
+	}
+	logger, err := audit.NewAuditLogger(&audit.AuditLoggerConfig{
+		Storage:        storage,
+		Async:          false,
+		EnableChaining: true,
+	})
+	if err != nil {
+		log.Fatalf("Failed to initialize audit verifier: %v", err)
+	}
+	defer logger.Close()
+	filter := &audit.AuditFilter{Limit: *limit}
+	events, err := logger.Query(context.Background(), filter)
+	if err != nil {
+		log.Fatalf("Failed to read audit events: %v", err)
+	}
+	for i, j := 0, len(events)-1; i < j; i, j = i+1, j-1 {
+		events[i], events[j] = events[j], events[i]
+	}
+	valid, errors := logger.VerifyChain(context.Background(), events)
+	if !valid {
+		fmt.Printf("audit chain invalid: checked=%d errors=%d\n", len(events), len(errors))
+		for _, errMsg := range errors {
+			fmt.Printf("- %s\n", errMsg)
+		}
+		os.Exit(1)
+	}
+	fmt.Printf("audit chain valid: checked=%d\n", len(events))
+}
+
 func runLicensedServer(ctx context.Context, httpServer string, allowInsecureHTTP bool) {
-	// os.Setenv("LICENSE_SERVER_BOOTSTRAP_DEMO", "true")
 	// Initialize storage + License Manager
 	storage, storageMode, err := licensing.BuildStorageFromEnv()
 	if err != nil {
@@ -178,9 +236,6 @@ func runLicensedServer(ctx context.Context, httpServer string, allowInsecureHTTP
 		log.Printf("🔑 Public key stored at %s", pubPath)
 	}
 	log.Printf("🔏 Signing provider: %s", lm.SigningProviderID())
-	if err := validateProductionHardening(storageMode, lm.SigningProviderID()); err != nil {
-		log.Fatalf("Production hardening check failed: %v", err)
-	}
 	adminUsers, err := lm.ListAdminUsers(ctx)
 	if err != nil {
 		log.Fatalf("Failed to inspect admin users: %v", err)
@@ -189,36 +244,32 @@ func runLicensedServer(ctx context.Context, httpServer string, allowInsecureHTTP
 		log.Printf("🚩 No admin users found. Open the /setup page in your browser to create the first administrator.")
 	}
 
-	if shouldBootstrapDemoData() {
-		if err := createDemoData(ctx, lm); err != nil {
-			log.Printf("⚠️ Failed to bootstrap demo data: %v", err)
-		}
-	} else {
-		log.Printf("📋 Demo bootstrap skipped (set LICENSE_SERVER_BOOTSTRAP_DEMO=true to enable)")
-	}
 	log.Printf("🔄 Applying default check policy to existing licenses...")
 	if err := lm.BackfillLicenseCheckPolicy(ctx); err != nil {
 		log.Fatalf("Failed to apply default check policy: %v", err)
 	}
 	log.Printf("✅ Default check policy applied")
 
-	rawAPIKeys := os.Getenv("LICENSE_SERVER_API_KEYS")
-	apiKeys := utils.ParseAPIKeys(rawAPIKeys)
-	if len(apiKeys) == 0 {
-		if single := strings.TrimSpace(os.Getenv("LICENSE_SERVER_API_KEY")); single != "" {
-			apiKeys = append(apiKeys, single)
-		}
-	}
+	apiKeys := legacyAPIKeysFromEnv()
 	if len(apiKeys) > 0 {
 		log.Printf("🔐 Loaded %d legacy admin API key(s) from environment", len(apiKeys))
 	} else {
 		log.Printf("🔐 No legacy API keys configured - relying on stored user API keys")
 	}
-	rateLimiter := licensing.NewRateLimiter(30, time.Minute)
+	rateLimitConfig, err := licensing.RateLimitConfigFromEnv()
+	if err != nil {
+		log.Fatalf("Invalid rate limit configuration: %v", err)
+	}
+	rateLimiter := licensing.NewRateLimiterWithConfig(rateLimitConfig)
 	tlsCert := os.Getenv("LICENSE_SERVER_TLS_CERT")
 	tlsKey := os.Getenv("LICENSE_SERVER_TLS_KEY")
 	clientCA := os.Getenv("LICENSE_SERVER_CLIENT_CA")
-	if err := validateServerRuntime(allowInsecureHTTP, tlsCert, tlsKey, apiKeys); err != nil {
+	cfg := productionConfigFromEnv(httpServer, allowInsecureHTTP, apiKeys)
+	cfg.StorageMode = storageMode
+	cfg.SigningProviderID = lm.SigningProviderID()
+	cfg.TLSCert = tlsCert
+	cfg.TLSKey = tlsKey
+	if err := validateProductionConfig(cfg); err != nil {
 		log.Fatalf("Invalid runtime configuration: %v", err)
 	}
 	server, err := licensing.NewServer(lm, httpServer, apiKeys, rateLimiter, tlsCert, tlsKey, clientCA, allowInsecureHTTP)
@@ -252,43 +303,179 @@ func defaultHTTPAddr() string {
 	return ":6601"
 }
 
-func validateServerRuntime(allowInsecure bool, tlsCert, tlsKey string, apiKeys []string) error {
+func legacyAPIKeysFromEnv() []string {
+	apiKeys := utils.ParseAPIKeys(os.Getenv("LICENSE_SERVER_API_KEYS"))
 	if len(apiKeys) == 0 {
+		if single := strings.TrimSpace(os.Getenv("LICENSE_SERVER_API_KEY")); single != "" {
+			apiKeys = append(apiKeys, single)
+		}
+	}
+	return apiKeys
+}
+
+type productionConfig struct {
+	HTTPAddr           string
+	AllowInsecure      bool
+	StorageMode        string
+	SQLitePath         string
+	FileStoragePath    string
+	TLSCert            string
+	TLSKey             string
+	ProxyTLSTerminated bool
+	AuditPath          string
+	BackupMarkerPath   string
+	SigningProviderID  string
+	KeyProvider        string
+	KeyFile            string
+	LegacyAPIKeys      []string
+}
+
+func productionConfigFromEnv(httpAddr string, allowInsecure bool, apiKeys []string) productionConfig {
+	return productionConfig{
+		HTTPAddr:           httpAddr,
+		AllowInsecure:      allowInsecure,
+		StorageMode:        storageModeFromEnv(),
+		SQLitePath:         strings.TrimSpace(os.Getenv("LICENSE_SERVER_STORAGE_SQLITE_PATH")),
+		FileStoragePath:    strings.TrimSpace(os.Getenv("LICENSE_SERVER_STORAGE_FILE")),
+		TLSCert:            strings.TrimSpace(os.Getenv("LICENSE_SERVER_TLS_CERT")),
+		TLSKey:             strings.TrimSpace(os.Getenv("LICENSE_SERVER_TLS_KEY")),
+		ProxyTLSTerminated: envBool("LICENSE_SERVER_TLS_TERMINATED_BY_PROXY"),
+		AuditPath:          strings.TrimSpace(os.Getenv("LICENSE_SERVER_AUDIT_DB_PATH")),
+		BackupMarkerPath:   strings.TrimSpace(os.Getenv("LICENSE_SERVER_BACKUP_MARKER_FILE")),
+		SigningProviderID:  signingProviderIDFromEnv(),
+		KeyProvider:        strings.TrimSpace(os.Getenv("LICENSE_SERVER_KEY_PROVIDER")),
+		KeyFile:            strings.TrimSpace(os.Getenv("LICENSE_SERVER_KEY_FILE")),
+		LegacyAPIKeys:      apiKeys,
+	}
+}
+
+func storageModeFromEnv() string {
+	mode := strings.ToLower(strings.TrimSpace(os.Getenv("LICENSE_SERVER_STORAGE")))
+	if mode == "" || mode == "sql" || mode == "sqlite3" {
+		return "sqlite"
+	}
+	return mode
+}
+
+func signingProviderIDFromEnv() string {
+	mode := strings.ToLower(strings.TrimSpace(os.Getenv("LICENSE_SERVER_KEY_PROVIDER")))
+	switch mode {
+	case "", "software", "memory", "soft", "dev":
+		return "software"
+	default:
+		return mode
+	}
+}
+
+func validateProductionConfig(cfg productionConfig) error {
+	env := strings.ToLower(strings.TrimSpace(os.Getenv("APP_ENV")))
+	if len(cfg.LegacyAPIKeys) == 0 {
 		log.Printf("⚠️ No legacy admin API keys in environment; rely on web setup/session auth and stored API keys")
 	}
-	env := strings.ToLower(strings.TrimSpace(os.Getenv("APP_ENV")))
-	if env == "prod" || env == "production" {
-		if allowInsecure {
-			return fmt.Errorf("insecure HTTP is forbidden when APP_ENV=%q", env)
+	if env != "prod" && env != "production" {
+		return nil
+	}
+
+	if cfg.AllowInsecure && !cfg.ProxyTLSTerminated {
+		return fmt.Errorf("insecure HTTP is forbidden when APP_ENV=%q unless LICENSE_SERVER_TLS_TERMINATED_BY_PROXY=true", env)
+	}
+	if cfg.ProxyTLSTerminated && !cfg.AllowInsecure {
+		return fmt.Errorf("LICENSE_SERVER_TLS_TERMINATED_BY_PROXY=true requires internal HTTP; set LICENSE_SERVER_ALLOW_INSECURE_HTTP=true or do not pass --allow-insecure-http=false")
+	}
+	if !cfg.ProxyTLSTerminated {
+		if strings.TrimSpace(cfg.TLSCert) == "" || strings.TrimSpace(cfg.TLSKey) == "" {
+			return fmt.Errorf("TLS cert/key are required when APP_ENV=%q unless LICENSE_SERVER_TLS_TERMINATED_BY_PROXY=true", env)
 		}
-		if strings.TrimSpace(tlsCert) == "" || strings.TrimSpace(tlsKey) == "" {
-			return fmt.Errorf("TLS cert/key are required when APP_ENV=%q", env)
+		if err := requireReadableAbsFile("TLS certificate", cfg.TLSCert); err != nil {
+			return err
 		}
-		if !envBoolDefault("LICENSE_SERVER_AUDIT_ENABLED", true) {
-			return fmt.Errorf("audit logging cannot be disabled when APP_ENV=%q", env)
+		if err := requireReadableAbsFile("TLS key", cfg.TLSKey); err != nil {
+			return err
+		}
+	}
+	if !envBoolDefault("LICENSE_SERVER_AUDIT_ENABLED", true) {
+		return fmt.Errorf("audit logging cannot be disabled when APP_ENV=%q", env)
+	}
+	if len(cfg.LegacyAPIKeys) > 0 && !envBool("LICENSE_SERVER_ALLOW_LEGACY_ENV_KEYS_IN_PROD") {
+		return fmt.Errorf("legacy env API keys are disabled in production; use stored scoped API keys or set LICENSE_SERVER_ALLOW_LEGACY_ENV_KEYS_IN_PROD=true for break-glass")
+	}
+	mode := strings.ToLower(strings.TrimSpace(cfg.StorageMode))
+	if mode == "" {
+		mode = "sqlite"
+	}
+	if mode == "memory" && !envBool("LICENSE_SERVER_ALLOW_MEMORY_STORAGE_IN_PROD") {
+		return fmt.Errorf("memory storage is not allowed in production")
+	}
+	if mode == "file" || mode == "disk" || mode == "persistent" {
+		return fmt.Errorf("file/json storage is not allowed in production; use sqlite")
+	}
+	if mode != "sqlite" && !strings.HasPrefix(mode, "sqlite:") {
+		return fmt.Errorf("unsupported production storage mode %q; use sqlite", cfg.StorageMode)
+	}
+	sqlitePath := strings.TrimSpace(cfg.SQLitePath)
+	if sqlitePath == "" && strings.HasPrefix(strings.ToLower(strings.TrimSpace(cfg.StorageMode)), "sqlite:") {
+		sqlitePath = strings.TrimPrefix(strings.TrimSpace(cfg.StorageMode), "sqlite:")
+	}
+	if sqlitePath == "" {
+		return fmt.Errorf("LICENSE_SERVER_STORAGE_SQLITE_PATH must be set to an absolute managed SQLite path in production")
+	}
+	if !filepath.IsAbs(sqlitePath) {
+		return fmt.Errorf("sqlite path must be absolute in production: %s", sqlitePath)
+	}
+	if filepath.Base(filepath.Clean(sqlitePath)) == "licensing.db" && filepath.Dir(filepath.Clean(sqlitePath)) == "." {
+		return fmt.Errorf("sqlite path must not be local licensing.db in production")
+	}
+	if cfg.AuditPath != "" && !filepath.IsAbs(cfg.AuditPath) {
+		return fmt.Errorf("audit database path must be absolute in production: %s", cfg.AuditPath)
+	}
+	if cfg.BackupMarkerPath != "" && !filepath.IsAbs(cfg.BackupMarkerPath) {
+		return fmt.Errorf("backup marker path must be absolute in production: %s", cfg.BackupMarkerPath)
+	}
+	signingProvider := strings.ToLower(strings.TrimSpace(cfg.SigningProviderID))
+	if signingProvider == "" {
+		signingProvider = signingProviderIDFromEnv()
+	}
+	if (signingProvider == "software" || strings.HasPrefix(signingProvider, "software-")) && !envBool("LICENSE_SERVER_ALLOW_SOFTWARE_KEYS_IN_PROD") {
+		return fmt.Errorf("software signing provider is not allowed in production; use file or TPM provider")
+	}
+	keyProvider := strings.ToLower(strings.TrimSpace(cfg.KeyProvider))
+	if keyProvider == "file" || keyProvider == "pem" {
+		if err := requireReadableAbsFile("signing key", cfg.KeyFile); err != nil {
+			return err
 		}
 	}
 	return nil
 }
 
-func validateProductionHardening(storageMode, signingProviderID string) error {
-	env := strings.ToLower(strings.TrimSpace(os.Getenv("APP_ENV")))
-	if env != "prod" && env != "production" {
-		return nil
+func requireReadableAbsFile(label, path string) error {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return fmt.Errorf("%s path is required", label)
 	}
-	if strings.EqualFold(strings.TrimSpace(os.Getenv("LICENSE_SERVER_ALLOW_MEMORY_STORAGE_IN_PROD")), "true") {
-		return nil
+	if !filepath.IsAbs(path) {
+		return fmt.Errorf("%s path must be absolute in production: %s", label, path)
 	}
-	if strings.HasPrefix(strings.ToLower(strings.TrimSpace(storageMode)), "memory") {
-		return fmt.Errorf("memory storage is not allowed in production")
+	info, err := os.Stat(path)
+	if err != nil {
+		return fmt.Errorf("%s path is not readable: %w", label, err)
 	}
-	if strings.EqualFold(strings.TrimSpace(os.Getenv("LICENSE_SERVER_ALLOW_SOFTWARE_KEYS_IN_PROD")), "true") {
-		return nil
-	}
-	if strings.HasPrefix(strings.ToLower(strings.TrimSpace(signingProviderID)), "software-") {
-		return fmt.Errorf("software signing provider is not allowed in production; use file or TPM provider")
+	if info.IsDir() {
+		return fmt.Errorf("%s path must be a file, got directory: %s", label, path)
 	}
 	return nil
+}
+
+func defaultAuditDBPath() string {
+	if auditPath := strings.TrimSpace(os.Getenv("LICENSE_SERVER_AUDIT_DB_PATH")); auditPath != "" {
+		return auditPath
+	}
+	if sqlitePath := strings.TrimSpace(os.Getenv("LICENSE_SERVER_STORAGE_SQLITE_PATH")); sqlitePath != "" {
+		return sqlitePath
+	}
+	if homeDir, err := os.UserHomeDir(); err == nil {
+		return filepath.Join(homeDir, ".licensing", "data", "audit.db")
+	}
+	return "./data/audit.db"
 }
 
 func envBoolDefault(key string, defaultVal bool) bool {
@@ -302,166 +489,6 @@ func envBoolDefault(key string, defaultVal bool) bool {
 	default:
 		return false
 	}
-}
-
-func shouldBootstrapDemoData() bool {
-	flag := strings.TrimSpace(os.Getenv("LICENSE_SERVER_BOOTSTRAP_DEMO"))
-	if flag == "" {
-		return false
-	}
-	switch strings.ToLower(flag) {
-	case "1", "true", "yes", "on":
-		return true
-	default:
-		return false
-	}
-}
-
-func runSeedCommand() {
-	fmt.Println("╔═══════════════════════════════════════════╗")
-	fmt.Println("║    License Manager - Seed Database        ║")
-	fmt.Println("╚═══════════════════════════════════════════╝")
-	fmt.Println()
-
-	ctx := context.Background()
-	storage, storageMode, err := licensing.BuildStorageFromEnv()
-	if err != nil {
-		log.Fatalf("Failed to configure storage: %v", err)
-	}
-
-	log.Printf("📦 Storage backend: %s", storageMode)
-
-	if err := seedDatabase(ctx, storage); err != nil {
-		log.Fatalf("Failed to seed database: %v", err)
-	}
-
-	log.Printf("✅ Database seeded successfully")
-}
-
-func runResetCommand() {
-	fmt.Println("╔═══════════════════════════════════════════╗")
-	fmt.Println("║    License Manager - Reset Database       ║")
-	fmt.Println("╚═══════════════════════════════════════════╝")
-	fmt.Println()
-
-	ctx := context.Background()
-	storage, storageMode, err := licensing.BuildStorageFromEnv()
-	if err != nil {
-		log.Fatalf("Failed to configure storage: %v", err)
-	}
-
-	log.Printf("📦 Storage backend: %s", storageMode)
-
-	// Reset database (clear existing data)
-	if err := resetDatabase(ctx, storage); err != nil {
-		log.Fatalf("Failed to reset database: %v", err)
-	}
-
-	// Seed fresh data
-	if err := seedDatabase(ctx, storage); err != nil {
-		log.Fatalf("Failed to seed database after reset: %v", err)
-	}
-
-	log.Printf("✅ Database reset and seeded successfully")
-}
-
-func seedDatabase(ctx context.Context, storage licensing.Storage) error {
-	log.Printf("🧩 Seeding Secretr catalog...")
-
-	catalog, err := licensing.BootstrapSecretrProduct(ctx, storage)
-	if err != nil {
-		return fmt.Errorf("bootstrap Secretr catalog: %w", err)
-	}
-
-	log.Printf("✅ Seeded Secretr catalog (%d features / %d plans)", len(catalog.Features), len(catalog.Plans))
-
-	distributionCatalog, err := licensing.BootstrapLicensingServerProduct(ctx, storage)
-	if err != nil {
-		return fmt.Errorf("bootstrap Licensing Server catalog: %w", err)
-	}
-	log.Printf("✅ Seeded Licensing Server catalog (%d features / %d plans)", len(distributionCatalog.Features), len(distributionCatalog.Plans))
-
-	// Seed default email provider
-	if err := seedDefaultEmailProvider(ctx, storage); err != nil {
-		log.Printf("⚠️ Failed to seed default email provider: %v", err)
-	} else {
-		log.Printf("✅ Seeded default email provider")
-	}
-
-	return nil
-}
-
-func seedDefaultEmailProvider(ctx context.Context, storage licensing.Storage) error {
-	// Check if any email providers already exist
-	providers, err := storage.ListEmailProviders(ctx, true)
-	if err != nil {
-		return fmt.Errorf("check existing email providers: %w", err)
-	}
-
-	if len(providers) > 0 {
-		log.Printf("📧 Email providers already exist, skipping default provider creation")
-		return nil
-	}
-
-	// Create a default SMTP provider for development/testing
-	defaultProvider := &email.EmailProvider{
-		ID:   "default-smtp",
-		Name: "Default SMTP",
-		Slug: "default-smtp",
-		Type: email.ProviderTypeSMTP,
-		Config: map[string]any{
-			"host":            "localhost",
-			"port":            1025,
-			"username":        "your-email@gmail.com",
-			"password":        "your-app-password",
-			"from_email":      "noreply@yourdomain.com",
-			"from_name":       "Licensing System",
-			"use_tls":         false,
-			"start_tls":       false,
-			"skip_tls_verify": true, // For development
-			"timeout_seconds": 30,
-		},
-		Priority:       100,
-		MaxRetries:     3,
-		RetryBaseMS:    1000,
-		RetryMaxMS:     60000,
-		RetryJitterPct: 0.25,
-		IsDefault:      true,
-		Enabled:        false, // Disabled by default for security
-		Metadata: map[string]string{
-			"description": "Default SMTP provider - configure credentials and enable for email functionality",
-		},
-		CreatedAt: time.Now(),
-		UpdatedAt: time.Now(),
-	}
-
-	if err := storage.SaveEmailProvider(ctx, defaultProvider); err != nil {
-		return fmt.Errorf("save default email provider: %w", err)
-	}
-
-	log.Printf("📧 Created default SMTP email provider (disabled by default)")
-	log.Printf("   To enable: Configure SMTP credentials and set enabled=true")
-	log.Printf("   Web UI: /messaging/providers")
-
-	return nil
-}
-
-func resetDatabase(ctx context.Context, storage licensing.Storage) error {
-	log.Printf("🗑️  Resetting database...")
-
-	// For SQLite, we can recreate tables by dropping and recreating
-	// For other storage backends, this might need different implementation
-	if sqliteStorage, ok := storage.(*licensing.SQLiteStorage); ok {
-		if err := sqliteStorage.ResetTables(ctx); err != nil {
-			return fmt.Errorf("reset SQLite tables: %w", err)
-		}
-	} else {
-		log.Printf("⚠️  Reset not implemented for storage type: %T", storage)
-		log.Printf("   Manual reset may be required")
-	}
-
-	log.Printf("✅ Database reset complete")
-	return nil
 }
 
 func envBool(key string) bool {
@@ -492,204 +519,4 @@ func resolveDefaultCheckPolicyFromEnv() (licensing.LicenseCheckMode, time.Durati
 		}
 	}
 	return mode, interval, nil
-}
-
-func createDemoData(ctx context.Context, lm *licensing.LicenseManager) error {
-	log.Printf("📋 Syncing demo Secretr catalog and sample customers...")
-
-	storage := lm.Storage()
-	catalog, err := licensing.BootstrapSecretrProduct(ctx, storage)
-	if err != nil {
-		return fmt.Errorf("bootstrap Secretr catalog: %w", err)
-	}
-
-	product := catalog.Product
-	const demoDeviceCount = 10
-
-	type demoSeed struct {
-		label        string
-		email        string
-		planSlug     string
-		maxDevices   int
-		durationDays int
-	}
-
-	demoUsers := []demoSeed{
-		{label: "Trial", email: "user-trial@example.com", planSlug: "trial", maxDevices: 1, durationDays: 14},
-		{label: "Personal", email: "user-personal@example.com", planSlug: "personal", maxDevices: 1, durationDays: 365},
-		{label: "Solo", email: "user-solo@example.com", planSlug: "solo", maxDevices: 2, durationDays: 365},
-		{label: "Team", email: "user-team@example.com", planSlug: "team", maxDevices: 5, durationDays: 365},
-		{label: "Business", email: "user-business@example.com", planSlug: "business", maxDevices: 15, durationDays: 365},
-		{label: "Enterprise", email: "user-enterprise@example.com", planSlug: "enterprise", maxDevices: 50, durationDays: 365},
-	}
-
-	type credentialInfo struct {
-		label        string
-		clientID     string
-		email        string
-		licenseKey   string
-		planSlug     string
-		planName     string
-		entitlements *licensing.LicenseEntitlements
-	}
-
-	var credentials []credentialInfo
-	mode, interval := lm.DefaultCheckPolicy()
-
-	for _, seed := range demoUsers {
-		plan, ok := catalog.Plans[seed.planSlug]
-		if !ok {
-			log.Printf("⚠️ Plan %s not found in catalog, skipping demo user %s", seed.planSlug, seed.email)
-			continue
-		}
-
-		client, err := lm.CreateClient(ctx, seed.email)
-		if err != nil {
-			existing, lookupErr := lm.GetClientByEmail(ctx, seed.email)
-			if lookupErr != nil {
-				log.Printf("⚠️ Skipping demo client %s: %v", seed.email, err)
-				continue
-			}
-			client = existing
-			log.Printf("↺ Demo client already exists: %s (ID: %s)", client.Email, client.ID)
-		}
-
-		duration := time.Duration(seed.durationDays) * 24 * time.Hour
-		if duration == 0 {
-			duration = plan.TrialDuration()
-		}
-		if duration == 0 {
-			duration = 365 * 24 * time.Hour
-		}
-
-		maxDevices := seed.maxDevices
-		if maxDevices < demoDeviceCount {
-			maxDevices = demoDeviceCount
-		}
-		opts := &licensing.GenerateLicenseOptions{ProductID: product.ID, PlanID: plan.ID}
-		license, err := lm.GenerateLicenseWithOptions(ctx, client.ID, duration, maxDevices, plan.Slug, mode, interval, opts)
-		if err != nil {
-			log.Printf("⚠️ Failed to create demo license for %s: %v", client.Email, err)
-			continue
-		}
-
-		entitlements, err := storage.ComputeLicenseEntitlements(ctx, product.ID, plan.ID)
-		if err != nil {
-			log.Printf("⚠️ Failed to compute entitlements for %s: %v", plan.Slug, err)
-			continue
-		}
-
-		log.Printf("   ✓ Client: %s (ID: %s) | Plan: %s | License: %s", client.Email, client.ID, plan.Slug, license.LicenseKey)
-		credentials = append(credentials, credentialInfo{
-			label:        seed.label,
-			clientID:     client.ID,
-			email:        client.Email,
-			licenseKey:   license.LicenseKey,
-			planSlug:     plan.Slug,
-			planName:     plan.Name,
-			entitlements: entitlements,
-		})
-	}
-
-	if len(credentials) == 0 {
-		return nil
-	}
-
-	fmt.Println()
-	fmt.Println("═══════════════════════════════════════════════════════════════════════════════════════════════════")
-	fmt.Println("📄 Demo License Credentials with Permissions/Scopes")
-	fmt.Println("═══════════════════════════════════════════════════════════════════════════════════════════════════")
-
-	for i, cred := range credentials {
-		userLetter := string(rune('A' + i))
-		fmt.Println()
-		fmt.Printf("👤 USER %s (%s): %s\n", userLetter, cred.label, cred.email)
-		fmt.Printf("   Plan: %s (%s)\n", cred.planName, cred.planSlug)
-		fmt.Printf("   Client ID: %s\n", cred.clientID)
-		fmt.Printf("   License Key: %s\n", cred.licenseKey)
-		fmt.Println("   ─────────────────────────────────────────────────────────────────────────────────────────────")
-
-		if cred.entitlements != nil && len(cred.entitlements.Features) > 0 {
-			fmt.Println("   📋 PERMISSIONS/SCOPES:")
-
-			featSlugs := make([]string, 0, len(cred.entitlements.Features))
-			for slug := range cred.entitlements.Features {
-				featSlugs = append(featSlugs, slug)
-			}
-			sort.Strings(featSlugs)
-
-			for fi, featSlug := range featSlugs {
-				feat := cred.entitlements.Features[featSlug]
-				if !feat.Enabled {
-					continue
-				}
-				featPrefix := "├─"
-				if fi == len(featSlugs)-1 {
-					featPrefix = "└─"
-				}
-				fmt.Printf("      %s Feature: %s (%s)\n", featPrefix, feat.FeatureSlug, feat.Category)
-
-				if len(feat.Scopes) == 0 {
-					continue
-				}
-
-				scopeList := make([]string, 0, len(feat.Scopes))
-				for scopeSlug := range feat.Scopes {
-					scopeList = append(scopeList, scopeSlug)
-				}
-				sort.Strings(scopeList)
-
-				for j, scopeSlug := range scopeList {
-					scope := feat.Scopes[scopeSlug]
-					prefix := "│     ├─"
-					if fi == len(featSlugs)-1 {
-						prefix = "      ├─"
-					}
-					if j == len(scopeList)-1 {
-						if fi == len(featSlugs)-1 {
-							prefix = "      └─"
-						} else {
-							prefix = "│     └─"
-						}
-					}
-
-					permIcon := "✅"
-					if scope.Permission == licensing.ScopePermissionDeny {
-						permIcon = "❌"
-					} else if scope.Permission == licensing.ScopePermissionLimit {
-						permIcon = "⚠️"
-					}
-
-					limitStr := ""
-					if scope.Limit > 0 {
-						limitStr = fmt.Sprintf(" (limit: %d)", scope.Limit)
-					}
-
-					fmt.Printf("      %s %s %s [%s]%s\n", prefix, permIcon, scope.ScopeSlug, scope.Permission, limitStr)
-				}
-			}
-		} else {
-			fmt.Println("   📋 PERMISSIONS: No specific entitlements defined")
-		}
-
-		fmt.Println("   ─────────────────────────────────────────────────────────────────────────────────────────────")
-		fmt.Printf("   📁 Save as license-%s.json:\n", cred.clientID)
-		fmt.Printf(`   {"email": "%s", "client_id": "%s", "license_key": "%s"}`, cred.email, cred.clientID, cred.licenseKey)
-		fmt.Println()
-	}
-
-	fmt.Println()
-	fmt.Println("═══════════════════════════════════════════════════════════════════════════════════════════════════")
-	fmt.Println("📊 PERMISSION SUMMARY:")
-	fmt.Println("═══════════════════════════════════════════════════════════════════════════════════════════════════")
-	fmt.Println("   Trial        → All features unlocked for 14 days evaluation")
-	fmt.Println("   Personal     → Core secrets, SSH, generators, GUI, 1 GB storage")
-	fmt.Println("   Solo         → + 2FA, P2P sharing, audit logs, version history, 5 GB storage")
-	fmt.Println("   Team         → + Scratchpads, templates, rotation, bundles, 25 GB storage")
-	fmt.Println("   Business     → + HTTP API, user management, ACLs, multi-tenant, sandbox, unlimited storage")
-	fmt.Println("   Enterprise   → + Compliance, FIPS, classification, container runtime, HSM")
-	fmt.Println("═══════════════════════════════════════════════════════════════════════════════════════════════════")
-	fmt.Println()
-
-	return nil
 }

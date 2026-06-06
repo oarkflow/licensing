@@ -7,9 +7,13 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
+
+const testAppVaultFeature = "runtime.key-release"
 
 func TestReleaseAppVaultBundleKeySuccessAndStability(t *testing.T) {
 	t.Setenv(appVaultKeySecretEnv, "test-secret")
@@ -19,7 +23,8 @@ func TestReleaseAppVaultBundleKeySuccessAndStability(t *testing.T) {
 		LicenseKey: license.LicenseKey,
 		ClientID:   license.ClientID,
 		Email:      license.Email,
-		ProductID:  "appvault",
+		ProductID:  license.ProductID,
+		Feature:    testAppVaultFeature,
 		Bundle:     AppVaultBundleIdentity{AppID: "laravel-app", BundleID: "bundle-1"},
 	}
 	first, err := lm.ReleaseAppVaultBundleKey(context.Background(), req)
@@ -73,7 +78,8 @@ func TestReleaseAppVaultBundleKeyRejectsInvalidInputs(t *testing.T) {
 				LicenseKey: license.LicenseKey,
 				ClientID:   license.ClientID,
 				Email:      license.Email,
-				ProductID:  "appvault",
+				ProductID:  license.ProductID,
+				Feature:    testAppVaultFeature,
 				Bundle:     AppVaultBundleIdentity{BundleID: "bundle-1"},
 			}
 			mutate(license, req)
@@ -94,11 +100,47 @@ func TestReleaseAppVaultBundleKeyRejectsMissingFeature(t *testing.T) {
 		LicenseKey: license.LicenseKey,
 		ClientID:   license.ClientID,
 		Email:      license.Email,
-		ProductID:  "appvault",
+		ProductID:  license.ProductID,
+		Feature:    testAppVaultFeature,
 		Bundle:     AppVaultBundleIdentity{BundleID: "bundle-1"},
 	})
 	if err == nil {
 		t.Fatal("expected missing feature to fail")
+	}
+}
+
+func TestReleaseAppVaultBundleKeyRejectsWrongProductLicense(t *testing.T) {
+	t.Setenv(appVaultKeySecretEnv, "test-secret")
+	ctx := context.Background()
+	storage := newSQLiteStorageForTest(t)
+	lm, err := NewLicenseManager(storage)
+	if err != nil {
+		t.Fatal(err)
+	}
+	otherProduct, otherPlan := saveAppVaultTestCatalog(t, storage, "other", true)
+	runtimeProduct, _ := saveAppVaultTestCatalog(t, storage, "runtime", true)
+	client, err := lm.CreateClient(ctx, "other-user@example.com")
+	if err != nil {
+		t.Fatal(err)
+	}
+	license, err := lm.GenerateLicenseWithOptions(ctx, client.ID, 365*24*time.Hour, 2, otherPlan.Slug, LicenseCheckModeYearly, 0, &GenerateLicenseOptions{
+		ProductID: otherProduct.ID,
+		PlanID:    otherPlan.ID,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = lm.ReleaseAppVaultBundleKey(ctx, AppVaultKeyReleaseRequest{
+		LicenseKey: license.LicenseKey,
+		ClientID:   license.ClientID,
+		Email:      license.Email,
+		ProductID:  runtimeProduct.ID,
+		Feature:    testAppVaultFeature,
+		Bundle:     AppVaultBundleIdentity{BundleID: "bundle-1"},
+	})
+	if err == nil {
+		t.Fatal("expected wrong product license to fail key release")
 	}
 }
 
@@ -113,7 +155,8 @@ func TestHandleAppVaultBundleKey(t *testing.T) {
 		LicenseKey: license.LicenseKey,
 		ClientID:   license.ClientID,
 		Email:      license.Email,
-		ProductID:  "appvault",
+		ProductID:  license.ProductID,
+		Feature:    testAppVaultFeature,
 		Bundle:     AppVaultBundleIdentity{BundleID: "bundle-1"},
 	})
 	req := httptest.NewRequest(http.MethodPost, "/api/appvault/bundle-key", bytes.NewReader(body))
@@ -137,30 +180,23 @@ func TestHandleAppVaultBundleKey(t *testing.T) {
 
 func testAppVaultLicense(t *testing.T, includeFeature bool) (*LicenseManager, *License) {
 	t.Helper()
-	ctx := context.Background()
-	storage := NewInMemoryStorage()
+	storage := newSQLiteStorageForTest(t)
 	lm, err := NewLicenseManager(storage)
 	if err != nil {
 		t.Fatal(err)
 	}
-	product := &Product{ID: "prod-appvault", Name: "AppVault", Slug: "appvault", CreatedAt: time.Now(), UpdatedAt: time.Now()}
-	if err := storage.SaveProduct(ctx, product); err != nil {
-		t.Fatal(err)
-	}
-	plan := &Plan{ID: "plan-appvault", ProductID: product.ID, Name: "AppVault Plan", Slug: "appvault-plan", DurationDays: 365, IsActive: true, CreatedAt: time.Now(), UpdatedAt: time.Now()}
-	if err := storage.SavePlan(ctx, plan); err != nil {
-		t.Fatal(err)
-	}
 	if includeFeature {
-		feature := &Feature{ID: "feature-appvault-runtime", ProductID: product.ID, Name: "AppVault Runtime", Slug: appVaultDefaultFeature, CreatedAt: time.Now(), UpdatedAt: time.Now()}
-		if err := storage.SaveFeature(ctx, feature); err != nil {
-			t.Fatal(err)
-		}
-		if err := storage.SavePlanFeature(ctx, &PlanFeature{ID: "pf-appvault-runtime", PlanID: plan.ID, FeatureID: feature.ID, Enabled: true, CreatedAt: time.Now(), UpdatedAt: time.Now()}); err != nil {
-			t.Fatal(err)
-		}
+		product, plan := saveAppVaultTestCatalog(t, storage, "runtime", true)
+		return generateAppVaultTestLicense(t, lm, product, plan)
 	}
-	client, err := lm.CreateClient(ctx, "user@example.com")
+	product, plan := saveAppVaultTestCatalog(t, storage, "runtime-no-feature", false)
+	return generateAppVaultTestLicense(t, lm, product, plan)
+}
+
+func generateAppVaultTestLicense(t *testing.T, lm *LicenseManager, product *Product, plan *Plan) (*LicenseManager, *License) {
+	t.Helper()
+	ctx := context.Background()
+	client, err := lm.CreateClient(ctx, "user-"+testSlug(t)+("@example.com"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -169,4 +205,44 @@ func testAppVaultLicense(t *testing.T, includeFeature bool) (*LicenseManager, *L
 		t.Fatal(err)
 	}
 	return lm, license
+}
+
+func saveAppVaultTestCatalog(t *testing.T, storage Storage, suffix string, includeFeature bool) (*Product, *Plan) {
+	t.Helper()
+	now := time.Now()
+	slug := testSlug(t) + "-" + suffix
+	product := &Product{ID: "product-" + slug, Name: "Runtime Product", Slug: "product-" + slug, CreatedAt: now, UpdatedAt: now}
+	if err := storage.SaveProduct(context.Background(), product); err != nil {
+		t.Fatal(err)
+	}
+	plan := &Plan{ID: "plan-" + slug, ProductID: product.ID, Name: "Runtime Plan", Slug: "plan-" + slug, DurationDays: 365, IsActive: true, CreatedAt: now, UpdatedAt: now}
+	if err := storage.SavePlan(context.Background(), plan); err != nil {
+		t.Fatal(err)
+	}
+	if includeFeature {
+		feature := &Feature{ID: "feature-" + slug, ProductID: product.ID, Name: "Runtime Feature", Slug: testAppVaultFeature, Type: FeatureTypeBoolean, CreatedAt: now, UpdatedAt: now}
+		if err := storage.SaveFeature(context.Background(), feature); err != nil {
+			t.Fatal(err)
+		}
+		if err := storage.SavePlanFeature(context.Background(), &PlanFeature{ID: "pf-" + slug, PlanID: plan.ID, FeatureID: feature.ID, Enabled: true, CreatedAt: now, UpdatedAt: now}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return product, plan
+}
+
+func newSQLiteStorageForTest(t *testing.T) *SQLiteStorage {
+	t.Helper()
+	storage, err := NewSQLiteStorage(filepath.Join(t.TempDir(), "licensing.db"))
+	if err != nil {
+		t.Fatalf("NewSQLiteStorage failed: %v", err)
+	}
+	return storage
+}
+
+func testSlug(t *testing.T) string {
+	t.Helper()
+	slug := strings.ToLower(t.Name())
+	replacer := strings.NewReplacer("/", "-", "_", "-", " ", "-", ".", "-")
+	return replacer.Replace(slug)
 }

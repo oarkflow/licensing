@@ -56,7 +56,10 @@ import {
 import { useToast } from '@/hooks/use-toast';
 import type { PlanFeature, FeatureScope, CreatePlanRequest } from '@/types/api';
 import { formatCurrencyFromCents } from '@/lib/utils';
-import { cliScopes, guiScopes, apiScopes, type ScopeDefinition } from '@/data/menuData';
+
+function scopeGroupFor(scope: FeatureScope): string {
+    return scope.metadata?.category || scope.metadata?.group || 'Scopes';
+}
 
 // Scope Card Component with Toggle
 function ScopeCard({
@@ -223,15 +226,12 @@ function PlanFeatureRow({
                         </div>
 
                         {pf.scopes && pf.scopes.length > 0 && (() => {
-                            // Get categorized scopes based on feature slug
-                            let categorizedScopes: { [category: string]: ScopeDefinition[] } = {};
-                            if (pf.feature?.slug === 'cli') {
-                                categorizedScopes = cliScopes;
-                            } else if (pf.feature?.slug === 'gui') {
-                                categorizedScopes = guiScopes;
-                            } else if (pf.feature?.slug === 'api') {
-                                categorizedScopes = apiScopes;
-                            }
+                            const scopeGroups = pf.scopes.reduce<Record<string, FeatureScope[]>>((groups, scope) => {
+                                const group = scopeGroupFor(scope);
+                                groups[group] = [...(groups[group] || []), scope];
+                                return groups;
+                            }, {});
+                            const hasScopeGroups = Object.keys(scopeGroups).some((group) => group !== 'Scopes');
 
                             return (
                                 <div className="space-y-3">
@@ -258,14 +258,14 @@ function PlanFeatureRow({
                                                     <SelectItem value="denied">Denied</SelectItem>
                                                 </SelectContent>
                                             </Select>
-                                            {Object.keys(categorizedScopes).length > 0 && (
+                                            {hasScopeGroups && (
                                                 <Select value={categoryFilter} onValueChange={setCategoryFilter}>
                                                     <SelectTrigger className="h-8 w-40">
                                                         <SelectValue placeholder="All Categories" />
                                                     </SelectTrigger>
                                                     <SelectContent>
                                                         <SelectItem value="all">All Categories</SelectItem>
-                                                        {Object.keys(categorizedScopes).map((category) => (
+                                                        {Object.keys(scopeGroups).map((category) => (
                                                             <SelectItem key={category} value={category}>
                                                                 {category}
                                                             </SelectItem>
@@ -299,18 +299,10 @@ function PlanFeatureRow({
                                             });
                                         };
 
-                                        // If we have categories, render grouped
-                                        if (Object.keys(categorizedScopes).length > 0) {
-                                            const renderedCategories = Object.entries(categorizedScopes).map(([category, categoryScopes]) => {
-                                                // Find FeatureScope objects that match the ScopeDefinition IDs
-                                                let availableScopes = pf.scopes.filter(pfScope =>
-                                                    categoryScopes.some(catScope => catScope.id === pfScope.id)
-                                                );
+                                        if (hasScopeGroups) {
+                                            const renderedCategories = Object.entries(scopeGroups).map(([category, scopes]) => {
+                                                let availableScopes = filterScopes(scopes);
 
-                                                // Apply filters
-                                                availableScopes = filterScopes(availableScopes);
-
-                                                // Category filter
                                                 if (categoryFilter !== 'all' && category !== categoryFilter) {
                                                     return null;
                                                 }

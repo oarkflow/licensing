@@ -30,7 +30,7 @@ WORKDIR /srv
 COPY --from=backend-build /out/crm /usr/local/bin/crm
 COPY templates ./templates
 COPY dist ./dist
-RUN mkdir -p /data /home/licensing/.licensing && chown -R licensing:licensing /srv /data /home/licensing
+RUN mkdir -p /data /backups /home/licensing/.licensing && chown -R licensing:licensing /srv /data /backups /home/licensing
 USER licensing
 ENV PORT=6601
 EXPOSE 6601
