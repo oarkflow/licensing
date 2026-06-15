@@ -1,3 +1,7 @@
+I want to build Subscription management platform in licensing. I am looking for a subscription management platform so that future customers can easily pay, cancel, and renew their plans automatically. I want to avoid having to reach out to users manually via email or phone to collect payments. Supporting various payment gateways for the payment based on the client, support reliable automated recurring billing, reminder, approval system. Create Tasks.md and start working.
+
+Continue working based on Tasks.md and make sure not to stop until everything is implemented.
+
 # Production Device Management Tasks
 
 ## Protocol and Documentation
