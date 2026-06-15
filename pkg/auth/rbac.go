@@ -45,6 +45,13 @@ const (
 	PermissionPlanUpdate Permission = "plan:update"
 	PermissionPlanDelete Permission = "plan:delete"
 
+	// Billing Permissions
+	PermissionBillingRead       Permission = "billing:read"
+	PermissionBillingWrite      Permission = "billing:write"
+	PermissionBillingGateway    Permission = "billing:gateway"
+	PermissionBillingApproval   Permission = "billing:approval"
+	PermissionBillingCollection Permission = "billing:collection"
+
 	// Admin Permissions
 	PermissionAdminAccess  Permission = "admin:access"
 	PermissionUserManage   Permission = "user:manage"
@@ -64,6 +71,7 @@ var RolePermissions = map[Role][]Permission{
 		PermissionLicenseRevoke, PermissionLicenseDelete,
 		PermissionProductCreate, PermissionProductRead, PermissionProductUpdate, PermissionProductDelete,
 		PermissionPlanCreate, PermissionPlanRead, PermissionPlanUpdate, PermissionPlanDelete,
+		PermissionBillingRead, PermissionBillingWrite, PermissionBillingGateway, PermissionBillingApproval, PermissionBillingCollection,
 		PermissionAdminAccess, PermissionUserManage, PermissionConfigManage,
 		PermissionAuditView, PermissionAPIKeyManage,
 		PermissionReportView, PermissionReportExport,
@@ -72,14 +80,16 @@ var RolePermissions = map[Role][]Permission{
 		PermissionLicenseCreate, PermissionLicenseRead, PermissionLicenseUpdate, PermissionLicenseRevoke,
 		PermissionProductRead, PermissionProductUpdate,
 		PermissionPlanRead, PermissionPlanUpdate,
+		PermissionBillingRead, PermissionBillingWrite, PermissionBillingApproval, PermissionBillingCollection,
 		PermissionReportView,
 	},
 	RoleSupport: {
 		PermissionLicenseRead, PermissionProductRead, PermissionPlanRead,
+		PermissionBillingRead,
 		PermissionReportView,
 	},
 	RoleReadOnly: {
-		PermissionLicenseRead, PermissionProductRead, PermissionPlanRead,
+		PermissionLicenseRead, PermissionProductRead, PermissionPlanRead, PermissionBillingRead,
 	},
 	RoleAPIClient: {
 		PermissionLicenseRead, PermissionProductRead, PermissionPlanRead,

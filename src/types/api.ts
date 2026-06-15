@@ -235,15 +235,115 @@ export interface Subscription {
     product_id: string;
     plan_id: string;
     license_id?: string;
-    status: 'active' | 'cancelled' | 'expired' | 'pending';
+    status: string;
     start_date: string;
     end_date: string;
     billing_cycle: string;
     next_billing_date?: string;
     cancelled_at?: string;
     cancel_reason?: string;
+    auto_renew: boolean;
+    collection_method: string;
+    gateway_id?: string;
+    payment_method_id?: string;
+    gateway_customer_id?: string;
+    gateway_subscription_id?: string;
+    quantity: number;
+    grace_period_days: number;
+    failure_count: number;
+    last_reminder_at?: string;
+    next_reminder_at?: string;
+    approval_status?: string;
     created_at: string;
     updated_at: string;
+}
+
+export interface PaymentGatewayConfig {
+    id: string;
+    name: string;
+    provider: string;
+    environment: string;
+    enabled: boolean;
+    is_default: boolean;
+    supports_recurring: boolean;
+    requires_approval: boolean;
+    config?: Record<string, string>;
+    metadata?: Record<string, string>;
+    created_at: string;
+    updated_at: string;
+}
+
+export interface BillingInvoice {
+    id: string;
+    subscription_id: string;
+    client_id: string;
+    product_id: string;
+    plan_id: string;
+    status: string;
+    currency: string;
+    subtotal_amount: number;
+    discount_amount: number;
+    tax_amount: number;
+    total_amount: number;
+    period_start: string;
+    period_end: string;
+    due_at: string;
+    paid_at?: string;
+    voided_at?: string;
+    gateway_id?: string;
+    gateway_invoice_id?: string;
+    hosted_invoice_url?: string;
+    attempt_count: number;
+    next_payment_attempt_at?: string;
+    metadata?: Record<string, string>;
+    created_at: string;
+    updated_at: string;
+}
+
+export interface PaymentAttempt {
+    id: string;
+    invoice_id: string;
+    subscription_id: string;
+    gateway_id: string;
+    payment_method_id?: string;
+    status: string;
+    amount: number;
+    currency: string;
+    gateway_payment_intent_id?: string;
+    error_code?: string;
+    error_message?: string;
+    attempted_at: string;
+    next_retry_at?: string;
+    metadata?: Record<string, string>;
+    created_at: string;
+    updated_at: string;
+}
+
+export interface BillingApprovalRequest {
+    id: string;
+    subject_type: string;
+    subject_id: string;
+    client_id?: string;
+    status: string;
+    reason?: string;
+    requested_by?: string;
+    decided_by?: string;
+    requested_at: string;
+    decided_at?: string;
+    expires_at?: string;
+    metadata?: Record<string, string>;
+    created_at: string;
+    updated_at: string;
+}
+
+export interface BillingRunResult {
+    invoices_created: number;
+    invoices_paid: number;
+    invoices_pending: number;
+    invoices_failed: number;
+    reminders_queued: number;
+    subscriptions?: string[];
+    errors?: string[];
 }
 
 export interface UpgradeLicenseRequest {

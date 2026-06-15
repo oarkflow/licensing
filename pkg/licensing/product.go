@@ -19,20 +19,32 @@ type Product struct {
 
 // Subscription represents a customer's subscription to a product plan.
 type Subscription struct {
-	ID              string    `json:"id"`
-	ClientID        string    `json:"client_id"`
-	ProductID       string    `json:"product_id"`
-	PlanID          string    `json:"plan_id"`
-	LicenseID       string    `json:"license_id,omitempty"` // Links to generated license
-	Status          string    `json:"status"`               // active, cancelled, expired, pending
-	StartDate       time.Time `json:"start_date"`
-	EndDate         time.Time `json:"end_date"`
-	BillingCycle    string    `json:"billing_cycle"` // monthly, yearly, lifetime
-	NextBillingDate time.Time `json:"next_billing_date,omitempty"`
-	CancelledAt     time.Time `json:"cancelled_at,omitempty"`
-	CancelReason    string    `json:"cancel_reason,omitempty"`
-	CreatedAt       time.Time `json:"created_at"`
-	UpdatedAt       time.Time `json:"updated_at"`
+	ID                    string    `json:"id"`
+	ClientID              string    `json:"client_id"`
+	ProductID             string    `json:"product_id"`
+	PlanID                string    `json:"plan_id"`
+	LicenseID             string    `json:"license_id,omitempty"` // Links to generated license
+	Status                string    `json:"status"`               // active, cancelled, expired, pending, past_due, paused
+	StartDate             time.Time `json:"start_date"`
+	EndDate               time.Time `json:"end_date"`
+	BillingCycle          string    `json:"billing_cycle"` // monthly, yearly, lifetime
+	NextBillingDate       time.Time `json:"next_billing_date,omitempty"`
+	CancelledAt           time.Time `json:"cancelled_at,omitempty"`
+	CancelReason          string    `json:"cancel_reason,omitempty"`
+	AutoRenew             bool      `json:"auto_renew"`
+	CollectionMethod      string    `json:"collection_method"` // automatic, send_invoice, manual
+	GatewayID             string    `json:"gateway_id,omitempty"`
+	PaymentMethodID       string    `json:"payment_method_id,omitempty"`
+	GatewayCustomerID     string    `json:"gateway_customer_id,omitempty"`
+	GatewaySubscriptionID string    `json:"gateway_subscription_id,omitempty"`
+	Quantity              int       `json:"quantity"`
+	GracePeriodDays       int       `json:"grace_period_days"`
+	FailureCount          int       `json:"failure_count"`
+	LastReminderAt        time.Time `json:"last_reminder_at,omitempty"`
+	NextReminderAt        time.Time `json:"next_reminder_at,omitempty"`
+	ApprovalStatus        string    `json:"approval_status,omitempty"`
+	CreatedAt             time.Time `json:"created_at"`
+	UpdatedAt             time.Time `json:"updated_at"`
 }
 
 // Subscription status constants
@@ -41,6 +53,14 @@ const (
 	SubscriptionStatusCancelled = "cancelled"
 	SubscriptionStatusExpired   = "expired"
 	SubscriptionStatusPending   = "pending"
+	SubscriptionStatusPastDue   = "past_due"
+	SubscriptionStatusPaused    = "paused"
+)
+
+const (
+	CollectionMethodAutomatic   = "automatic"
+	CollectionMethodSendInvoice = "send_invoice"
+	CollectionMethodManual      = "manual"
 )
 
 // Plan represents a pricing/feature tier for a product.

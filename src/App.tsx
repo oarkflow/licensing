@@ -46,6 +46,7 @@ const AdminUserEditPage = lazy(() => import("@/pages/admin").then(module => ({ d
 const AdminAPIKeysPage = lazy(() => import("@/pages/admin").then(module => ({ default: module.AdminAPIKeysPage })));
 const AdminSigningKeysPage = lazy(() => import("@/pages/admin").then(module => ({ default: module.AdminSigningKeysPage })));
 const AdminCouponsPage = lazy(() => import("@/pages/admin").then(module => ({ default: module.AdminCouponsPage })));
+const AdminBillingPage = lazy(() => import("@/pages/admin").then(module => ({ default: module.AdminBillingPage })));
 
 const MessagingProvidersPage = lazy(() => import("@/pages/messaging").then(module => ({ default: module.MessagingProvidersPage })));
 const MessagingProviderFormPage = lazy(() => import("@/pages/messaging").then(module => ({ default: module.MessagingProviderFormPage })));
@@ -138,6 +139,7 @@ const App = () => (
                                     <Route path="/admin/api-keys" element={<AdminAPIKeysPage />} />
                                     <Route path="/admin/signing-keys" element={<AdminSigningKeysPage />} />
                                     <Route path="/admin/coupons" element={<AdminCouponsPage />} />
+                                    <Route path="/admin/billing" element={<AdminBillingPage />} />
 
                                     {/* Profile */}
                                     <Route path="/profile" element={<ProfilePage />} />

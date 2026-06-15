@@ -132,6 +132,31 @@ type Storage interface {
 	ListSubscriptionsByClient(ctx context.Context, clientID string) ([]*Subscription, error)
 	DeleteSubscription(ctx context.Context, subID string) error
 
+	// Billing management
+	SavePaymentGateway(ctx context.Context, gateway *PaymentGatewayConfig) error
+	UpdatePaymentGateway(ctx context.Context, gateway *PaymentGatewayConfig) error
+	GetPaymentGateway(ctx context.Context, gatewayID string) (*PaymentGatewayConfig, error)
+	ListPaymentGateways(ctx context.Context) ([]*PaymentGatewayConfig, error)
+	SavePaymentMethod(ctx context.Context, method *PaymentMethod) error
+	UpdatePaymentMethod(ctx context.Context, method *PaymentMethod) error
+	GetPaymentMethod(ctx context.Context, methodID string) (*PaymentMethod, error)
+	ListPaymentMethodsByClient(ctx context.Context, clientID string) ([]*PaymentMethod, error)
+	SaveBillingInvoice(ctx context.Context, invoice *BillingInvoice) error
+	UpdateBillingInvoice(ctx context.Context, invoice *BillingInvoice) error
+	GetBillingInvoice(ctx context.Context, invoiceID string) (*BillingInvoice, error)
+	ListBillingInvoicesBySubscription(ctx context.Context, subscriptionID string) ([]*BillingInvoice, error)
+	ListBillingInvoicesByClient(ctx context.Context, clientID string) ([]*BillingInvoice, error)
+	ListDueBillingInvoices(ctx context.Context, dueBefore time.Time) ([]*BillingInvoice, error)
+	SavePaymentAttempt(ctx context.Context, attempt *PaymentAttempt) error
+	ListPaymentAttemptsByInvoice(ctx context.Context, invoiceID string) ([]*PaymentAttempt, error)
+	SaveBillingApprovalRequest(ctx context.Context, approval *BillingApprovalRequest) error
+	UpdateBillingApprovalRequest(ctx context.Context, approval *BillingApprovalRequest) error
+	GetBillingApprovalRequest(ctx context.Context, approvalID string) (*BillingApprovalRequest, error)
+	ListBillingApprovalRequests(ctx context.Context, status string) ([]*BillingApprovalRequest, error)
+	SaveBillingWebhookEvent(ctx context.Context, event *BillingWebhookEvent) error
+	UpdateBillingWebhookEvent(ctx context.Context, event *BillingWebhookEvent) error
+	GetBillingWebhookEventByProviderEvent(ctx context.Context, gatewayID, eventID string) (*BillingWebhookEvent, error)
+
 	// Email providers/templates/messages
 	SaveEmailProvider(ctx context.Context, provider *email.EmailProvider) error
 	UpdateEmailProvider(ctx context.Context, provider *email.EmailProvider) error
@@ -370,6 +395,17 @@ type InMemoryStorage struct {
 	couponRedemptionsByCoupon     map[string][]string
 	couponRedemptionsByLicense    map[string][]string
 	couponRedemptionsByClient     map[string][]string
+	paymentGateways               map[string]*PaymentGatewayConfig
+	paymentMethods                map[string]*PaymentMethod
+	paymentMethodsByClient        map[string][]string
+	billingInvoices               map[string]*BillingInvoice
+	billingInvoicesBySubscription map[string][]string
+	billingInvoicesByClient       map[string][]string
+	paymentAttempts               map[string]*PaymentAttempt
+	paymentAttemptsByInvoice      map[string][]string
+	billingApprovals              map[string]*BillingApprovalRequest
+	billingWebhooks               map[string]*BillingWebhookEvent
+	billingWebhooksByProvider     map[string]string
 }
 
 func NewInMemoryStorage() *InMemoryStorage {
@@ -414,6 +450,17 @@ func NewInMemoryStorage() *InMemoryStorage {
 		couponRedemptionsByCoupon:     make(map[string][]string),
 		couponRedemptionsByLicense:    make(map[string][]string),
 		couponRedemptionsByClient:     make(map[string][]string),
+		paymentGateways:               make(map[string]*PaymentGatewayConfig),
+		paymentMethods:                make(map[string]*PaymentMethod),
+		paymentMethodsByClient:        make(map[string][]string),
+		billingInvoices:               make(map[string]*BillingInvoice),
+		billingInvoicesBySubscription: make(map[string][]string),
+		billingInvoicesByClient:       make(map[string][]string),
+		paymentAttempts:               make(map[string]*PaymentAttempt),
+		paymentAttemptsByInvoice:      make(map[string][]string),
+		billingApprovals:              make(map[string]*BillingApprovalRequest),
+		billingWebhooks:               make(map[string]*BillingWebhookEvent),
+		billingWebhooksByProvider:     make(map[string]string),
 		signingKeys:                   make(map[string]*SigningKey),
 		activeSigningKeyID:            "",
 	}
@@ -436,6 +483,12 @@ type storageSnapshot struct {
 	Coupons                 map[string]*CouponCode               `json:"coupons,omitempty"`
 	CouponRedemptions       map[string]*CouponRedemption         `json:"coupon_redemptions,omitempty"`
 	DeviceReplacementTokens map[string]*DeviceReplacementToken   `json:"device_replacement_tokens,omitempty"`
+	PaymentGateways         map[string]*PaymentGatewayConfig     `json:"payment_gateways,omitempty"`
+	PaymentMethods          map[string]*PaymentMethod            `json:"payment_methods,omitempty"`
+	BillingInvoices         map[string]*BillingInvoice           `json:"billing_invoices,omitempty"`
+	PaymentAttempts         map[string]*PaymentAttempt           `json:"payment_attempts,omitempty"`
+	BillingApprovals        map[string]*BillingApprovalRequest   `json:"billing_approvals,omitempty"`
+	BillingWebhooks         map[string]*BillingWebhookEvent      `json:"billing_webhooks,omitempty"`
 }
 
 func (s *InMemoryStorage) SaveClient(_ context.Context, client *Client) error {
@@ -1649,6 +1702,415 @@ func (s *InMemoryStorage) DeleteSubscription(_ context.Context, subID string) er
 	return nil
 }
 
+func (s *InMemoryStorage) SavePaymentGateway(_ context.Context, gateway *PaymentGatewayConfig) error {
+	if gateway == nil {
+		return fmt.Errorf("payment gateway is nil")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, exists := s.paymentGateways[gateway.ID]; exists {
+		return errPaymentGatewayExists
+	}
+	now := time.Now()
+	clone := clonePaymentGatewayConfig(gateway)
+	if clone.CreatedAt.IsZero() {
+		clone.CreatedAt = now
+	}
+	clone.UpdatedAt = now
+	s.paymentGateways[clone.ID] = clone
+	return nil
+}
+
+func (s *InMemoryStorage) UpdatePaymentGateway(_ context.Context, gateway *PaymentGatewayConfig) error {
+	if gateway == nil {
+		return fmt.Errorf("payment gateway is nil")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	current, exists := s.paymentGateways[gateway.ID]
+	if !exists {
+		return errPaymentGatewayMissing
+	}
+	clone := clonePaymentGatewayConfig(gateway)
+	if clone.CreatedAt.IsZero() {
+		clone.CreatedAt = current.CreatedAt
+	}
+	clone.UpdatedAt = time.Now()
+	s.paymentGateways[clone.ID] = clone
+	return nil
+}
+
+func (s *InMemoryStorage) GetPaymentGateway(_ context.Context, gatewayID string) (*PaymentGatewayConfig, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	gateway, ok := s.paymentGateways[gatewayID]
+	if !ok {
+		return nil, errPaymentGatewayMissing
+	}
+	return clonePaymentGatewayConfig(gateway), nil
+}
+
+func (s *InMemoryStorage) ListPaymentGateways(_ context.Context) ([]*PaymentGatewayConfig, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	gateways := make([]*PaymentGatewayConfig, 0, len(s.paymentGateways))
+	for _, gateway := range s.paymentGateways {
+		gateways = append(gateways, clonePaymentGatewayConfig(gateway))
+	}
+	sort.Slice(gateways, func(i, j int) bool { return gateways[i].Name < gateways[j].Name })
+	return gateways, nil
+}
+
+func (s *InMemoryStorage) SavePaymentMethod(_ context.Context, method *PaymentMethod) error {
+	if method == nil {
+		return fmt.Errorf("payment method is nil")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, exists := s.paymentMethods[method.ID]; exists {
+		return errPaymentMethodExists
+	}
+	now := time.Now()
+	clone := clonePaymentMethod(method)
+	if clone.CreatedAt.IsZero() {
+		clone.CreatedAt = now
+	}
+	clone.UpdatedAt = now
+	s.paymentMethods[clone.ID] = clone
+	s.paymentMethodsByClient[clone.ClientID] = append(s.paymentMethodsByClient[clone.ClientID], clone.ID)
+	return nil
+}
+
+func (s *InMemoryStorage) UpdatePaymentMethod(_ context.Context, method *PaymentMethod) error {
+	if method == nil {
+		return fmt.Errorf("payment method is nil")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	current, exists := s.paymentMethods[method.ID]
+	if !exists {
+		return errPaymentMethodMissing
+	}
+	if current.ClientID != method.ClientID {
+		s.paymentMethodsByClient[current.ClientID] = removeStringID(s.paymentMethodsByClient[current.ClientID], method.ID)
+		s.paymentMethodsByClient[method.ClientID] = append(s.paymentMethodsByClient[method.ClientID], method.ID)
+	}
+	clone := clonePaymentMethod(method)
+	if clone.CreatedAt.IsZero() {
+		clone.CreatedAt = current.CreatedAt
+	}
+	clone.UpdatedAt = time.Now()
+	s.paymentMethods[clone.ID] = clone
+	return nil
+}
+
+func (s *InMemoryStorage) GetPaymentMethod(_ context.Context, methodID string) (*PaymentMethod, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	method, ok := s.paymentMethods[methodID]
+	if !ok {
+		return nil, errPaymentMethodMissing
+	}
+	return clonePaymentMethod(method), nil
+}
+
+func (s *InMemoryStorage) ListPaymentMethodsByClient(_ context.Context, clientID string) ([]*PaymentMethod, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	methods := make([]*PaymentMethod, 0, len(s.paymentMethodsByClient[clientID]))
+	for _, id := range s.paymentMethodsByClient[clientID] {
+		if method := s.paymentMethods[id]; method != nil {
+			methods = append(methods, clonePaymentMethod(method))
+		}
+	}
+	sort.Slice(methods, func(i, j int) bool { return methods[i].CreatedAt.After(methods[j].CreatedAt) })
+	return methods, nil
+}
+
+func (s *InMemoryStorage) SaveBillingInvoice(_ context.Context, invoice *BillingInvoice) error {
+	if invoice == nil {
+		return fmt.Errorf("billing invoice is nil")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, exists := s.billingInvoices[invoice.ID]; exists {
+		return errBillingInvoiceExists
+	}
+	now := time.Now()
+	clone := cloneBillingInvoice(invoice)
+	if clone.CreatedAt.IsZero() {
+		clone.CreatedAt = now
+	}
+	clone.UpdatedAt = now
+	s.billingInvoices[clone.ID] = clone
+	s.billingInvoicesBySubscription[clone.SubscriptionID] = append(s.billingInvoicesBySubscription[clone.SubscriptionID], clone.ID)
+	s.billingInvoicesByClient[clone.ClientID] = append(s.billingInvoicesByClient[clone.ClientID], clone.ID)
+	return nil
+}
+
+func (s *InMemoryStorage) UpdateBillingInvoice(_ context.Context, invoice *BillingInvoice) error {
+	if invoice == nil {
+		return fmt.Errorf("billing invoice is nil")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	current, exists := s.billingInvoices[invoice.ID]
+	if !exists {
+		return errBillingInvoiceMissing
+	}
+	if current.SubscriptionID != invoice.SubscriptionID {
+		s.billingInvoicesBySubscription[current.SubscriptionID] = removeStringID(s.billingInvoicesBySubscription[current.SubscriptionID], invoice.ID)
+		s.billingInvoicesBySubscription[invoice.SubscriptionID] = append(s.billingInvoicesBySubscription[invoice.SubscriptionID], invoice.ID)
+	}
+	if current.ClientID != invoice.ClientID {
+		s.billingInvoicesByClient[current.ClientID] = removeStringID(s.billingInvoicesByClient[current.ClientID], invoice.ID)
+		s.billingInvoicesByClient[invoice.ClientID] = append(s.billingInvoicesByClient[invoice.ClientID], invoice.ID)
+	}
+	clone := cloneBillingInvoice(invoice)
+	if clone.CreatedAt.IsZero() {
+		clone.CreatedAt = current.CreatedAt
+	}
+	clone.UpdatedAt = time.Now()
+	s.billingInvoices[clone.ID] = clone
+	return nil
+}
+
+func (s *InMemoryStorage) GetBillingInvoice(_ context.Context, invoiceID string) (*BillingInvoice, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	invoice, ok := s.billingInvoices[invoiceID]
+	if !ok {
+		return nil, errBillingInvoiceMissing
+	}
+	return cloneBillingInvoice(invoice), nil
+}
+
+func (s *InMemoryStorage) ListBillingInvoicesBySubscription(_ context.Context, subscriptionID string) ([]*BillingInvoice, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.listBillingInvoicesByIDsLocked(s.billingInvoicesBySubscription[subscriptionID]), nil
+}
+
+func (s *InMemoryStorage) ListBillingInvoicesByClient(_ context.Context, clientID string) ([]*BillingInvoice, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.listBillingInvoicesByIDsLocked(s.billingInvoicesByClient[clientID]), nil
+}
+
+func (s *InMemoryStorage) ListDueBillingInvoices(_ context.Context, dueBefore time.Time) ([]*BillingInvoice, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	invoices := make([]*BillingInvoice, 0)
+	for _, invoice := range s.billingInvoices {
+		if invoice.DueAt.After(dueBefore) {
+			continue
+		}
+		if invoice.Status == InvoiceStatusOpen || invoice.Status == InvoiceStatusPaymentFailed || invoice.Status == InvoiceStatusPendingPayment {
+			invoices = append(invoices, cloneBillingInvoice(invoice))
+		}
+	}
+	sort.Slice(invoices, func(i, j int) bool { return invoices[i].DueAt.Before(invoices[j].DueAt) })
+	return invoices, nil
+}
+
+func (s *InMemoryStorage) listBillingInvoicesByIDsLocked(ids []string) []*BillingInvoice {
+	invoices := make([]*BillingInvoice, 0, len(ids))
+	for _, id := range ids {
+		if invoice := s.billingInvoices[id]; invoice != nil {
+			invoices = append(invoices, cloneBillingInvoice(invoice))
+		}
+	}
+	sort.Slice(invoices, func(i, j int) bool { return invoices[i].DueAt.After(invoices[j].DueAt) })
+	return invoices
+}
+
+func (s *InMemoryStorage) SavePaymentAttempt(_ context.Context, attempt *PaymentAttempt) error {
+	if attempt == nil {
+		return fmt.Errorf("payment attempt is nil")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, exists := s.paymentAttempts[attempt.ID]; exists {
+		return errPaymentAttemptExists
+	}
+	now := time.Now()
+	clone := clonePaymentAttempt(attempt)
+	if clone.CreatedAt.IsZero() {
+		clone.CreatedAt = now
+	}
+	if clone.AttemptedAt.IsZero() {
+		clone.AttemptedAt = now
+	}
+	clone.UpdatedAt = now
+	s.paymentAttempts[clone.ID] = clone
+	s.paymentAttemptsByInvoice[clone.InvoiceID] = append(s.paymentAttemptsByInvoice[clone.InvoiceID], clone.ID)
+	return nil
+}
+
+func (s *InMemoryStorage) ListPaymentAttemptsByInvoice(_ context.Context, invoiceID string) ([]*PaymentAttempt, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	attempts := make([]*PaymentAttempt, 0, len(s.paymentAttemptsByInvoice[invoiceID]))
+	for _, id := range s.paymentAttemptsByInvoice[invoiceID] {
+		if attempt := s.paymentAttempts[id]; attempt != nil {
+			attempts = append(attempts, clonePaymentAttempt(attempt))
+		}
+	}
+	sort.Slice(attempts, func(i, j int) bool { return attempts[i].AttemptedAt.After(attempts[j].AttemptedAt) })
+	return attempts, nil
+}
+
+func (s *InMemoryStorage) SaveBillingApprovalRequest(_ context.Context, approval *BillingApprovalRequest) error {
+	if approval == nil {
+		return fmt.Errorf("billing approval request is nil")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, exists := s.billingApprovals[approval.ID]; exists {
+		return errBillingApprovalExists
+	}
+	now := time.Now()
+	clone := cloneBillingApprovalRequest(approval)
+	if clone.CreatedAt.IsZero() {
+		clone.CreatedAt = now
+	}
+	if clone.RequestedAt.IsZero() {
+		clone.RequestedAt = now
+	}
+	clone.UpdatedAt = now
+	s.billingApprovals[clone.ID] = clone
+	return nil
+}
+
+func (s *InMemoryStorage) UpdateBillingApprovalRequest(_ context.Context, approval *BillingApprovalRequest) error {
+	if approval == nil {
+		return fmt.Errorf("billing approval request is nil")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	current, exists := s.billingApprovals[approval.ID]
+	if !exists {
+		return errBillingApprovalMissing
+	}
+	clone := cloneBillingApprovalRequest(approval)
+	if clone.CreatedAt.IsZero() {
+		clone.CreatedAt = current.CreatedAt
+	}
+	clone.UpdatedAt = time.Now()
+	s.billingApprovals[clone.ID] = clone
+	return nil
+}
+
+func (s *InMemoryStorage) GetBillingApprovalRequest(_ context.Context, approvalID string) (*BillingApprovalRequest, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	approval, ok := s.billingApprovals[approvalID]
+	if !ok {
+		return nil, errBillingApprovalMissing
+	}
+	return cloneBillingApprovalRequest(approval), nil
+}
+
+func (s *InMemoryStorage) ListBillingApprovalRequests(_ context.Context, status string) ([]*BillingApprovalRequest, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	approvals := make([]*BillingApprovalRequest, 0, len(s.billingApprovals))
+	for _, approval := range s.billingApprovals {
+		if status != "" && approval.Status != status {
+			continue
+		}
+		approvals = append(approvals, cloneBillingApprovalRequest(approval))
+	}
+	sort.Slice(approvals, func(i, j int) bool { return approvals[i].RequestedAt.Before(approvals[j].RequestedAt) })
+	return approvals, nil
+}
+
+func (s *InMemoryStorage) SaveBillingWebhookEvent(_ context.Context, event *BillingWebhookEvent) error {
+	if event == nil {
+		return fmt.Errorf("billing webhook event is nil")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, exists := s.billingWebhooks[event.ID]; exists {
+		return errBillingWebhookExists
+	}
+	key := billingWebhookProviderKey(event.GatewayID, event.EventID)
+	if key != ":" {
+		if _, exists := s.billingWebhooksByProvider[key]; exists {
+			return errBillingWebhookExists
+		}
+	}
+	now := time.Now()
+	clone := cloneBillingWebhookEvent(event)
+	if clone.CreatedAt.IsZero() {
+		clone.CreatedAt = now
+	}
+	if clone.ReceivedAt.IsZero() {
+		clone.ReceivedAt = now
+	}
+	clone.UpdatedAt = now
+	s.billingWebhooks[clone.ID] = clone
+	if key != ":" {
+		s.billingWebhooksByProvider[key] = clone.ID
+	}
+	return nil
+}
+
+func (s *InMemoryStorage) UpdateBillingWebhookEvent(_ context.Context, event *BillingWebhookEvent) error {
+	if event == nil {
+		return fmt.Errorf("billing webhook event is nil")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	current, exists := s.billingWebhooks[event.ID]
+	if !exists {
+		return errBillingWebhookMissing
+	}
+	oldKey := billingWebhookProviderKey(current.GatewayID, current.EventID)
+	newKey := billingWebhookProviderKey(event.GatewayID, event.EventID)
+	if oldKey != newKey {
+		delete(s.billingWebhooksByProvider, oldKey)
+		s.billingWebhooksByProvider[newKey] = event.ID
+	}
+	clone := cloneBillingWebhookEvent(event)
+	if clone.CreatedAt.IsZero() {
+		clone.CreatedAt = current.CreatedAt
+	}
+	if clone.ReceivedAt.IsZero() {
+		clone.ReceivedAt = current.ReceivedAt
+	}
+	clone.UpdatedAt = time.Now()
+	s.billingWebhooks[clone.ID] = clone
+	return nil
+}
+
+func (s *InMemoryStorage) GetBillingWebhookEventByProviderEvent(_ context.Context, gatewayID, eventID string) (*BillingWebhookEvent, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	id := s.billingWebhooksByProvider[billingWebhookProviderKey(gatewayID, eventID)]
+	if id == "" {
+		return nil, errBillingWebhookMissing
+	}
+	return cloneBillingWebhookEvent(s.billingWebhooks[id]), nil
+}
+
+func billingWebhookProviderKey(gatewayID, eventID string) string {
+	return strings.TrimSpace(gatewayID) + ":" + strings.TrimSpace(eventID)
+}
+
+func removeStringID(ids []string, remove string) []string {
+	if len(ids) == 0 {
+		return nil
+	}
+	out := ids[:0]
+	for _, id := range ids {
+		if id != remove {
+			out = append(out, id)
+		}
+	}
+	return out
+}
+
 func (s *InMemoryStorage) snapshot() *storageSnapshot {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -1665,6 +2127,12 @@ func (s *InMemoryStorage) snapshot() *storageSnapshot {
 		EmailMessages:           make(map[string]*email.EmailMessage, len(s.emailMessages)),
 		EmailEvents:             make(map[string][]*email.EmailEvent, len(s.emailEvents)),
 		DeviceReplacementTokens: make(map[string]*DeviceReplacementToken, len(s.deviceReplacementTokens)),
+		PaymentGateways:         make(map[string]*PaymentGatewayConfig, len(s.paymentGateways)),
+		PaymentMethods:          make(map[string]*PaymentMethod, len(s.paymentMethods)),
+		BillingInvoices:         make(map[string]*BillingInvoice, len(s.billingInvoices)),
+		PaymentAttempts:         make(map[string]*PaymentAttempt, len(s.paymentAttempts)),
+		BillingApprovals:        make(map[string]*BillingApprovalRequest, len(s.billingApprovals)),
+		BillingWebhooks:         make(map[string]*BillingWebhookEvent, len(s.billingWebhooks)),
 	}
 	for id, client := range s.clients {
 		snapshot.Clients[id] = cloneClient(client)
@@ -1709,6 +2177,24 @@ func (s *InMemoryStorage) snapshot() *storageSnapshot {
 	}
 	for id, token := range s.deviceReplacementTokens {
 		snapshot.DeviceReplacementTokens[id] = cloneDeviceReplacementToken(token)
+	}
+	for id, gateway := range s.paymentGateways {
+		snapshot.PaymentGateways[id] = clonePaymentGatewayConfig(gateway)
+	}
+	for id, method := range s.paymentMethods {
+		snapshot.PaymentMethods[id] = clonePaymentMethod(method)
+	}
+	for id, invoice := range s.billingInvoices {
+		snapshot.BillingInvoices[id] = cloneBillingInvoice(invoice)
+	}
+	for id, attempt := range s.paymentAttempts {
+		snapshot.PaymentAttempts[id] = clonePaymentAttempt(attempt)
+	}
+	for id, approval := range s.billingApprovals {
+		snapshot.BillingApprovals[id] = cloneBillingApprovalRequest(approval)
+	}
+	for id, event := range s.billingWebhooks {
+		snapshot.BillingWebhooks[id] = cloneBillingWebhookEvent(event)
 	}
 	if len(s.coupons) > 0 {
 		snapshot.Coupons = make(map[string]*CouponCode, len(s.coupons))
@@ -1803,6 +2289,44 @@ func (s *InMemoryStorage) loadSnapshot(snapshot *storageSnapshot) {
 			s.subsByClient[cloned.ClientID] = make(map[string]struct{})
 		}
 		s.subsByClient[cloned.ClientID][id] = struct{}{}
+	}
+	s.paymentGateways = make(map[string]*PaymentGatewayConfig, len(snapshot.PaymentGateways))
+	for id, gateway := range snapshot.PaymentGateways {
+		s.paymentGateways[id] = clonePaymentGatewayConfig(gateway)
+	}
+	s.paymentMethods = make(map[string]*PaymentMethod, len(snapshot.PaymentMethods))
+	s.paymentMethodsByClient = make(map[string][]string)
+	for id, method := range snapshot.PaymentMethods {
+		cloned := clonePaymentMethod(method)
+		s.paymentMethods[id] = cloned
+		s.paymentMethodsByClient[cloned.ClientID] = append(s.paymentMethodsByClient[cloned.ClientID], id)
+	}
+	s.billingInvoices = make(map[string]*BillingInvoice, len(snapshot.BillingInvoices))
+	s.billingInvoicesBySubscription = make(map[string][]string)
+	s.billingInvoicesByClient = make(map[string][]string)
+	for id, invoice := range snapshot.BillingInvoices {
+		cloned := cloneBillingInvoice(invoice)
+		s.billingInvoices[id] = cloned
+		s.billingInvoicesBySubscription[cloned.SubscriptionID] = append(s.billingInvoicesBySubscription[cloned.SubscriptionID], id)
+		s.billingInvoicesByClient[cloned.ClientID] = append(s.billingInvoicesByClient[cloned.ClientID], id)
+	}
+	s.paymentAttempts = make(map[string]*PaymentAttempt, len(snapshot.PaymentAttempts))
+	s.paymentAttemptsByInvoice = make(map[string][]string)
+	for id, attempt := range snapshot.PaymentAttempts {
+		cloned := clonePaymentAttempt(attempt)
+		s.paymentAttempts[id] = cloned
+		s.paymentAttemptsByInvoice[cloned.InvoiceID] = append(s.paymentAttemptsByInvoice[cloned.InvoiceID], id)
+	}
+	s.billingApprovals = make(map[string]*BillingApprovalRequest, len(snapshot.BillingApprovals))
+	for id, approval := range snapshot.BillingApprovals {
+		s.billingApprovals[id] = cloneBillingApprovalRequest(approval)
+	}
+	s.billingWebhooks = make(map[string]*BillingWebhookEvent, len(snapshot.BillingWebhooks))
+	s.billingWebhooksByProvider = make(map[string]string)
+	for id, event := range snapshot.BillingWebhooks {
+		cloned := cloneBillingWebhookEvent(event)
+		s.billingWebhooks[id] = cloned
+		s.billingWebhooksByProvider[billingWebhookProviderKey(cloned.GatewayID, cloned.EventID)] = id
 	}
 	s.emailProviders = make(map[string]*email.EmailProvider, len(snapshot.EmailProviders))
 	s.emailProvidersBySlug = make(map[string]string, len(snapshot.EmailProviders))
@@ -2163,6 +2687,131 @@ func (ps *PersistentStorage) DeleteSubscription(ctx context.Context, subID strin
 		return err
 	}
 	return ps.persist()
+}
+
+func (ps *PersistentStorage) SavePaymentGateway(ctx context.Context, gateway *PaymentGatewayConfig) error {
+	if err := ps.backend.SavePaymentGateway(ctx, gateway); err != nil {
+		return err
+	}
+	return ps.persist()
+}
+
+func (ps *PersistentStorage) UpdatePaymentGateway(ctx context.Context, gateway *PaymentGatewayConfig) error {
+	if err := ps.backend.UpdatePaymentGateway(ctx, gateway); err != nil {
+		return err
+	}
+	return ps.persist()
+}
+
+func (ps *PersistentStorage) GetPaymentGateway(ctx context.Context, gatewayID string) (*PaymentGatewayConfig, error) {
+	return ps.backend.GetPaymentGateway(ctx, gatewayID)
+}
+
+func (ps *PersistentStorage) ListPaymentGateways(ctx context.Context) ([]*PaymentGatewayConfig, error) {
+	return ps.backend.ListPaymentGateways(ctx)
+}
+
+func (ps *PersistentStorage) SavePaymentMethod(ctx context.Context, method *PaymentMethod) error {
+	if err := ps.backend.SavePaymentMethod(ctx, method); err != nil {
+		return err
+	}
+	return ps.persist()
+}
+
+func (ps *PersistentStorage) UpdatePaymentMethod(ctx context.Context, method *PaymentMethod) error {
+	if err := ps.backend.UpdatePaymentMethod(ctx, method); err != nil {
+		return err
+	}
+	return ps.persist()
+}
+
+func (ps *PersistentStorage) GetPaymentMethod(ctx context.Context, methodID string) (*PaymentMethod, error) {
+	return ps.backend.GetPaymentMethod(ctx, methodID)
+}
+
+func (ps *PersistentStorage) ListPaymentMethodsByClient(ctx context.Context, clientID string) ([]*PaymentMethod, error) {
+	return ps.backend.ListPaymentMethodsByClient(ctx, clientID)
+}
+
+func (ps *PersistentStorage) SaveBillingInvoice(ctx context.Context, invoice *BillingInvoice) error {
+	if err := ps.backend.SaveBillingInvoice(ctx, invoice); err != nil {
+		return err
+	}
+	return ps.persist()
+}
+
+func (ps *PersistentStorage) UpdateBillingInvoice(ctx context.Context, invoice *BillingInvoice) error {
+	if err := ps.backend.UpdateBillingInvoice(ctx, invoice); err != nil {
+		return err
+	}
+	return ps.persist()
+}
+
+func (ps *PersistentStorage) GetBillingInvoice(ctx context.Context, invoiceID string) (*BillingInvoice, error) {
+	return ps.backend.GetBillingInvoice(ctx, invoiceID)
+}
+
+func (ps *PersistentStorage) ListBillingInvoicesBySubscription(ctx context.Context, subscriptionID string) ([]*BillingInvoice, error) {
+	return ps.backend.ListBillingInvoicesBySubscription(ctx, subscriptionID)
+}
+
+func (ps *PersistentStorage) ListBillingInvoicesByClient(ctx context.Context, clientID string) ([]*BillingInvoice, error) {
+	return ps.backend.ListBillingInvoicesByClient(ctx, clientID)
+}
+
+func (ps *PersistentStorage) ListDueBillingInvoices(ctx context.Context, dueBefore time.Time) ([]*BillingInvoice, error) {
+	return ps.backend.ListDueBillingInvoices(ctx, dueBefore)
+}
+
+func (ps *PersistentStorage) SavePaymentAttempt(ctx context.Context, attempt *PaymentAttempt) error {
+	if err := ps.backend.SavePaymentAttempt(ctx, attempt); err != nil {
+		return err
+	}
+	return ps.persist()
+}
+
+func (ps *PersistentStorage) ListPaymentAttemptsByInvoice(ctx context.Context, invoiceID string) ([]*PaymentAttempt, error) {
+	return ps.backend.ListPaymentAttemptsByInvoice(ctx, invoiceID)
+}
+
+func (ps *PersistentStorage) SaveBillingApprovalRequest(ctx context.Context, approval *BillingApprovalRequest) error {
+	if err := ps.backend.SaveBillingApprovalRequest(ctx, approval); err != nil {
+		return err
+	}
+	return ps.persist()
+}
+
+func (ps *PersistentStorage) UpdateBillingApprovalRequest(ctx context.Context, approval *BillingApprovalRequest) error {
+	if err := ps.backend.UpdateBillingApprovalRequest(ctx, approval); err != nil {
+		return err
+	}
+	return ps.persist()
+}
+
+func (ps *PersistentStorage) GetBillingApprovalRequest(ctx context.Context, approvalID string) (*BillingApprovalRequest, error) {
+	return ps.backend.GetBillingApprovalRequest(ctx, approvalID)
+}
+
+func (ps *PersistentStorage) ListBillingApprovalRequests(ctx context.Context, status string) ([]*BillingApprovalRequest, error) {
+	return ps.backend.ListBillingApprovalRequests(ctx, status)
+}
+
+func (ps *PersistentStorage) SaveBillingWebhookEvent(ctx context.Context, event *BillingWebhookEvent) error {
+	if err := ps.backend.SaveBillingWebhookEvent(ctx, event); err != nil {
+		return err
+	}
+	return ps.persist()
+}
+
+func (ps *PersistentStorage) UpdateBillingWebhookEvent(ctx context.Context, event *BillingWebhookEvent) error {
+	if err := ps.backend.UpdateBillingWebhookEvent(ctx, event); err != nil {
+		return err
+	}
+	return ps.persist()
+}
+
+func (ps *PersistentStorage) GetBillingWebhookEventByProviderEvent(ctx context.Context, gatewayID, eventID string) (*BillingWebhookEvent, error) {
+	return ps.backend.GetBillingWebhookEventByProviderEvent(ctx, gatewayID, eventID)
 }
 
 func (ps *PersistentStorage) SaveCouponCode(ctx context.Context, coupon *CouponCode) error {

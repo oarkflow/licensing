@@ -41,6 +41,7 @@ const overviewItems = [
 const licensingItems = [
     { title: 'Licenses', url: '/licenses', icon: Key },
     { title: 'Clients', url: '/clients', icon: Users },
+    { title: 'Billing', url: '/admin/billing', icon: CreditCard },
 ];
 
 const catalogItems = [

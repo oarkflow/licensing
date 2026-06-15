@@ -53,3 +53,61 @@
 - [x] Add SQLite tests for lifecycle columns and replacement-token table creation.
 - [x] Add handler tests for admin device lifecycle endpoints.
 - [x] Run focused Go and frontend checks.
+
+# Subscription Management Platform Tasks
+
+## Billing Domain and Storage
+- [x] Define gateway-agnostic billing records for payment gateways, payment methods, invoices, payment attempts, and approval requests.
+- [x] Add SQLite schema for gateway configs, customer payment methods, invoices, payment retries, and approval workflows.
+- [x] Add SQLite persistence methods and round-trip tests for the billing foundation.
+- [x] Extend persistent/in-memory storage interfaces for the new billing records.
+- [x] Add subscription fields for auto-renewal, collection method, gateway customer/subscription IDs, quantity, grace period, failure count, reminder state, and approval status.
+
+## Payment Gateway Abstraction
+- [x] Define a provider adapter interface for checkout/session creation, payment method setup, recurring subscription sync, payment capture, cancellation, and webhook verification.
+- [x] Implement a manual/offline gateway for clients that require bank transfer, purchase order, or approval-before-payment workflows.
+- [x] Implement Stripe adapter support.
+- [x] Add extension points for PayPal/Razorpay/eSewa/Khalti or client-specific gateways without changing subscription lifecycle logic.
+
+## Recurring Billing Automation
+- [x] Add billing scheduler for upcoming renewals, due invoices, failed payment retries, grace-period expiry, and subscription renewal completion.
+- [ ] Generate invoices from active subscriptions using plan price, quantity/devices, coupons, tax hooks, and billing cycle.
+- [x] Automatically renew licenses after successful payment.
+- [x] Pause, cancel, expire, or revoke subscription-linked licenses based on billing outcome and configured grace period.
+
+## Customer Self-Service
+- [x] Add customer endpoints for viewing current plan, invoices, payment methods, renewal date, and subscription status.
+- [x] Add customer checkout/payment-method setup flow.
+- [x] Add self-service cancel, resume, and renew endpoints with policy controls.
+- [x] Add hosted invoice/payment links where supported by the selected gateway.
+
+## Reminders and Notifications
+- [ ] Add renewal reminder templates.
+- [ ] Add payment failure and retry reminder templates.
+- [ ] Add cancellation, renewal success, invoice paid, and grace-period expiry templates.
+- [x] Queue reminder emails from billing scheduler using the existing email queue.
+
+## Approval System
+- [x] Add approval request lifecycle APIs for pending, approved, rejected, and expired decisions.
+- [x] Support payment method approvals and manual invoice/payment approvals.
+- [x] Record approval decisions in audit events.
+- [ ] Notify customers/admins when approvals are requested or decided.
+
+## Admin UI
+- [x] Add billing gateway configuration screens.
+- [ ] Add subscription detail billing timeline with invoices, attempts, reminders, and approvals.
+- [x] Add invoice list and invoice detail screens.
+- [x] Add approval queue with approve/reject actions.
+- [ ] Add customer payment method visibility and administrative disable controls.
+
+## Webhooks and Reconciliation
+- [x] Add webhook ingestion table and idempotency handling.
+- [x] Verify gateway webhook signatures.
+- [ ] Reconcile gateway invoice/payment/subscription events to local invoices, attempts, subscriptions, and licenses.
+- [x] Add admin reconciliation tools for out-of-sync records.
+
+## Security, Compliance, and Operations
+- [ ] Store gateway credentials securely and avoid persisting raw card/bank details.
+- [x] Add RBAC permissions for billing read/write, gateway admin, approval decisions, and refund/cancel actions.
+- [x] Add audit events for billing configuration, invoice, payment, subscription, and approval changes.
+- [x] Add operational runbook for failed billing jobs, webhook replay, gateway outage, and manual collection fallback.

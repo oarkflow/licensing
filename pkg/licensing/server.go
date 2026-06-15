@@ -2769,15 +2769,21 @@ func (s *Server) handleTrialCheck(w http.ResponseWriter, r *http.Request) {
 
 // SubscribeRequest represents a subscription creation request.
 type SubscribeRequest struct {
-	Email        string            `json:"email"`
-	ProductID    string            `json:"product_id"`
-	PlanID       string            `json:"plan_id"`
-	StartDate    string            `json:"start_date,omitempty"`    // ISO 8601 format, defaults to now
-	DurationDays int               `json:"duration_days,omitempty"` // Overrides billing cycle if set
-	MaxDevices   int               `json:"max_devices,omitempty"`   // Defaults to 1
-	SendEmail    bool              `json:"send_email,omitempty"`    // Send welcome email to customer
-	IsTrial      bool              `json:"is_trial,omitempty"`      // Force trial mode regardless of plan
-	Metadata     map[string]string `json:"metadata,omitempty"`      // Additional metadata
+	Email            string            `json:"email"`
+	ProductID        string            `json:"product_id"`
+	PlanID           string            `json:"plan_id"`
+	StartDate        string            `json:"start_date,omitempty"`    // ISO 8601 format, defaults to now
+	DurationDays     int               `json:"duration_days,omitempty"` // Overrides billing cycle if set
+	MaxDevices       int               `json:"max_devices,omitempty"`   // Defaults to 1
+	Quantity         int               `json:"quantity,omitempty"`
+	GatewayID        string            `json:"gateway_id,omitempty"`
+	PaymentMethodID  string            `json:"payment_method_id,omitempty"`
+	CollectionMethod string            `json:"collection_method,omitempty"`
+	AutoRenew        *bool             `json:"auto_renew,omitempty"`
+	GracePeriodDays  int               `json:"grace_period_days,omitempty"`
+	SendEmail        bool              `json:"send_email,omitempty"` // Send welcome email to customer
+	IsTrial          bool              `json:"is_trial,omitempty"`   // Force trial mode regardless of plan
+	Metadata         map[string]string `json:"metadata,omitempty"`   // Additional metadata
 }
 
 func (s *Server) handleSubscribe(w http.ResponseWriter, r *http.Request) {
@@ -2879,21 +2885,57 @@ func (s *Server) handleSubscribe(w http.ResponseWriter, r *http.Request) {
 	if maxDevices <= 0 {
 		maxDevices = 1
 	}
+	quantity := req.Quantity
+	if quantity <= 0 {
+		quantity = maxDevices
+	}
+	if quantity <= 0 {
+		quantity = 1
+	}
+	autoRenew := true
+	if req.AutoRenew != nil {
+		autoRenew = *req.AutoRenew
+	}
+	collectionMethod := strings.TrimSpace(req.CollectionMethod)
+	if collectionMethod == "" {
+		collectionMethod = CollectionMethodAutomatic
+	}
+	gracePeriodDays := req.GracePeriodDays
+	if gracePeriodDays <= 0 {
+		gracePeriodDays = 7
+	}
 
 	// Create subscription record
 	now := time.Now()
 	subscription := &Subscription{
-		ID:              uuid.New().String(),
-		ClientID:        client.ID,
-		ProductID:       productID,
-		PlanID:          planID,
-		Status:          SubscriptionStatusActive,
-		StartDate:       startDate,
-		EndDate:         endDate,
-		BillingCycle:    billingCycle,
-		NextBillingDate: nextBillingDate,
-		CreatedAt:       now,
-		UpdatedAt:       now,
+		ID:               uuid.New().String(),
+		ClientID:         client.ID,
+		ProductID:        productID,
+		PlanID:           planID,
+		Status:           SubscriptionStatusActive,
+		StartDate:        startDate,
+		EndDate:          endDate,
+		BillingCycle:     billingCycle,
+		NextBillingDate:  nextBillingDate,
+		AutoRenew:        autoRenew,
+		CollectionMethod: collectionMethod,
+		GatewayID:        strings.TrimSpace(req.GatewayID),
+		PaymentMethodID:  strings.TrimSpace(req.PaymentMethodID),
+		Quantity:         quantity,
+		GracePeriodDays:  gracePeriodDays,
+		ApprovalStatus:   ApprovalStatusApproved,
+		CreatedAt:        now,
+		UpdatedAt:        now,
+	}
+	if collectionMethod == CollectionMethodManual {
+		subscription.ApprovalStatus = ApprovalStatusPending
+	}
+	if subscription.GatewayID != "" {
+		if gateway, err := s.lm.Storage().GetPaymentGateway(ctx, subscription.GatewayID); err == nil {
+			if gateway.RequiresApproval {
+				subscription.ApprovalStatus = ApprovalStatusPending
+			}
+		}
 	}
 
 	// Generate license for the subscription
@@ -3147,6 +3189,675 @@ func (s *Server) handleSubscriptionActions(w http.ResponseWriter, r *http.Reques
 	default:
 		http.NotFound(w, r)
 	}
+}
+
+func (s *Server) billingManager() *BillingManager {
+	return NewBillingManager(s.lm.Storage(), nil)
+}
+
+func (s *Server) handleBillingGateways(w http.ResponseWriter, r *http.Request) {
+	if !s.enforceRateLimit(w, r) {
+		return
+	}
+	if !s.authorizeAdmin(w, r) {
+		return
+	}
+	ctx := r.Context()
+	switch r.Method {
+	case http.MethodGet:
+		gateways, err := s.lm.Storage().ListPaymentGateways(ctx)
+		if err != nil {
+			s.respondError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		if gateways == nil {
+			gateways = []*PaymentGatewayConfig{}
+		}
+		s.respondJSON(w, http.StatusOK, gateways)
+	case http.MethodPost:
+		var gateway PaymentGatewayConfig
+		if !s.decodeJSONBody(w, r, &gateway, maxAdminPayloadBytes) {
+			return
+		}
+		if gateway.ID == "" {
+			gateway.ID = uuid.New().String()
+		}
+		if gateway.Provider == "" || gateway.Name == "" {
+			s.respondError(w, http.StatusBadRequest, "name and provider are required")
+			return
+		}
+		if gateway.Environment == "" {
+			gateway.Environment = "test"
+		}
+		if err := s.lm.Storage().SavePaymentGateway(ctx, &gateway); err != nil {
+			s.respondError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		s.auditLog(ctx, audit.NewEvent(audit.EventBillingGatewayChanged, audit.SeverityInfo, "billing_gateway_create", "billing gateway created").
+			WithResource(gateway.ID, "billing_gateway").WithResult("success"))
+		s.respondJSON(w, http.StatusCreated, gateway)
+	default:
+		s.respondError(w, http.StatusMethodNotAllowed, "Method not allowed")
+	}
+}
+
+func (s *Server) handleBillingGatewayActions(w http.ResponseWriter, r *http.Request) {
+	if !strings.HasPrefix(r.URL.Path, "/api/billing/gateways/") {
+		http.NotFound(w, r)
+		return
+	}
+	if !s.enforceRateLimit(w, r) {
+		return
+	}
+	if !s.authorizeAdmin(w, r) {
+		return
+	}
+	gatewayID := strings.Trim(strings.TrimPrefix(r.URL.Path, "/api/billing/gateways/"), "/")
+	if gatewayID == "" {
+		http.NotFound(w, r)
+		return
+	}
+	ctx := r.Context()
+	switch r.Method {
+	case http.MethodGet:
+		gateway, err := s.lm.Storage().GetPaymentGateway(ctx, gatewayID)
+		if err != nil {
+			s.respondError(w, http.StatusNotFound, err.Error())
+			return
+		}
+		s.respondJSON(w, http.StatusOK, gateway)
+	case http.MethodPut, http.MethodPatch:
+		var gateway PaymentGatewayConfig
+		if !s.decodeJSONBody(w, r, &gateway, maxAdminPayloadBytes) {
+			return
+		}
+		gateway.ID = gatewayID
+		if err := s.lm.Storage().UpdatePaymentGateway(ctx, &gateway); err != nil {
+			s.respondError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		s.auditLog(ctx, audit.NewEvent(audit.EventBillingGatewayChanged, audit.SeverityInfo, "billing_gateway_update", "billing gateway updated").
+			WithResource(gateway.ID, "billing_gateway").WithResult("success"))
+		s.respondJSON(w, http.StatusOK, gateway)
+	default:
+		s.respondError(w, http.StatusMethodNotAllowed, "Method not allowed")
+	}
+}
+
+func (s *Server) handleBillingInvoices(w http.ResponseWriter, r *http.Request) {
+	if !s.enforceRateLimit(w, r) {
+		return
+	}
+	if !s.authorizeAdmin(w, r) {
+		return
+	}
+	if r.Method != http.MethodGet && r.Method != http.MethodPost {
+		s.respondError(w, http.StatusMethodNotAllowed, "Method not allowed")
+		return
+	}
+	ctx := r.Context()
+	if r.Method == http.MethodPost {
+		var req struct {
+			SubscriptionID string `json:"subscription_id"`
+		}
+		if !s.decodeJSONBody(w, r, &req, maxAdminPayloadBytes) {
+			return
+		}
+		sub, err := s.lm.Storage().GetSubscription(ctx, strings.TrimSpace(req.SubscriptionID))
+		if err != nil {
+			s.respondError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		invoice, err := s.billingManager().NewInvoiceFromSubscription(ctx, sub)
+		if err != nil {
+			s.respondError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		if err := s.lm.Storage().SaveBillingInvoice(ctx, invoice); err != nil {
+			s.respondError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		s.auditLog(ctx, audit.NewEvent(audit.EventBillingInvoiceChanged, audit.SeverityInfo, "billing_invoice_create", "billing invoice created").
+			WithResource(invoice.ID, "billing_invoice").WithResult("success"))
+		s.respondJSON(w, http.StatusCreated, invoice)
+		return
+	}
+	subscriptionID := strings.TrimSpace(r.URL.Query().Get("subscription_id"))
+	clientID := strings.TrimSpace(r.URL.Query().Get("client_id"))
+	if subscriptionID != "" {
+		invoices, err := s.lm.Storage().ListBillingInvoicesBySubscription(ctx, subscriptionID)
+		if err != nil {
+			s.respondError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		if invoices == nil {
+			invoices = []*BillingInvoice{}
+		}
+		s.respondJSON(w, http.StatusOK, invoices)
+		return
+	}
+	if clientID != "" {
+		invoices, err := s.lm.Storage().ListBillingInvoicesByClient(ctx, clientID)
+		if err != nil {
+			s.respondError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		if invoices == nil {
+			invoices = []*BillingInvoice{}
+		}
+		s.respondJSON(w, http.StatusOK, invoices)
+		return
+	}
+	s.respondError(w, http.StatusBadRequest, "subscription_id or client_id is required")
+}
+
+func (s *Server) handleBillingInvoiceActions(w http.ResponseWriter, r *http.Request) {
+	if !strings.HasPrefix(r.URL.Path, "/api/billing/invoices/") {
+		http.NotFound(w, r)
+		return
+	}
+	if !s.enforceRateLimit(w, r) {
+		return
+	}
+	if !s.authorizeAdmin(w, r) {
+		return
+	}
+	tail := strings.Trim(strings.TrimPrefix(r.URL.Path, "/api/billing/invoices/"), "/")
+	parts := strings.Split(tail, "/")
+	if len(parts) == 0 || parts[0] == "" {
+		http.NotFound(w, r)
+		return
+	}
+	ctx := r.Context()
+	invoiceID := parts[0]
+	if len(parts) == 1 {
+		if r.Method != http.MethodGet {
+			s.respondError(w, http.StatusMethodNotAllowed, "Method not allowed")
+			return
+		}
+		invoice, err := s.lm.Storage().GetBillingInvoice(ctx, invoiceID)
+		if err != nil {
+			s.respondError(w, http.StatusNotFound, err.Error())
+			return
+		}
+		attempts, _ := s.lm.Storage().ListPaymentAttemptsByInvoice(ctx, invoiceID)
+		s.respondJSON(w, http.StatusOK, map[string]any{"invoice": invoice, "attempts": attempts})
+		return
+	}
+	switch parts[1] {
+	case "pay":
+		if r.Method != http.MethodPost {
+			s.respondError(w, http.StatusMethodNotAllowed, "Method not allowed")
+			return
+		}
+		var req struct {
+			GatewayPaymentIntentID string `json:"gateway_payment_intent_id,omitempty"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&req)
+		if err := s.billingManager().MarkInvoicePaid(ctx, invoiceID, req.GatewayPaymentIntentID); err != nil {
+			s.respondError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		s.auditLog(ctx, audit.NewEvent(audit.EventBillingPaymentChanged, audit.SeverityInfo, "billing_invoice_paid", "billing invoice marked paid").
+			WithResource(invoiceID, "billing_invoice").WithResult("success"))
+		invoice, _ := s.lm.Storage().GetBillingInvoice(ctx, invoiceID)
+		s.respondJSON(w, http.StatusOK, invoice)
+	case "attempts":
+		if r.Method != http.MethodGet {
+			s.respondError(w, http.StatusMethodNotAllowed, "Method not allowed")
+			return
+		}
+		attempts, err := s.lm.Storage().ListPaymentAttemptsByInvoice(ctx, invoiceID)
+		if err != nil {
+			s.respondError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		if attempts == nil {
+			attempts = []*PaymentAttempt{}
+		}
+		s.respondJSON(w, http.StatusOK, attempts)
+	default:
+		http.NotFound(w, r)
+	}
+}
+
+func (s *Server) handleBillingApprovals(w http.ResponseWriter, r *http.Request) {
+	if !s.enforceRateLimit(w, r) {
+		return
+	}
+	if !s.authorizeAdmin(w, r) {
+		return
+	}
+	ctx := r.Context()
+	switch r.Method {
+	case http.MethodGet:
+		status := strings.TrimSpace(r.URL.Query().Get("status"))
+		approvals, err := s.lm.Storage().ListBillingApprovalRequests(ctx, status)
+		if err != nil {
+			s.respondError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		if approvals == nil {
+			approvals = []*BillingApprovalRequest{}
+		}
+		s.respondJSON(w, http.StatusOK, approvals)
+	case http.MethodPost:
+		var approval BillingApprovalRequest
+		if !s.decodeJSONBody(w, r, &approval, maxAdminPayloadBytes) {
+			return
+		}
+		if approval.ID == "" {
+			approval.ID = uuid.New().String()
+		}
+		if approval.Status == "" {
+			approval.Status = ApprovalStatusPending
+		}
+		if err := s.lm.Storage().SaveBillingApprovalRequest(ctx, &approval); err != nil {
+			s.respondError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		s.respondJSON(w, http.StatusCreated, approval)
+	default:
+		s.respondError(w, http.StatusMethodNotAllowed, "Method not allowed")
+	}
+}
+
+func (s *Server) handleBillingApprovalActions(w http.ResponseWriter, r *http.Request) {
+	if !strings.HasPrefix(r.URL.Path, "/api/billing/approvals/") {
+		http.NotFound(w, r)
+		return
+	}
+	if !s.enforceRateLimit(w, r) {
+		return
+	}
+	if !s.authorizeAdmin(w, r) {
+		return
+	}
+	tail := strings.Trim(strings.TrimPrefix(r.URL.Path, "/api/billing/approvals/"), "/")
+	parts := strings.Split(tail, "/")
+	if len(parts) < 2 || parts[0] == "" {
+		http.NotFound(w, r)
+		return
+	}
+	if r.Method != http.MethodPost {
+		s.respondError(w, http.StatusMethodNotAllowed, "Method not allowed")
+		return
+	}
+	ctx := r.Context()
+	approval, err := s.lm.Storage().GetBillingApprovalRequest(ctx, parts[0])
+	if err != nil {
+		s.respondError(w, http.StatusNotFound, err.Error())
+		return
+	}
+	var req struct {
+		DecidedBy string `json:"decided_by,omitempty"`
+		Reason    string `json:"reason,omitempty"`
+	}
+	_ = json.NewDecoder(r.Body).Decode(&req)
+	switch parts[1] {
+	case "approve":
+		approval.Status = ApprovalStatusApproved
+	case "reject":
+		approval.Status = ApprovalStatusRejected
+	default:
+		http.NotFound(w, r)
+		return
+	}
+	approval.DecidedBy = req.DecidedBy
+	if req.Reason != "" {
+		approval.Reason = req.Reason
+	}
+	approval.DecidedAt = time.Now()
+	if err := s.lm.Storage().UpdateBillingApprovalRequest(ctx, approval); err != nil {
+		s.respondError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	s.auditLog(ctx, audit.NewEvent(audit.EventBillingApproval, audit.SeverityInfo, "billing_approval_decision", "billing approval decided").
+		WithResource(approval.ID, "billing_approval").WithResult(approval.Status))
+	s.respondJSON(w, http.StatusOK, approval)
+}
+
+func (s *Server) handleBillingWebhooks(w http.ResponseWriter, r *http.Request) {
+	if !strings.HasPrefix(r.URL.Path, "/api/billing/webhooks/") {
+		http.NotFound(w, r)
+		return
+	}
+	if r.Method != http.MethodPost {
+		s.respondError(w, http.StatusMethodNotAllowed, "Method not allowed")
+		return
+	}
+	if !s.enforceRateLimit(w, r) {
+		return
+	}
+	gatewayID := strings.Trim(strings.TrimPrefix(r.URL.Path, "/api/billing/webhooks/"), "/")
+	if gatewayID == "" {
+		http.NotFound(w, r)
+		return
+	}
+	ctx := r.Context()
+	gateway, err := s.lm.Storage().GetPaymentGateway(ctx, gatewayID)
+	if err != nil {
+		s.respondError(w, http.StatusNotFound, "payment gateway not found")
+		return
+	}
+	adapter := DefaultBillingAdapters()[gateway.Provider]
+	if adapter == nil {
+		s.respondError(w, http.StatusBadRequest, "payment gateway adapter is not registered")
+		return
+	}
+	payload, err := io.ReadAll(io.LimitReader(r.Body, maxAdminPayloadBytes))
+	if err != nil {
+		s.respondError(w, http.StatusBadRequest, "failed to read webhook payload")
+		return
+	}
+	signature := strings.TrimSpace(r.Header.Get("Stripe-Signature"))
+	if signature == "" {
+		signature = strings.TrimSpace(r.Header.Get("X-Webhook-Signature"))
+	}
+	verified, err := adapter.VerifyWebhook(ctx, gateway, payload, signature)
+	if err != nil {
+		s.respondError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if existing, err := s.lm.Storage().GetBillingWebhookEventByProviderEvent(ctx, gateway.ID, verified.EventID); err == nil {
+		s.respondJSON(w, http.StatusOK, map[string]any{"duplicate": true, "event": existing})
+		return
+	}
+	now := time.Now()
+	event := &BillingWebhookEvent{
+		ID:            uuid.New().String(),
+		GatewayID:     gateway.ID,
+		Provider:      gateway.Provider,
+		EventID:       verified.EventID,
+		EventType:     verified.EventType,
+		Status:        WebhookStatusReceived,
+		Payload:       string(payload),
+		Signature:     signature,
+		CorrelationID: verified.CorrelationID,
+		Metadata:      verified.Metadata,
+		ReceivedAt:    now,
+		CreatedAt:     now,
+		UpdatedAt:     now,
+	}
+	if err := s.lm.Storage().SaveBillingWebhookEvent(ctx, event); err != nil {
+		s.respondError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if err := s.reconcileBillingWebhook(ctx, event); err != nil {
+		event.Status = WebhookStatusFailed
+		event.ErrorMessage = err.Error()
+		_ = s.lm.Storage().UpdateBillingWebhookEvent(ctx, event)
+		s.respondError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	event.Status = WebhookStatusProcessed
+	event.ProcessedAt = time.Now()
+	_ = s.lm.Storage().UpdateBillingWebhookEvent(ctx, event)
+	s.auditLog(ctx, audit.NewEvent(audit.EventBillingWebhook, audit.SeverityInfo, "billing_webhook_processed", "billing webhook processed").
+		WithResource(event.ID, "billing_webhook").WithResult("success"))
+	s.respondJSON(w, http.StatusAccepted, event)
+}
+
+func (s *Server) handleBillingJobs(w http.ResponseWriter, r *http.Request) {
+	if !s.enforceRateLimit(w, r) {
+		return
+	}
+	if !s.authorizeAdmin(w, r) {
+		return
+	}
+	if r.Method != http.MethodPost {
+		s.respondError(w, http.StatusMethodNotAllowed, "Method not allowed")
+		return
+	}
+	var req struct {
+		Action    string `json:"action"`
+		DueBefore string `json:"due_before,omitempty"`
+	}
+	if !s.decodeJSONBody(w, r, &req, maxAdminPayloadBytes) {
+		return
+	}
+	dueBefore := time.Now()
+	if strings.TrimSpace(req.DueBefore) != "" {
+		parsed, err := time.Parse(time.RFC3339, req.DueBefore)
+		if err != nil {
+			s.respondError(w, http.StatusBadRequest, "invalid due_before")
+			return
+		}
+		dueBefore = parsed
+	}
+	var result *BillingRunResult
+	var err error
+	switch strings.TrimSpace(req.Action) {
+	case "generate_invoices":
+		result, err = s.billingManager().GenerateRenewalInvoices(r.Context(), dueBefore)
+	case "process_due":
+		result, err = s.billingManager().ProcessDueInvoices(r.Context(), dueBefore)
+	case "queue_reminders":
+		result, err = s.billingManager().QueueBillingReminders(r.Context(), dueBefore)
+	default:
+		s.respondError(w, http.StatusBadRequest, "action must be generate_invoices, process_due, or queue_reminders")
+		return
+	}
+	if err != nil {
+		s.respondError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	s.auditLog(r.Context(), audit.NewEvent(audit.EventBillingJob, audit.SeverityInfo, "billing_job_run", "billing job completed").
+		WithResource(req.Action, "billing_job").WithResult("success"))
+	s.respondJSON(w, http.StatusOK, result)
+}
+
+func (s *Server) reconcileBillingWebhook(ctx context.Context, event *BillingWebhookEvent) error {
+	if event == nil || event.Metadata == nil {
+		return nil
+	}
+	invoiceID := strings.TrimSpace(event.Metadata["invoice_id"])
+	if invoiceID == "" {
+		return nil
+	}
+	eventType := strings.ToLower(event.EventType)
+	switch {
+	case strings.Contains(eventType, "paid") || strings.Contains(eventType, "succeeded"):
+		return s.billingManager().MarkInvoicePaid(ctx, invoiceID, event.EventID)
+	case strings.Contains(eventType, "failed"):
+		invoice, err := s.lm.Storage().GetBillingInvoice(ctx, invoiceID)
+		if err != nil {
+			return err
+		}
+		invoice.Status = InvoiceStatusPaymentFailed
+		invoice.AttemptCount++
+		invoice.NextPaymentAttemptAt = time.Now().Add(24 * time.Hour)
+		return s.lm.Storage().UpdateBillingInvoice(ctx, invoice)
+	default:
+		return nil
+	}
+}
+
+func (s *Server) handleClientBilling(w http.ResponseWriter, r *http.Request) {
+	if !s.enforceRateLimit(w, r) {
+		return
+	}
+	client, _, err := s.getClientFromRequest(r)
+	if err != nil {
+		s.respondError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	if r.Method != http.MethodGet {
+		s.respondError(w, http.StatusMethodNotAllowed, "Method not allowed")
+		return
+	}
+	ctx := r.Context()
+	subs, err := s.lm.Storage().ListSubscriptionsByClient(ctx, client.ID)
+	if err != nil {
+		s.respondError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	var current *Subscription
+	for _, sub := range subs {
+		if current == nil || sub.CreatedAt.After(current.CreatedAt) {
+			current = sub
+		}
+	}
+	methods, _ := s.lm.Storage().ListPaymentMethodsByClient(ctx, client.ID)
+	var invoices []*BillingInvoice
+	if current != nil {
+		invoices, _ = s.lm.Storage().ListBillingInvoicesBySubscription(ctx, current.ID)
+	} else {
+		invoices, _ = s.lm.Storage().ListBillingInvoicesByClient(ctx, client.ID)
+	}
+	s.respondJSON(w, http.StatusOK, map[string]any{
+		"client":          client,
+		"subscription":    current,
+		"subscriptions":   subs,
+		"invoices":        invoices,
+		"payment_methods": methods,
+	})
+}
+
+func (s *Server) handleClientBillingActions(w http.ResponseWriter, r *http.Request) {
+	if !strings.HasPrefix(r.URL.Path, "/api/client/billing/") {
+		http.NotFound(w, r)
+		return
+	}
+	if !s.enforceRateLimit(w, r) {
+		return
+	}
+	client, _, err := s.getClientFromRequest(r)
+	if err != nil {
+		s.respondError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	if r.Method != http.MethodPost {
+		s.respondError(w, http.StatusMethodNotAllowed, "Method not allowed")
+		return
+	}
+	action := strings.Trim(strings.TrimPrefix(r.URL.Path, "/api/client/billing/"), "/")
+	var req struct {
+		SubscriptionID string `json:"subscription_id"`
+		GatewayID      string `json:"gateway_id,omitempty"`
+		SuccessURL     string `json:"success_url,omitempty"`
+		CancelURL      string `json:"cancel_url,omitempty"`
+		ReturnURL      string `json:"return_url,omitempty"`
+		Reason         string `json:"reason,omitempty"`
+		AtPeriodEnd    bool   `json:"at_period_end,omitempty"`
+	}
+	if !s.decodeJSONBody(w, r, &req, maxAdminPayloadBytes) {
+		return
+	}
+	ctx := r.Context()
+	switch action {
+	case "setup-payment-method":
+		gateway, err := s.lm.Storage().GetPaymentGateway(ctx, strings.TrimSpace(req.GatewayID))
+		if err != nil {
+			s.respondError(w, http.StatusBadRequest, "payment gateway not found")
+			return
+		}
+		adapter := DefaultBillingAdapters()[gateway.Provider]
+		if adapter == nil {
+			s.respondError(w, http.StatusBadRequest, "payment gateway adapter is not registered")
+			return
+		}
+		session, err := adapter.CreatePaymentMethodSetup(ctx, gateway, PaymentMethodSetupRequest{
+			ClientID:  client.ID,
+			ReturnURL: req.ReturnURL,
+		})
+		if err != nil {
+			s.respondError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		s.respondJSON(w, http.StatusOK, session)
+	case "cancel":
+		sub, err := s.getClientOwnedSubscription(ctx, client.ID, req.SubscriptionID)
+		if err != nil {
+			s.respondError(w, http.StatusNotFound, "subscription not found")
+			return
+		}
+		updated, err := s.billingManager().CancelSubscription(ctx, sub.ID, req.Reason, req.AtPeriodEnd)
+		if err != nil {
+			s.respondError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		s.respondJSON(w, http.StatusOK, updated)
+	case "resume":
+		sub, err := s.getClientOwnedSubscription(ctx, client.ID, req.SubscriptionID)
+		if err != nil {
+			s.respondError(w, http.StatusNotFound, "subscription not found")
+			return
+		}
+		updated, err := s.billingManager().ResumeSubscription(ctx, sub.ID)
+		if err != nil {
+			s.respondError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		s.respondJSON(w, http.StatusOK, updated)
+	case "renew":
+		sub, err := s.getClientOwnedSubscription(ctx, client.ID, req.SubscriptionID)
+		if err != nil {
+			s.respondError(w, http.StatusNotFound, "subscription not found")
+			return
+		}
+		invoice, err := s.billingManager().NewInvoiceFromSubscription(ctx, sub)
+		if err != nil {
+			s.respondError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		if err := s.lm.Storage().SaveBillingInvoice(ctx, invoice); err != nil {
+			s.respondError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		s.respondJSON(w, http.StatusCreated, invoice)
+	case "checkout":
+		sub, err := s.getClientOwnedSubscription(ctx, client.ID, req.SubscriptionID)
+		if err != nil {
+			s.respondError(w, http.StatusNotFound, "subscription not found")
+			return
+		}
+		gatewayID := strings.TrimSpace(req.GatewayID)
+		if gatewayID == "" {
+			gatewayID = sub.GatewayID
+		}
+		gateway, err := s.lm.Storage().GetPaymentGateway(ctx, gatewayID)
+		if err != nil {
+			s.respondError(w, http.StatusBadRequest, "payment gateway not found")
+			return
+		}
+		adapter := DefaultBillingAdapters()[gateway.Provider]
+		if adapter == nil {
+			s.respondError(w, http.StatusBadRequest, "payment gateway adapter is not registered")
+			return
+		}
+		invoice, err := s.billingManager().NewInvoiceFromSubscription(ctx, sub)
+		if err != nil {
+			s.respondError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		invoice.GatewayID = gateway.ID
+		if err := s.lm.Storage().SaveBillingInvoice(ctx, invoice); err != nil {
+			s.respondError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		session, err := adapter.CreateCheckoutSession(ctx, gateway, CheckoutSessionRequest{
+			Subscription: sub,
+			Invoice:      invoice,
+			SuccessURL:   req.SuccessURL,
+			CancelURL:    req.CancelURL,
+		})
+		if err != nil {
+			s.respondError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		s.respondJSON(w, http.StatusCreated, map[string]any{"invoice": invoice, "checkout": session})
+	default:
+		http.NotFound(w, r)
+	}
+}
+
+func (s *Server) getClientOwnedSubscription(ctx context.Context, clientID, subscriptionID string) (*Subscription, error) {
+	sub, err := s.lm.Storage().GetSubscription(ctx, strings.TrimSpace(subscriptionID))
+	if err != nil || sub.ClientID != clientID {
+		return nil, fmt.Errorf("subscription not found")
+	}
+	return sub, nil
 }
 
 func (s *Server) decodeAndUpgradeLicense(w http.ResponseWriter, r *http.Request, licenseID string) (*UpgradeLicenseResult, error) {
@@ -4250,6 +4961,14 @@ func (s *Server) Start() error {
 	mux.HandleFunc("/api/subscribe", s.handleSubscribe)
 	mux.HandleFunc("/api/subscriptions", s.handleSubscriptions)
 	mux.HandleFunc("/api/subscriptions/", s.handleSubscriptionActions)
+	mux.HandleFunc("/api/billing/gateways", s.handleBillingGateways)
+	mux.HandleFunc("/api/billing/gateways/", s.handleBillingGatewayActions)
+	mux.HandleFunc("/api/billing/invoices", s.handleBillingInvoices)
+	mux.HandleFunc("/api/billing/invoices/", s.handleBillingInvoiceActions)
+	mux.HandleFunc("/api/billing/approvals", s.handleBillingApprovals)
+	mux.HandleFunc("/api/billing/approvals/", s.handleBillingApprovalActions)
+	mux.HandleFunc("/api/billing/jobs", s.handleBillingJobs)
+	mux.HandleFunc("/api/billing/webhooks/", s.handleBillingWebhooks)
 	mux.HandleFunc("/api/coupons", s.handleCoupons)
 	mux.HandleFunc("/api/coupons/", s.handleCouponActions)
 	mux.HandleFunc("/api/licenses/", s.handleLicenseActions)
@@ -4289,6 +5008,8 @@ func (s *Server) Start() error {
 	mux.HandleFunc("/api/client/auth/logout", s.handleClientLogout)
 	mux.HandleFunc("/api/client/auth/refresh", s.handleClientRefresh)
 	mux.HandleFunc("/api/client/profile", s.handleClientProfile)
+	mux.HandleFunc("/api/client/billing", s.handleClientBilling)
+	mux.HandleFunc("/api/client/billing/", s.handleClientBillingActions)
 	// Client keys for managing API keys bound to their client account
 	mux.HandleFunc("/api/client/keys", s.handleClientKeys)
 	mux.HandleFunc("/api/client/keys/", s.handleClientKeys)

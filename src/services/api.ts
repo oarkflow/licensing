@@ -3,6 +3,9 @@ import type {
     APIKey,
     Activation,
     ApiResponse,
+    BillingApprovalRequest,
+    BillingInvoice,
+    BillingRunResult,
     Client,
     CouponCode,
     CouponRedemption,
@@ -28,6 +31,8 @@ import type {
     LicenseEntitlements,
     LoginRequest,
     OfflineValidationToken,
+    PaymentAttempt,
+    PaymentGatewayConfig,
     Plan,
     PlanFeature,
     Product,
@@ -858,6 +863,55 @@ class ApiService {
         return this.request<EmailComposeResponse>('/api/email/compose/send', {
             method: 'POST',
             body: JSON.stringify(data),
+        });
+    }
+
+    // Billing
+    async listBillingGateways(): Promise<ApiResponse<PaymentGatewayConfig[]>> {
+        return this.request<PaymentGatewayConfig[]>('/api/billing/gateways');
+    }
+
+    async createBillingGateway(data: Partial<PaymentGatewayConfig>): Promise<ApiResponse<PaymentGatewayConfig>> {
+        return this.request<PaymentGatewayConfig>('/api/billing/gateways', {
+            method: 'POST',
+            body: JSON.stringify(data),
+        });
+    }
+
+    async listBillingInvoices(params: { subscription_id?: string; client_id?: string }): Promise<ApiResponse<BillingInvoice[]>> {
+        const query = new URLSearchParams();
+        if (params.subscription_id) query.set('subscription_id', params.subscription_id);
+        if (params.client_id) query.set('client_id', params.client_id);
+        return this.request<BillingInvoice[]>(`/api/billing/invoices?${query.toString()}`);
+    }
+
+    async getBillingInvoice(id: string): Promise<ApiResponse<{ invoice: BillingInvoice; attempts: PaymentAttempt[] }>> {
+        return this.request<{ invoice: BillingInvoice; attempts: PaymentAttempt[] }>(`/api/billing/invoices/${id}`);
+    }
+
+    async markBillingInvoicePaid(id: string, gatewayPaymentIntentID?: string): Promise<ApiResponse<BillingInvoice>> {
+        return this.request<BillingInvoice>(`/api/billing/invoices/${id}/pay`, {
+            method: 'POST',
+            body: JSON.stringify({ gateway_payment_intent_id: gatewayPaymentIntentID }),
+        });
+    }
+
+    async listBillingApprovals(status?: string): Promise<ApiResponse<BillingApprovalRequest[]>> {
+        const query = status ? `?status=${encodeURIComponent(status)}` : '';
+        return this.request<BillingApprovalRequest[]>(`/api/billing/approvals${query}`);
+    }
+
+    async decideBillingApproval(id: string, action: 'approve' | 'reject', reason?: string): Promise<ApiResponse<BillingApprovalRequest>> {
+        return this.request<BillingApprovalRequest>(`/api/billing/approvals/${id}/${action}`, {
+            method: 'POST',
+            body: JSON.stringify({ reason }),
+        });
+    }
+
+    async runBillingJob(action: 'generate_invoices' | 'process_due' | 'queue_reminders'): Promise<ApiResponse<BillingRunResult>> {
+        return this.request<BillingRunResult>('/api/billing/jobs', {
+            method: 'POST',
+            body: JSON.stringify({ action }),
         });
     }
 }

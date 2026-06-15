@@ -114,12 +114,146 @@ func ensureProductSchema(db *squealx.DB) error {
 			next_billing_date TIMESTAMP,
 			cancelled_at TIMESTAMP,
 			cancel_reason TEXT,
+			auto_renew INTEGER NOT NULL DEFAULT 1,
+			collection_method TEXT NOT NULL DEFAULT 'automatic',
+			gateway_id TEXT,
+			payment_method_id TEXT,
+			gateway_customer_id TEXT,
+			gateway_subscription_id TEXT,
+			quantity INTEGER NOT NULL DEFAULT 1,
+			grace_period_days INTEGER NOT NULL DEFAULT 7,
+			failure_count INTEGER NOT NULL DEFAULT 0,
+			last_reminder_at TIMESTAMP,
+			next_reminder_at TIMESTAMP,
+			approval_status TEXT,
 			created_at TIMESTAMP NOT NULL,
 			updated_at TIMESTAMP NOT NULL,
 			FOREIGN KEY(client_id) REFERENCES clients(id) ON DELETE CASCADE,
 			FOREIGN KEY(product_id) REFERENCES products(id) ON DELETE CASCADE,
 			FOREIGN KEY(plan_id) REFERENCES plans(id) ON DELETE CASCADE,
 			FOREIGN KEY(license_id) REFERENCES licenses(id) ON DELETE SET NULL
+		);`,
+		`CREATE TABLE IF NOT EXISTS payment_gateways (
+			id TEXT PRIMARY KEY,
+			name TEXT NOT NULL,
+			provider TEXT NOT NULL,
+			environment TEXT NOT NULL,
+			enabled INTEGER NOT NULL DEFAULT 1,
+			is_default INTEGER NOT NULL DEFAULT 0,
+			supports_recurring INTEGER NOT NULL DEFAULT 1,
+			requires_approval INTEGER NOT NULL DEFAULT 0,
+			config TEXT,
+			metadata TEXT,
+			created_at TIMESTAMP NOT NULL,
+			updated_at TIMESTAMP NOT NULL
+		);`,
+		`CREATE TABLE IF NOT EXISTS payment_methods (
+			id TEXT PRIMARY KEY,
+			client_id TEXT NOT NULL,
+			gateway_id TEXT NOT NULL,
+			type TEXT NOT NULL,
+			status TEXT NOT NULL,
+			display_name TEXT,
+			gateway_customer_id TEXT,
+			gateway_payment_method_id TEXT,
+			is_default INTEGER NOT NULL DEFAULT 0,
+			requires_approval INTEGER NOT NULL DEFAULT 0,
+			approved_at TIMESTAMP,
+			expires_at TIMESTAMP,
+			metadata TEXT,
+			created_at TIMESTAMP NOT NULL,
+			updated_at TIMESTAMP NOT NULL,
+			FOREIGN KEY(client_id) REFERENCES clients(id) ON DELETE CASCADE,
+			FOREIGN KEY(gateway_id) REFERENCES payment_gateways(id) ON DELETE CASCADE
+		);`,
+		`CREATE TABLE IF NOT EXISTS billing_invoices (
+			id TEXT PRIMARY KEY,
+			subscription_id TEXT NOT NULL,
+			client_id TEXT NOT NULL,
+			product_id TEXT NOT NULL,
+			plan_id TEXT NOT NULL,
+			status TEXT NOT NULL,
+			currency TEXT NOT NULL,
+			subtotal_amount INTEGER NOT NULL DEFAULT 0,
+			discount_amount INTEGER NOT NULL DEFAULT 0,
+			tax_amount INTEGER NOT NULL DEFAULT 0,
+			total_amount INTEGER NOT NULL DEFAULT 0,
+			period_start TIMESTAMP NOT NULL,
+			period_end TIMESTAMP NOT NULL,
+			due_at TIMESTAMP NOT NULL,
+			paid_at TIMESTAMP,
+			voided_at TIMESTAMP,
+			gateway_id TEXT,
+			gateway_invoice_id TEXT,
+			hosted_invoice_url TEXT,
+			attempt_count INTEGER NOT NULL DEFAULT 0,
+			next_payment_attempt_at TIMESTAMP,
+			metadata TEXT,
+			created_at TIMESTAMP NOT NULL,
+			updated_at TIMESTAMP NOT NULL,
+			FOREIGN KEY(subscription_id) REFERENCES subscriptions(id) ON DELETE CASCADE,
+			FOREIGN KEY(client_id) REFERENCES clients(id) ON DELETE CASCADE,
+			FOREIGN KEY(product_id) REFERENCES products(id) ON DELETE CASCADE,
+			FOREIGN KEY(plan_id) REFERENCES plans(id) ON DELETE CASCADE,
+			FOREIGN KEY(gateway_id) REFERENCES payment_gateways(id) ON DELETE SET NULL
+		);`,
+		`CREATE TABLE IF NOT EXISTS payment_attempts (
+			id TEXT PRIMARY KEY,
+			invoice_id TEXT NOT NULL,
+			subscription_id TEXT NOT NULL,
+			gateway_id TEXT NOT NULL,
+			payment_method_id TEXT,
+			status TEXT NOT NULL,
+			amount INTEGER NOT NULL DEFAULT 0,
+			currency TEXT NOT NULL,
+			gateway_payment_intent_id TEXT,
+			error_code TEXT,
+			error_message TEXT,
+			attempted_at TIMESTAMP NOT NULL,
+			next_retry_at TIMESTAMP,
+			metadata TEXT,
+			created_at TIMESTAMP NOT NULL,
+			updated_at TIMESTAMP NOT NULL,
+			FOREIGN KEY(invoice_id) REFERENCES billing_invoices(id) ON DELETE CASCADE,
+			FOREIGN KEY(subscription_id) REFERENCES subscriptions(id) ON DELETE CASCADE,
+			FOREIGN KEY(gateway_id) REFERENCES payment_gateways(id) ON DELETE CASCADE,
+			FOREIGN KEY(payment_method_id) REFERENCES payment_methods(id) ON DELETE SET NULL
+		);`,
+		`CREATE TABLE IF NOT EXISTS billing_approval_requests (
+			id TEXT PRIMARY KEY,
+			subject_type TEXT NOT NULL,
+			subject_id TEXT NOT NULL,
+			client_id TEXT,
+			status TEXT NOT NULL,
+			reason TEXT,
+			requested_by TEXT,
+			decided_by TEXT,
+			requested_at TIMESTAMP NOT NULL,
+			decided_at TIMESTAMP,
+			expires_at TIMESTAMP,
+			metadata TEXT,
+			created_at TIMESTAMP NOT NULL,
+			updated_at TIMESTAMP NOT NULL,
+			FOREIGN KEY(client_id) REFERENCES clients(id) ON DELETE CASCADE
+		);`,
+		`CREATE TABLE IF NOT EXISTS billing_webhook_events (
+			id TEXT PRIMARY KEY,
+			gateway_id TEXT NOT NULL,
+			provider TEXT NOT NULL,
+			event_id TEXT NOT NULL,
+			event_type TEXT NOT NULL,
+			status TEXT NOT NULL,
+			payload TEXT,
+			signature TEXT,
+			processed_at TIMESTAMP,
+			error_message TEXT,
+			correlation_id TEXT,
+			metadata TEXT,
+			received_at TIMESTAMP NOT NULL,
+			created_at TIMESTAMP NOT NULL,
+			updated_at TIMESTAMP NOT NULL,
+			UNIQUE(gateway_id, event_id),
+			FOREIGN KEY(gateway_id) REFERENCES payment_gateways(id) ON DELETE CASCADE
 		);`,
 		`CREATE TABLE IF NOT EXISTS coupons (
 			id TEXT PRIMARY KEY,
@@ -161,6 +295,14 @@ func ensureProductSchema(db *squealx.DB) error {
 		`CREATE INDEX IF NOT EXISTS idx_subscriptions_client_id ON subscriptions(client_id);`,
 		`CREATE INDEX IF NOT EXISTS idx_subscriptions_product_id ON subscriptions(product_id);`,
 		`CREATE INDEX IF NOT EXISTS idx_subscriptions_plan_id ON subscriptions(plan_id);`,
+		`CREATE INDEX IF NOT EXISTS idx_payment_methods_client_id ON payment_methods(client_id);`,
+		`CREATE INDEX IF NOT EXISTS idx_billing_invoices_subscription_id ON billing_invoices(subscription_id);`,
+		`CREATE INDEX IF NOT EXISTS idx_billing_invoices_client_id ON billing_invoices(client_id);`,
+		`CREATE INDEX IF NOT EXISTS idx_billing_invoices_due_at ON billing_invoices(due_at);`,
+		`CREATE INDEX IF NOT EXISTS idx_payment_attempts_invoice_id ON payment_attempts(invoice_id);`,
+		`CREATE INDEX IF NOT EXISTS idx_payment_attempts_subscription_id ON payment_attempts(subscription_id);`,
+		`CREATE INDEX IF NOT EXISTS idx_billing_approval_subject ON billing_approval_requests(subject_type, subject_id);`,
+		`CREATE INDEX IF NOT EXISTS idx_billing_webhook_events_status ON billing_webhook_events(status);`,
 		`CREATE INDEX IF NOT EXISTS idx_coupon_redemptions_coupon_id ON coupon_redemptions(coupon_id);`,
 		`CREATE INDEX IF NOT EXISTS idx_coupon_redemptions_license_id ON coupon_redemptions(license_id);`,
 		`CREATE INDEX IF NOT EXISTS idx_coupon_redemptions_client_id ON coupon_redemptions(client_id);`,
@@ -242,6 +384,23 @@ func ensureProductSchema(db *squealx.DB) error {
 		}
 	}
 
+	if err := ensureColumns(db, "subscriptions", map[string]string{
+		"auto_renew":              "ALTER TABLE subscriptions ADD COLUMN auto_renew INTEGER NOT NULL DEFAULT 1;",
+		"collection_method":       "ALTER TABLE subscriptions ADD COLUMN collection_method TEXT NOT NULL DEFAULT 'automatic';",
+		"gateway_id":              "ALTER TABLE subscriptions ADD COLUMN gateway_id TEXT;",
+		"payment_method_id":       "ALTER TABLE subscriptions ADD COLUMN payment_method_id TEXT;",
+		"gateway_customer_id":     "ALTER TABLE subscriptions ADD COLUMN gateway_customer_id TEXT;",
+		"gateway_subscription_id": "ALTER TABLE subscriptions ADD COLUMN gateway_subscription_id TEXT;",
+		"quantity":                "ALTER TABLE subscriptions ADD COLUMN quantity INTEGER NOT NULL DEFAULT 1;",
+		"grace_period_days":       "ALTER TABLE subscriptions ADD COLUMN grace_period_days INTEGER NOT NULL DEFAULT 7;",
+		"failure_count":           "ALTER TABLE subscriptions ADD COLUMN failure_count INTEGER NOT NULL DEFAULT 0;",
+		"last_reminder_at":        "ALTER TABLE subscriptions ADD COLUMN last_reminder_at TIMESTAMP;",
+		"next_reminder_at":        "ALTER TABLE subscriptions ADD COLUMN next_reminder_at TIMESTAMP;",
+		"approval_status":         "ALTER TABLE subscriptions ADD COLUMN approval_status TEXT;",
+	}); err != nil {
+		return err
+	}
+
 	rows, err = db.Query("PRAGMA table_info(features);")
 	if err != nil {
 		return fmt.Errorf("failed to check features table info: %w", err)
@@ -277,6 +436,35 @@ func ensureProductSchema(db *squealx.DB) error {
 		}
 	}
 
+	return nil
+}
+
+func ensureColumns(db *squealx.DB, table string, alters map[string]string) error {
+	rows, err := db.Query("PRAGMA table_info(" + table + ");")
+	if err != nil {
+		return fmt.Errorf("failed to check %s table info: %w", table, err)
+	}
+	existing := make(map[string]bool)
+	for rows.Next() {
+		var cid int
+		var name, ctype string
+		var notnull, pk int
+		var dfltValue interface{}
+		if err := rows.Scan(&cid, &name, &ctype, &notnull, &dfltValue, &pk); err != nil {
+			rows.Close()
+			return fmt.Errorf("failed to scan %s table info: %w", table, err)
+		}
+		existing[name] = true
+	}
+	rows.Close()
+	for name, stmt := range alters {
+		if existing[name] {
+			continue
+		}
+		if _, err := db.Exec(stmt); err != nil {
+			return fmt.Errorf("failed to add %s.%s column: %w", table, name, err)
+		}
+	}
 	return nil
 }
 
@@ -1108,15 +1296,22 @@ func (s *SQLiteStorage) SaveSubscription(ctx context.Context, sub *Subscription)
 		sub.CreatedAt = now
 	}
 	sub.UpdatedAt = now
+	normalizeSubscriptionBillingDefaults(sub)
 
-	query := `INSERT INTO subscriptions (id, client_id, product_id, plan_id, license_id, status, start_date, end_date, billing_cycle, next_billing_date, cancelled_at, cancel_reason, created_at, updated_at)
-			  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+	query := `INSERT INTO subscriptions (id, client_id, product_id, plan_id, license_id, status, start_date, end_date, billing_cycle, next_billing_date, cancelled_at, cancel_reason, auto_renew, collection_method, gateway_id, payment_method_id, gateway_customer_id, gateway_subscription_id, quantity, grace_period_days, failure_count, last_reminder_at, next_reminder_at, approval_status, created_at, updated_at)
+			  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 	_, err := s.db.ExecContext(ctx, query,
-		sub.ID, sub.ClientID, sub.ProductID, sub.PlanID, sub.LicenseID,
+		sub.ID, sub.ClientID, sub.ProductID, sub.PlanID, nullString(sub.LicenseID),
 		sub.Status, sub.StartDate, sub.EndDate, sub.BillingCycle,
-		sub.NextBillingDate, sub.CancelledAt, sub.CancelReason,
+		nullTime(sub.NextBillingDate), nullTime(sub.CancelledAt), nullString(sub.CancelReason),
+		boolToInt(sub.AutoRenew), sub.CollectionMethod, nullString(sub.GatewayID), nullString(sub.PaymentMethodID),
+		nullString(sub.GatewayCustomerID), nullString(sub.GatewaySubscriptionID), sub.Quantity, sub.GracePeriodDays,
+		sub.FailureCount, nullTime(sub.LastReminderAt), nullTime(sub.NextReminderAt), nullString(sub.ApprovalStatus),
 		sub.CreatedAt, sub.UpdatedAt)
 	if err != nil {
+		if strings.Contains(err.Error(), "UNIQUE constraint failed") {
+			return errSubscriptionExists
+		}
 		return err
 	}
 	return nil
@@ -1127,12 +1322,16 @@ func (s *SQLiteStorage) UpdateSubscription(ctx context.Context, sub *Subscriptio
 		return fmt.Errorf("subscription is nil")
 	}
 	sub.UpdatedAt = time.Now()
+	normalizeSubscriptionBillingDefaults(sub)
 
-	query := `UPDATE subscriptions SET client_id=?, product_id=?, plan_id=?, license_id=?, status=?, start_date=?, end_date=?, billing_cycle=?, next_billing_date=?, cancelled_at=?, cancel_reason=?, updated_at=? WHERE id=?`
+	query := `UPDATE subscriptions SET client_id=?, product_id=?, plan_id=?, license_id=?, status=?, start_date=?, end_date=?, billing_cycle=?, next_billing_date=?, cancelled_at=?, cancel_reason=?, auto_renew=?, collection_method=?, gateway_id=?, payment_method_id=?, gateway_customer_id=?, gateway_subscription_id=?, quantity=?, grace_period_days=?, failure_count=?, last_reminder_at=?, next_reminder_at=?, approval_status=?, updated_at=? WHERE id=?`
 	result, err := s.db.ExecContext(ctx, query,
-		sub.ClientID, sub.ProductID, sub.PlanID, sub.LicenseID,
+		sub.ClientID, sub.ProductID, sub.PlanID, nullString(sub.LicenseID),
 		sub.Status, sub.StartDate, sub.EndDate, sub.BillingCycle,
-		sub.NextBillingDate, sub.CancelledAt, sub.CancelReason,
+		nullTime(sub.NextBillingDate), nullTime(sub.CancelledAt), nullString(sub.CancelReason),
+		boolToInt(sub.AutoRenew), sub.CollectionMethod, nullString(sub.GatewayID), nullString(sub.PaymentMethodID),
+		nullString(sub.GatewayCustomerID), nullString(sub.GatewaySubscriptionID), sub.Quantity, sub.GracePeriodDays,
+		sub.FailureCount, nullTime(sub.LastReminderAt), nullTime(sub.NextReminderAt), nullString(sub.ApprovalStatus),
 		sub.UpdatedAt, sub.ID)
 	if err != nil {
 		return err
@@ -1145,13 +1344,13 @@ func (s *SQLiteStorage) UpdateSubscription(ctx context.Context, sub *Subscriptio
 }
 
 func (s *SQLiteStorage) GetSubscription(ctx context.Context, subID string) (*Subscription, error) {
-	query := `SELECT id, client_id, product_id, plan_id, license_id, status, start_date, end_date, billing_cycle, next_billing_date, cancelled_at, cancel_reason, created_at, updated_at FROM subscriptions WHERE id=?`
+	query := subscriptionSelectSQL() + ` WHERE id=?`
 	row := s.db.QueryRowContext(ctx, query, subID)
 	return s.scanSubscription(row)
 }
 
 func (s *SQLiteStorage) ListSubscriptions(ctx context.Context) ([]*Subscription, error) {
-	query := `SELECT id, client_id, product_id, plan_id, license_id, status, start_date, end_date, billing_cycle, next_billing_date, cancelled_at, cancel_reason, created_at, updated_at FROM subscriptions ORDER BY created_at DESC`
+	query := subscriptionSelectSQL() + ` ORDER BY created_at DESC`
 	rows, err := s.db.QueryContext(ctx, query)
 	if err != nil {
 		return nil, err
@@ -1169,7 +1368,7 @@ func (s *SQLiteStorage) ListSubscriptions(ctx context.Context) ([]*Subscription,
 }
 
 func (s *SQLiteStorage) ListSubscriptionsByClient(ctx context.Context, clientID string) ([]*Subscription, error) {
-	query := `SELECT id, client_id, product_id, plan_id, license_id, status, start_date, end_date, billing_cycle, next_billing_date, cancelled_at, cancel_reason, created_at, updated_at FROM subscriptions WHERE client_id=? ORDER BY created_at DESC`
+	query := subscriptionSelectSQL() + ` WHERE client_id=? ORDER BY created_at DESC`
 	rows, err := s.db.QueryContext(ctx, query, clientID)
 	if err != nil {
 		return nil, err
@@ -1199,13 +1398,35 @@ func (s *SQLiteStorage) DeleteSubscription(ctx context.Context, subID string) er
 	return nil
 }
 
+func subscriptionSelectSQL() string {
+	return `SELECT id, client_id, product_id, plan_id, license_id, status, start_date, end_date, billing_cycle, next_billing_date, cancelled_at, cancel_reason, auto_renew, collection_method, gateway_id, payment_method_id, gateway_customer_id, gateway_subscription_id, quantity, grace_period_days, failure_count, last_reminder_at, next_reminder_at, approval_status, created_at, updated_at FROM subscriptions`
+}
+
+func normalizeSubscriptionBillingDefaults(sub *Subscription) {
+	if sub.CollectionMethod == "" {
+		sub.CollectionMethod = CollectionMethodAutomatic
+	}
+	if sub.Quantity < 1 {
+		sub.Quantity = 1
+	}
+	if sub.GracePeriodDays < 0 {
+		sub.GracePeriodDays = 0
+	}
+	if sub.ApprovalStatus == "" {
+		sub.ApprovalStatus = ApprovalStatusApproved
+	}
+}
+
 func (s *SQLiteStorage) scanSubscription(scanner productRowScanner) (*Subscription, error) {
 	sub := &Subscription{}
-	var licenseID, cancelReason sql.NullString
-	var startDate, endDate, nextBillingDate, cancelledAt, createdAt, updatedAt sqliteTimeValue
+	var licenseID, cancelReason, collectionMethod, gatewayID, paymentMethodID, gatewayCustomerID, gatewaySubscriptionID, approvalStatus sql.NullString
+	var autoRenew int
+	var startDate, endDate, nextBillingDate, cancelledAt, lastReminderAt, nextReminderAt, createdAt, updatedAt sqliteTimeValue
 	err := scanner.Scan(&sub.ID, &sub.ClientID, &sub.ProductID, &sub.PlanID, &licenseID,
 		&sub.Status, &startDate, &endDate, &sub.BillingCycle,
 		&nextBillingDate, &cancelledAt, &cancelReason,
+		&autoRenew, &collectionMethod, &gatewayID, &paymentMethodID, &gatewayCustomerID, &gatewaySubscriptionID,
+		&sub.Quantity, &sub.GracePeriodDays, &sub.FailureCount, &lastReminderAt, &nextReminderAt, &approvalStatus,
 		&createdAt, &updatedAt)
 	if err == sql.ErrNoRows {
 		return nil, errSubscriptionMissing
@@ -1219,18 +1440,31 @@ func (s *SQLiteStorage) scanSubscription(scanner productRowScanner) (*Subscripti
 	sub.NextBillingDate = nextBillingDate.Time
 	sub.CancelledAt = cancelledAt.Time
 	sub.CancelReason = cancelReason.String
+	sub.AutoRenew = intToBool(autoRenew)
+	sub.CollectionMethod = collectionMethod.String
+	sub.GatewayID = gatewayID.String
+	sub.PaymentMethodID = paymentMethodID.String
+	sub.GatewayCustomerID = gatewayCustomerID.String
+	sub.GatewaySubscriptionID = gatewaySubscriptionID.String
+	sub.LastReminderAt = lastReminderAt.Time
+	sub.NextReminderAt = nextReminderAt.Time
+	sub.ApprovalStatus = approvalStatus.String
 	sub.CreatedAt = createdAt.Time
 	sub.UpdatedAt = updatedAt.Time
+	normalizeSubscriptionBillingDefaults(sub)
 	return sub, nil
 }
 
 func (s *SQLiteStorage) scanSubscriptionRow(scanner productRowScanner) (*Subscription, error) {
 	sub := &Subscription{}
-	var licenseID, cancelReason sql.NullString
-	var startDate, endDate, nextBillingDate, cancelledAt, createdAt, updatedAt sqliteTimeValue
+	var licenseID, cancelReason, collectionMethod, gatewayID, paymentMethodID, gatewayCustomerID, gatewaySubscriptionID, approvalStatus sql.NullString
+	var autoRenew int
+	var startDate, endDate, nextBillingDate, cancelledAt, lastReminderAt, nextReminderAt, createdAt, updatedAt sqliteTimeValue
 	err := scanner.Scan(&sub.ID, &sub.ClientID, &sub.ProductID, &sub.PlanID, &licenseID,
 		&sub.Status, &startDate, &endDate, &sub.BillingCycle,
 		&nextBillingDate, &cancelledAt, &cancelReason,
+		&autoRenew, &collectionMethod, &gatewayID, &paymentMethodID, &gatewayCustomerID, &gatewaySubscriptionID,
+		&sub.Quantity, &sub.GracePeriodDays, &sub.FailureCount, &lastReminderAt, &nextReminderAt, &approvalStatus,
 		&createdAt, &updatedAt)
 	if err != nil {
 		return nil, err
@@ -1241,7 +1475,17 @@ func (s *SQLiteStorage) scanSubscriptionRow(scanner productRowScanner) (*Subscri
 	sub.NextBillingDate = nextBillingDate.Time
 	sub.CancelledAt = cancelledAt.Time
 	sub.CancelReason = cancelReason.String
+	sub.AutoRenew = intToBool(autoRenew)
+	sub.CollectionMethod = collectionMethod.String
+	sub.GatewayID = gatewayID.String
+	sub.PaymentMethodID = paymentMethodID.String
+	sub.GatewayCustomerID = gatewayCustomerID.String
+	sub.GatewaySubscriptionID = gatewaySubscriptionID.String
+	sub.LastReminderAt = lastReminderAt.Time
+	sub.NextReminderAt = nextReminderAt.Time
+	sub.ApprovalStatus = approvalStatus.String
 	sub.CreatedAt = createdAt.Time
 	sub.UpdatedAt = updatedAt.Time
+	normalizeSubscriptionBillingDefaults(sub)
 	return sub, nil
 }

@@ -65,6 +65,14 @@ const (
 	EventPlanUpdated EventType = "plan.updated"
 	EventPlanDeleted EventType = "plan.deleted"
 
+	// Billing Events
+	EventBillingGatewayChanged EventType = "billing.gateway.changed"
+	EventBillingInvoiceChanged EventType = "billing.invoice.changed"
+	EventBillingPaymentChanged EventType = "billing.payment.changed"
+	EventBillingApproval       EventType = "billing.approval"
+	EventBillingJob            EventType = "billing.job"
+	EventBillingWebhook        EventType = "billing.webhook"
+
 	// Authentication Events
 	EventAuthLogin  EventType = "auth.login"
 	EventAuthLogout EventType = "auth.logout"
