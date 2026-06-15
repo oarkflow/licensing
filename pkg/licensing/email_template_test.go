@@ -16,7 +16,16 @@ func TestEmailTemplateLoader(t *testing.T) {
 	}
 
 	// Test that we have the expected templates
-	expectedTemplates := []string{"welcome_email", "license_email"}
+	expectedTemplates := []string{
+		"welcome_email",
+		"license_email",
+		"billing_renewal_reminder",
+		"billing_payment_retry",
+		"billing_cancellation",
+		"billing_renewal_success",
+		"billing_invoice_paid",
+		"billing_grace_period_expiry",
+	}
 	for _, templateName := range expectedTemplates {
 		if _, exists := loader.templates[templateName]; !exists {
 			t.Errorf("Expected template %s not found", templateName)

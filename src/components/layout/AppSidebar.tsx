@@ -13,6 +13,7 @@ import {
     Send,
     Tags,
     CreditCard,
+    WalletCards,
 } from 'lucide-react';
 import {
     Sidebar,
@@ -41,6 +42,7 @@ const overviewItems = [
 const licensingItems = [
     { title: 'Licenses', url: '/licenses', icon: Key },
     { title: 'Clients', url: '/clients', icon: Users },
+    { title: 'Subscriptions', url: '/subscriptions', icon: WalletCards },
     { title: 'Billing', url: '/admin/billing', icon: CreditCard },
 ];
 

@@ -543,6 +543,100 @@ func TestSubscriptionUpgradeAPIUpdatesSubscriptionAndLicense(t *testing.T) {
 	}
 }
 
+func TestSubscriptionLifecycleAdminAPI(t *testing.T) {
+	f := newUpgradeFixture(t)
+	s, err := NewServer(f.lm, ":0", nil, NewRateLimiter(100, time.Minute), "", "", "", true)
+	if err != nil {
+		t.Fatalf("NewServer failed: %v", err)
+	}
+	admin, err := f.lm.CreateAdminUser(f.ctx, "sub-lifecycle-admin", "password")
+	if err != nil {
+		t.Fatalf("CreateAdminUser failed: %v", err)
+	}
+	token, _, err := f.lm.GenerateAPIKeyWithOptions(f.ctx, admin.ID, APIKeyOptions{Scopes: []string{"subscriptions:read", "subscriptions:write"}})
+	if err != nil {
+		t.Fatalf("GenerateAPIKeyWithOptions failed: %v", err)
+	}
+	license := f.issueBasicLicense(t, false)
+	sub := &Subscription{
+		ID:           "sub-api-lifecycle",
+		ClientID:     f.client.ID,
+		ProductID:    f.product.ID,
+		PlanID:       f.basic.ID,
+		LicenseID:    license.ID,
+		Status:       SubscriptionStatusActive,
+		StartDate:    license.IssuedAt,
+		EndDate:      license.ExpiresAt,
+		BillingCycle: f.basic.BillingCycle,
+		AutoRenew:    true,
+		CreatedAt:    time.Now(),
+		UpdatedAt:    time.Now(),
+	}
+	if err := f.storage.SaveSubscription(f.ctx, sub); err != nil {
+		t.Fatalf("SaveSubscription failed: %v", err)
+	}
+
+	getReq := httptest.NewRequest(http.MethodGet, "/api/subscriptions/"+sub.ID, nil)
+	getReq.Header.Set("Authorization", "Bearer "+token)
+	getRec := httptest.NewRecorder()
+	s.handleSubscriptionActions(getRec, getReq)
+	if getRec.Code != http.StatusOK {
+		t.Fatalf("expected subscription detail 200, got %d: %s", getRec.Code, getRec.Body.String())
+	}
+
+	cancelBody, _ := json.Marshal(map[string]any{"reason": "customer requested", "at_period_end": false})
+	cancelReq := httptest.NewRequest(http.MethodPost, "/api/subscriptions/"+sub.ID+"/cancel", bytes.NewReader(cancelBody))
+	cancelReq.Header.Set("Authorization", "Bearer "+token)
+	cancelRec := httptest.NewRecorder()
+	s.handleSubscriptionActions(cancelRec, cancelReq)
+	if cancelRec.Code != http.StatusOK {
+		t.Fatalf("expected cancel 200, got %d: %s", cancelRec.Code, cancelRec.Body.String())
+	}
+	var cancelled Subscription
+	if err := json.Unmarshal(cancelRec.Body.Bytes(), &cancelled); err != nil {
+		t.Fatalf("decode cancel response failed: %v", err)
+	}
+	if cancelled.Status != SubscriptionStatusCancelled || cancelled.CancelReason != "customer requested" {
+		t.Fatalf("unexpected cancelled subscription: %+v", cancelled)
+	}
+
+	resumeReq := httptest.NewRequest(http.MethodPost, "/api/subscriptions/"+sub.ID+"/resume", nil)
+	resumeReq.Header.Set("Authorization", "Bearer "+token)
+	resumeRec := httptest.NewRecorder()
+	s.handleSubscriptionActions(resumeRec, resumeReq)
+	if resumeRec.Code != http.StatusOK {
+		t.Fatalf("expected resume 200, got %d: %s", resumeRec.Code, resumeRec.Body.String())
+	}
+	var resumed Subscription
+	if err := json.Unmarshal(resumeRec.Body.Bytes(), &resumed); err != nil {
+		t.Fatalf("decode resume response failed: %v", err)
+	}
+	if resumed.Status != SubscriptionStatusActive || !resumed.CancelledAt.IsZero() || resumed.CancelReason != "" {
+		t.Fatalf("unexpected resumed subscription: %+v", resumed)
+	}
+
+	notifyBody, _ := json.Marshal(map[string]any{"kind": "renewal_reminder"})
+	notifyReq := httptest.NewRequest(http.MethodPost, "/api/subscriptions/"+sub.ID+"/notify", bytes.NewReader(notifyBody))
+	notifyReq.Header.Set("Authorization", "Bearer "+token)
+	notifyRec := httptest.NewRecorder()
+	s.handleSubscriptionActions(notifyRec, notifyReq)
+	if notifyRec.Code != http.StatusAccepted {
+		t.Fatalf("expected notify 202, got %d: %s", notifyRec.Code, notifyRec.Body.String())
+	}
+	var queued struct {
+		ID       string            `json:"id"`
+		To       string            `json:"to"`
+		Subject  string            `json:"subject"`
+		Metadata map[string]string `json:"metadata"`
+	}
+	if err := json.Unmarshal(notifyRec.Body.Bytes(), &queued); err != nil {
+		t.Fatalf("decode notify response failed: %v", err)
+	}
+	if queued.ID == "" || queued.To != f.client.Email || queued.Metadata["subscription_id"] != sub.ID || queued.Metadata["kind"] != "renewal_reminder" {
+		t.Fatalf("unexpected queued notification: %+v", queued)
+	}
+}
+
 func TestAdminAPIKeyExpiryIPAndOriginRestrictions(t *testing.T) {
 	storage := NewInMemoryStorage()
 	lm, err := NewLicenseManager(storage)

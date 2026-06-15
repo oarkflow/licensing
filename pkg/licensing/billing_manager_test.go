@@ -201,3 +201,87 @@ func TestBillingManagerMarksPastDueAndExpiresAfterGrace(t *testing.T) {
 		t.Fatalf("expected revoked license, got %+v", revokedLicense)
 	}
 }
+
+func TestBillingManagerInvoiceUsesQuantityDiscountAndTaxMetadata(t *testing.T) {
+	ctx := context.Background()
+	storage := NewInMemoryStorage()
+	now := time.Date(2026, 6, 15, 10, 0, 0, 0, time.UTC)
+
+	client := &Client{ID: "client-calc", Email: "calc@example.com", Status: ClientStatusActive, CreatedAt: now, UpdatedAt: now}
+	_ = storage.SaveClient(ctx, client)
+	product := &Product{ID: "product-calc", Name: "App", Slug: "app-calc", CreatedAt: now, UpdatedAt: now}
+	_ = storage.SaveProduct(ctx, product)
+	plan := &Plan{
+		ID:             "plan-calc",
+		ProductID:      product.ID,
+		Name:           "Team",
+		Slug:           "team",
+		PricePerDevice: 1000,
+		Currency:       "USD",
+		BillingCycle:   "monthly",
+		Metadata: map[string]string{
+			"discount_percent": "10",
+			"tax_percent":      "5",
+			"coupon_code":      "TEAM10",
+			"tax_hook":         "metadata",
+		},
+		CreatedAt: now,
+		UpdatedAt: now,
+	}
+	_ = storage.SavePlan(ctx, plan)
+	sub := &Subscription{
+		ID:               "sub-calc",
+		ClientID:         client.ID,
+		ProductID:        product.ID,
+		PlanID:           plan.ID,
+		Status:           SubscriptionStatusActive,
+		StartDate:        now.AddDate(0, -1, 0),
+		EndDate:          now,
+		BillingCycle:     "monthly",
+		NextBillingDate:  now,
+		AutoRenew:        true,
+		CollectionMethod: CollectionMethodAutomatic,
+		Quantity:         3,
+		GracePeriodDays:  7,
+		ApprovalStatus:   ApprovalStatusApproved,
+		CreatedAt:        now.AddDate(0, -1, 0),
+		UpdatedAt:        now.AddDate(0, -1, 0),
+	}
+	_ = storage.SaveSubscription(ctx, sub)
+
+	manager := NewBillingManager(storage, nil)
+	manager.now = func() time.Time { return now }
+	invoice, err := manager.NewInvoiceFromSubscription(ctx, sub)
+	if err != nil {
+		t.Fatalf("NewInvoiceFromSubscription failed: %v", err)
+	}
+	if invoice.SubtotalAmount != 3000 || invoice.DiscountAmount != 300 || invoice.TaxAmount != 135 || invoice.TotalAmount != 2835 {
+		t.Fatalf("unexpected calculated invoice: %+v", invoice)
+	}
+	if invoice.Metadata["coupon_code"] != "TEAM10" || invoice.Metadata["discount_source"] != "discount_percent" || invoice.Metadata["tax_source"] != "tax_percent" {
+		t.Fatalf("expected calculation metadata, got %+v", invoice.Metadata)
+	}
+}
+
+func TestRedactPaymentGatewayMasksSensitiveConfig(t *testing.T) {
+	gateway := &PaymentGatewayConfig{
+		ID:       "gw",
+		Name:     "Stripe",
+		Provider: BillingGatewayStripe,
+		Config: map[string]string{
+			"api_key":        "sk_test_123",
+			"webhook_secret": "whsec_123",
+			"account_id":     "acct_123",
+		},
+	}
+	redacted := redactPaymentGateway(gateway)
+	if redacted.Config["api_key"] != "********" || redacted.Config["webhook_secret"] != "********" {
+		t.Fatalf("expected sensitive config to be redacted: %+v", redacted.Config)
+	}
+	if redacted.Config["account_id"] != "acct_123" {
+		t.Fatalf("expected non-sensitive config to remain visible: %+v", redacted.Config)
+	}
+	if gateway.Config["api_key"] == "********" {
+		t.Fatalf("redaction mutated original gateway config")
+	}
+}

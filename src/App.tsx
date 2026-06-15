@@ -22,6 +22,8 @@ const ClientsPage = lazy(() => import("@/pages/clients").then(module => ({ defau
 const ClientDetailPage = lazy(() => import("@/pages/clients").then(module => ({ default: module.ClientDetailPage })));
 const ClientNewPage = lazy(() => import("@/pages/clients").then(module => ({ default: module.ClientNewPage })));
 
+const SubscriptionsPage = lazy(() => import("@/pages/subscriptions").then(module => ({ default: module.SubscriptionsPage })));
+
 const ProductsPage = lazy(() => import("@/pages/products").then(module => ({ default: module.ProductsPage })));
 const ProductDetailPage = lazy(() => import("@/pages/products").then(module => ({ default: module.ProductDetailPage })));
 const ProductNewPage = lazy(() => import("@/pages/products").then(module => ({ default: module.ProductNewPage })));
@@ -100,6 +102,9 @@ const App = () => (
                                     <Route path="/clients" element={<ClientsPage />} />
                                     <Route path="/clients/new" element={<ClientNewPage />} />
                                     <Route path="/clients/:id" element={<ClientDetailPage />} />
+
+                                    {/* Subscriptions */}
+                                    <Route path="/subscriptions" element={<SubscriptionsPage />} />
 
                                     {/* Products */}
                                     <Route path="/products" element={<ProductsPage />} />

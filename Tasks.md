@@ -1,7 +1,3 @@
-I want to build Subscription management platform in licensing. I am looking for a subscription management platform so that future customers can easily pay, cancel, and renew their plans automatically. I want to avoid having to reach out to users manually via email or phone to collect payments. Supporting various payment gateways for the payment based on the client, support reliable automated recurring billing, reminder, approval system. Create Tasks.md and start working.
-
-Continue working based on Tasks.md and make sure not to stop until everything is implemented.
-
 # Production Device Management Tasks
 
 ## Protocol and Documentation
@@ -75,7 +71,7 @@ Continue working based on Tasks.md and make sure not to stop until everything is
 
 ## Recurring Billing Automation
 - [x] Add billing scheduler for upcoming renewals, due invoices, failed payment retries, grace-period expiry, and subscription renewal completion.
-- [ ] Generate invoices from active subscriptions using plan price, quantity/devices, coupons, tax hooks, and billing cycle.
+- [x] Generate invoices from active subscriptions using plan price, quantity/devices, coupons, tax hooks, and billing cycle.
 - [x] Automatically renew licenses after successful payment.
 - [x] Pause, cancel, expire, or revoke subscription-linked licenses based on billing outcome and configured grace period.
 
@@ -86,32 +82,32 @@ Continue working based on Tasks.md and make sure not to stop until everything is
 - [x] Add hosted invoice/payment links where supported by the selected gateway.
 
 ## Reminders and Notifications
-- [ ] Add renewal reminder templates.
-- [ ] Add payment failure and retry reminder templates.
-- [ ] Add cancellation, renewal success, invoice paid, and grace-period expiry templates.
+- [x] Add renewal reminder templates.
+- [x] Add payment failure and retry reminder templates.
+- [x] Add cancellation, renewal success, invoice paid, and grace-period expiry templates.
 - [x] Queue reminder emails from billing scheduler using the existing email queue.
 
 ## Approval System
 - [x] Add approval request lifecycle APIs for pending, approved, rejected, and expired decisions.
 - [x] Support payment method approvals and manual invoice/payment approvals.
 - [x] Record approval decisions in audit events.
-- [ ] Notify customers/admins when approvals are requested or decided.
+- [x] Notify customers/admins when approvals are requested or decided.
 
 ## Admin UI
 - [x] Add billing gateway configuration screens.
-- [ ] Add subscription detail billing timeline with invoices, attempts, reminders, and approvals.
+- [x] Add subscription detail billing timeline with invoices, attempts, reminders, and approvals.
 - [x] Add invoice list and invoice detail screens.
 - [x] Add approval queue with approve/reject actions.
-- [ ] Add customer payment method visibility and administrative disable controls.
+- [x] Add customer payment method visibility and administrative disable controls.
 
 ## Webhooks and Reconciliation
 - [x] Add webhook ingestion table and idempotency handling.
 - [x] Verify gateway webhook signatures.
-- [ ] Reconcile gateway invoice/payment/subscription events to local invoices, attempts, subscriptions, and licenses.
+- [x] Reconcile gateway invoice/payment/subscription events to local invoices, attempts, subscriptions, and licenses.
 - [x] Add admin reconciliation tools for out-of-sync records.
 
 ## Security, Compliance, and Operations
-- [ ] Store gateway credentials securely and avoid persisting raw card/bank details.
+- [x] Store gateway credentials securely and avoid persisting raw card/bank details.
 - [x] Add RBAC permissions for billing read/write, gateway admin, approval decisions, and refund/cancel actions.
 - [x] Add audit events for billing configuration, invoice, payment, subscription, and approval changes.
 - [x] Add operational runbook for failed billing jobs, webhook replay, gateway outage, and manual collection fallback.

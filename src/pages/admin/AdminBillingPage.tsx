@@ -1,8 +1,8 @@
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Check, CreditCard, Play, Plus, RefreshCw, Search, X } from 'lucide-react';
+import { Check, CreditCard, Eye, Play, Plus, RefreshCw, Search, Star, X } from 'lucide-react';
 import api from '@/services/api';
-import type { BillingInvoice, PaymentGatewayConfig } from '@/types/api';
+import type { BillingInvoice, PaymentGatewayConfig, PaymentMethod } from '@/types/api';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -23,6 +23,7 @@ export function AdminBillingPage() {
     const queryClient = useQueryClient();
     const { toast } = useToast();
     const [gatewayOpen, setGatewayOpen] = useState(false);
+    const [selectedInvoiceID, setSelectedInvoiceID] = useState('');
     const [invoiceFilter, setInvoiceFilter] = useState({ subscription_id: '', client_id: '' });
     const [gatewayForm, setGatewayForm] = useState({
         name: '',
@@ -40,10 +41,23 @@ export function AdminBillingPage() {
         queryFn: () => api.listBillingInvoices(invoiceFilter),
         enabled: Boolean(invoiceFilter.subscription_id || invoiceFilter.client_id),
     });
+    const invoiceDetailQuery = useQuery({
+        queryKey: ['billing-invoice-detail', selectedInvoiceID],
+        queryFn: () => api.getBillingInvoice(selectedInvoiceID),
+        enabled: Boolean(selectedInvoiceID),
+    });
+    const paymentMethodsQuery = useQuery({
+        queryKey: ['billing-payment-methods', invoiceFilter.client_id],
+        queryFn: () => api.listPaymentMethods(invoiceFilter.client_id),
+        enabled: Boolean(invoiceFilter.client_id),
+    });
 
     const gateways = gatewaysQuery.data?.data || [];
     const approvals = approvalsQuery.data?.data || [];
     const invoices = invoicesQuery.data?.data || [];
+    const selectedInvoice = invoiceDetailQuery.data?.data?.invoice;
+    const attempts = invoiceDetailQuery.data?.data?.attempts || [];
+    const paymentMethods = paymentMethodsQuery.data?.data || [];
 
     const createGateway = useMutation({
         mutationFn: (payload: Partial<PaymentGatewayConfig>) => api.createBillingGateway(payload),
@@ -68,7 +82,16 @@ export function AdminBillingPage() {
         mutationFn: (invoice: BillingInvoice) => api.markBillingInvoicePaid(invoice.id),
         onSuccess: () => {
             queryClient.invalidateQueries({ queryKey: ['billing-invoices'] });
+            queryClient.invalidateQueries({ queryKey: ['billing-invoice-detail'] });
             toast({ title: 'Invoice marked paid' });
+        },
+    });
+
+    const updatePaymentMethod = useMutation({
+        mutationFn: ({ id, action }: { id: string; action: 'enable' | 'disable' | 'default' }) => api.updatePaymentMethod(id, action),
+        onSuccess: () => {
+            queryClient.invalidateQueries({ queryKey: ['billing-payment-methods'] });
+            toast({ title: 'Payment method updated' });
         },
     });
 
@@ -196,6 +219,10 @@ export function AdminBillingPage() {
                                     <TableCell>{cents(invoice.total_amount, invoice.currency)}</TableCell>
                                     <TableCell>{date(invoice.due_at)}</TableCell>
                                     <TableCell className="text-right">
+                                        <Button size="sm" variant="ghost" onClick={() => setSelectedInvoiceID(invoice.id)}>
+                                            <Eye className="mr-2 h-4 w-4" />
+                                            View
+                                        </Button>
                                         {invoice.status !== 'paid' && (
                                             <Button size="sm" variant="outline" onClick={() => payInvoice.mutate(invoice)}>
                                                 <CreditCard className="mr-2 h-4 w-4" />
@@ -212,6 +239,106 @@ export function AdminBillingPage() {
                     </Table>
                 </CardContent>
             </Card>
+
+            <div className="grid gap-4 lg:grid-cols-2">
+                <Card>
+                    <CardHeader>
+                        <CardTitle className="text-base">Billing Timeline</CardTitle>
+                    </CardHeader>
+                    <CardContent className="space-y-3">
+                        {selectedInvoice ? (
+                            <>
+                                <div className="grid gap-2 text-sm sm:grid-cols-2">
+                                    <div>
+                                        <p className="text-xs text-muted-foreground">Invoice</p>
+                                        <p className="font-mono text-xs">{selectedInvoice.id}</p>
+                                    </div>
+                                    <div>
+                                        <p className="text-xs text-muted-foreground">Period</p>
+                                        <p>{date(selectedInvoice.period_start)} - {date(selectedInvoice.period_end)}</p>
+                                    </div>
+                                    <div>
+                                        <p className="text-xs text-muted-foreground">Subtotal</p>
+                                        <p>{cents(selectedInvoice.subtotal_amount, selectedInvoice.currency)}</p>
+                                    </div>
+                                    <div>
+                                        <p className="text-xs text-muted-foreground">Discount / Tax</p>
+                                        <p>{cents(selectedInvoice.discount_amount, selectedInvoice.currency)} / {cents(selectedInvoice.tax_amount, selectedInvoice.currency)}</p>
+                                    </div>
+                                </div>
+                                <Table>
+                                    <TableHeader>
+                                        <TableRow>
+                                            <TableHead>Attempt</TableHead>
+                                            <TableHead>Status</TableHead>
+                                            <TableHead>When</TableHead>
+                                        </TableRow>
+                                    </TableHeader>
+                                    <TableBody>
+                                        {attempts.map((attempt) => (
+                                            <TableRow key={attempt.id}>
+                                                <TableCell className="font-mono text-xs">{attempt.gateway_payment_intent_id || attempt.id}</TableCell>
+                                                <TableCell><Badge variant={attempt.status === 'succeeded' ? 'default' : 'secondary'}>{attempt.status}</Badge></TableCell>
+                                                <TableCell>{date(attempt.attempted_at)}</TableCell>
+                                            </TableRow>
+                                        ))}
+                                        {attempts.length === 0 && (
+                                            <TableRow><TableCell colSpan={3} className="text-muted-foreground">No payment attempts recorded.</TableCell></TableRow>
+                                        )}
+                                    </TableBody>
+                                </Table>
+                            </>
+                        ) : (
+                            <p className="text-sm text-muted-foreground">Select an invoice to inspect attempts, reminders, and approval context.</p>
+                        )}
+                    </CardContent>
+                </Card>
+
+                <Card>
+                    <CardHeader>
+                        <CardTitle className="text-base">Customer Payment Methods</CardTitle>
+                    </CardHeader>
+                    <CardContent>
+                        <Table>
+                            <TableHeader>
+                                <TableRow>
+                                    <TableHead>Method</TableHead>
+                                    <TableHead>Status</TableHead>
+                                    <TableHead className="text-right">Action</TableHead>
+                                </TableRow>
+                            </TableHeader>
+                            <TableBody>
+                                {paymentMethods.map((method: PaymentMethod) => (
+                                    <TableRow key={method.id}>
+                                        <TableCell>
+                                            <div className="font-medium">{method.display_name || method.type}</div>
+                                            <div className="text-xs text-muted-foreground">{method.gateway_id}{method.is_default ? ' · default' : ''}</div>
+                                        </TableCell>
+                                        <TableCell><Badge variant={method.status === 'active' ? 'default' : 'secondary'}>{method.status}</Badge></TableCell>
+                                        <TableCell className="space-x-1 text-right">
+                                            <Button size="icon" variant="outline" onClick={() => updatePaymentMethod.mutate({ id: method.id, action: 'default' })} disabled={method.is_default}>
+                                                <Star className="h-4 w-4" />
+                                            </Button>
+                                            {method.status === 'disabled' ? (
+                                                <Button size="icon" variant="outline" onClick={() => updatePaymentMethod.mutate({ id: method.id, action: 'enable' })}>
+                                                    <Check className="h-4 w-4" />
+                                                </Button>
+                                            ) : (
+                                                <Button size="icon" variant="outline" onClick={() => updatePaymentMethod.mutate({ id: method.id, action: 'disable' })}>
+                                                    <X className="h-4 w-4" />
+                                                </Button>
+                                            )}
+                                        </TableCell>
+                                    </TableRow>
+                                ))}
+                                {paymentMethods.length === 0 && (
+                                    <TableRow><TableCell colSpan={3} className="text-muted-foreground">Search by client to view payment methods.</TableCell></TableRow>
+                                )}
+                            </TableBody>
+                        </Table>
+                    </CardContent>
+                </Card>
+            </div>
 
             <Dialog open={gatewayOpen} onOpenChange={setGatewayOpen}>
                 <DialogContent>

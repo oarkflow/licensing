@@ -16,6 +16,8 @@ import type {
     CreatePlanRequest,
     CreateProductRequest,
     CreateScopeRequest,
+    CreateSubscriptionRequest,
+    CreateSubscriptionResponse,
     DashboardStats,
     DeviceReplacementToken,
     EmailComposeRequest,
@@ -33,6 +35,7 @@ import type {
     OfflineValidationToken,
     PaymentAttempt,
     PaymentGatewayConfig,
+    PaymentMethod,
     Plan,
     PlanFeature,
     Product,
@@ -41,6 +44,8 @@ import type {
     SaveEmailProviderRequest,
     SaveEmailTemplateRequest,
     SigningKeyMeta,
+    Subscription,
+    SubscriptionNotificationResponse,
     UpgradeLicenseRequest,
     UpgradeLicenseResponse,
     User,
@@ -300,6 +305,54 @@ class ApiService {
         return this.request<UpgradeLicenseResponse>(`/api/subscriptions/${id}/upgrade`, {
             method: 'POST',
             body: JSON.stringify(data),
+        });
+    }
+
+    async listSubscriptions(params?: { client_id?: string }): Promise<ApiResponse<Subscription[]>> {
+        const query = new URLSearchParams();
+        if (params?.client_id) query.set('client_id', params.client_id);
+        const suffix = query.toString() ? `?${query.toString()}` : '';
+        return this.request<Subscription[]>(`/api/subscriptions${suffix}`);
+    }
+
+    async getSubscription(id: string): Promise<ApiResponse<{ subscription: Subscription; invoices: BillingInvoice[] }>> {
+        return this.request<{ subscription: Subscription; invoices: BillingInvoice[] }>(`/api/subscriptions/${id}`);
+    }
+
+    async cancelSubscription(id: string, reason?: string, atPeriodEnd = false): Promise<ApiResponse<Subscription>> {
+        return this.request<Subscription>(`/api/subscriptions/${id}/cancel`, {
+            method: 'POST',
+            body: JSON.stringify({ reason, at_period_end: atPeriodEnd }),
+        });
+    }
+
+    async resumeSubscription(id: string): Promise<ApiResponse<Subscription>> {
+        return this.request<Subscription>(`/api/subscriptions/${id}/resume`, {
+            method: 'POST',
+        });
+    }
+
+    async createBillingInvoice(subscriptionId: string): Promise<ApiResponse<BillingInvoice>> {
+        return this.request<BillingInvoice>('/api/billing/invoices', {
+            method: 'POST',
+            body: JSON.stringify({ subscription_id: subscriptionId }),
+        });
+    }
+
+    async createSubscription(data: CreateSubscriptionRequest): Promise<ApiResponse<CreateSubscriptionResponse>> {
+        return this.request<CreateSubscriptionResponse>('/api/subscribe', {
+            method: 'POST',
+            body: JSON.stringify(data),
+        });
+    }
+
+    async sendSubscriptionNotification(
+        id: string,
+        kind: 'renewal_reminder' | 'payment_retry' = 'renewal_reminder'
+    ): Promise<ApiResponse<SubscriptionNotificationResponse>> {
+        return this.request<SubscriptionNotificationResponse>(`/api/subscriptions/${id}/notify`, {
+            method: 'POST',
+            body: JSON.stringify({ kind }),
         });
     }
 
@@ -887,6 +940,16 @@ class ApiService {
 
     async getBillingInvoice(id: string): Promise<ApiResponse<{ invoice: BillingInvoice; attempts: PaymentAttempt[] }>> {
         return this.request<{ invoice: BillingInvoice; attempts: PaymentAttempt[] }>(`/api/billing/invoices/${id}`);
+    }
+
+    async listPaymentMethods(clientId: string): Promise<ApiResponse<PaymentMethod[]>> {
+        return this.request<PaymentMethod[]>(`/api/billing/payment-methods?client_id=${encodeURIComponent(clientId)}`);
+    }
+
+    async updatePaymentMethod(id: string, action: 'enable' | 'disable' | 'default'): Promise<ApiResponse<PaymentMethod>> {
+        return this.request<PaymentMethod>(`/api/billing/payment-methods/${id}/${action}`, {
+            method: 'POST',
+        });
     }
 
     async markBillingInvoicePaid(id: string, gatewayPaymentIntentID?: string): Promise<ApiResponse<BillingInvoice>> {

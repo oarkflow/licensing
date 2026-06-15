@@ -258,6 +258,45 @@ export interface Subscription {
     updated_at: string;
 }
 
+export interface CreateSubscriptionRequest {
+    email: string;
+    product_id: string;
+    plan_id: string;
+    start_date?: string;
+    duration_days?: number;
+    max_devices?: number;
+    quantity?: number;
+    gateway_id?: string;
+    payment_method_id?: string;
+    collection_method?: string;
+    auto_renew?: boolean;
+    grace_period_days?: number;
+    send_email?: boolean;
+    is_trial?: boolean;
+    metadata?: Record<string, string>;
+}
+
+export interface CreateSubscriptionResponse {
+    success: boolean;
+    message: string;
+    subscription: Subscription;
+    license?: Pick<License, 'id' | 'license_key' | 'plan_slug' | 'expires_at' | 'max_devices'>;
+    client?: Pick<Client, 'id' | 'email'>;
+    product?: Pick<Product, 'id' | 'name' | 'slug'>;
+    plan?: Pick<Plan, 'id' | 'name' | 'slug' | 'billing_cycle'>;
+    emails?: Record<string, { queued?: boolean; sent?: boolean; message_id?: string; error?: string }>;
+    email_sent?: boolean;
+}
+
+export interface SubscriptionNotificationResponse {
+    id: string;
+    to: string;
+    subject: string;
+    status: string;
+    metadata?: Record<string, string>;
+    created_at: string;
+}
+
 export interface PaymentGatewayConfig {
     id: string;
     name: string;
@@ -295,6 +334,24 @@ export interface BillingInvoice {
     hosted_invoice_url?: string;
     attempt_count: number;
     next_payment_attempt_at?: string;
+    metadata?: Record<string, string>;
+    created_at: string;
+    updated_at: string;
+}
+
+export interface PaymentMethod {
+    id: string;
+    client_id: string;
+    gateway_id: string;
+    type: string;
+    status: string;
+    display_name?: string;
+    gateway_customer_id?: string;
+    gateway_payment_method_id?: string;
+    is_default: boolean;
+    requires_approval: boolean;
+    approved_at?: string;
+    expires_at?: string;
     metadata?: Record<string, string>;
     created_at: string;
     updated_at: string;

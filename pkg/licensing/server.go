@@ -3160,7 +3160,7 @@ func (s *Server) handleSubscriptionActions(w http.ResponseWriter, r *http.Reques
 	}
 	tail := strings.Trim(strings.TrimPrefix(r.URL.Path, "/api/subscriptions/"), "/")
 	parts := strings.Split(tail, "/")
-	if len(parts) < 2 || strings.TrimSpace(parts[0]) == "" {
+	if len(parts) == 0 || strings.TrimSpace(parts[0]) == "" {
 		http.NotFound(w, r)
 		return
 	}
@@ -3171,6 +3171,23 @@ func (s *Server) handleSubscriptionActions(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	subscriptionID := strings.TrimSpace(parts[0])
+	if len(parts) == 1 {
+		if r.Method != http.MethodGet {
+			s.respondError(w, http.StatusMethodNotAllowed, "Method not allowed")
+			return
+		}
+		sub, err := s.lm.Storage().GetSubscription(r.Context(), subscriptionID)
+		if err != nil {
+			s.respondError(w, http.StatusNotFound, err.Error())
+			return
+		}
+		invoices, _ := s.lm.Storage().ListBillingInvoicesBySubscription(r.Context(), subscriptionID)
+		s.respondJSON(w, http.StatusOK, map[string]any{
+			"subscription": sub,
+			"invoices":     invoices,
+		})
+		return
+	}
 	switch parts[1] {
 	case "upgrade":
 		if r.Method != http.MethodPost {
@@ -3186,9 +3203,165 @@ func (s *Server) handleSubscriptionActions(w http.ResponseWriter, r *http.Reques
 			return
 		}
 		s.respondJSON(w, http.StatusOK, upgradeLicenseResponse(result))
+	case "cancel":
+		if r.Method != http.MethodPost {
+			s.respondError(w, http.StatusMethodNotAllowed, "Method not allowed")
+			return
+		}
+		var req struct {
+			Reason      string `json:"reason,omitempty"`
+			AtPeriodEnd bool   `json:"at_period_end,omitempty"`
+		}
+		if !s.decodeJSONBody(w, r, &req, maxAdminPayloadBytes) {
+			return
+		}
+		sub, err := s.billingManager().CancelSubscription(r.Context(), subscriptionID, req.Reason, req.AtPeriodEnd)
+		if err != nil {
+			s.respondError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		s.auditLog(r.Context(), audit.NewEvent(audit.EventBillingSubscriptionChanged, audit.SeverityInfo, "subscription_cancel", "subscription cancelled").
+			WithResource(subscriptionID, "subscription").WithResult("success"))
+		s.respondJSON(w, http.StatusOK, sub)
+	case "resume":
+		if r.Method != http.MethodPost {
+			s.respondError(w, http.StatusMethodNotAllowed, "Method not allowed")
+			return
+		}
+		sub, err := s.billingManager().ResumeSubscription(r.Context(), subscriptionID)
+		if err != nil {
+			s.respondError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		s.auditLog(r.Context(), audit.NewEvent(audit.EventBillingSubscriptionChanged, audit.SeverityInfo, "subscription_resume", "subscription resumed").
+			WithResource(subscriptionID, "subscription").WithResult("success"))
+		s.respondJSON(w, http.StatusOK, sub)
+	case "notify":
+		if r.Method != http.MethodPost {
+			s.respondError(w, http.StatusMethodNotAllowed, "Method not allowed")
+			return
+		}
+		var req struct {
+			Kind string `json:"kind,omitempty"`
+		}
+		if !s.decodeJSONBody(w, r, &req, maxAdminPayloadBytes) {
+			return
+		}
+		result, err := s.queueSubscriptionNotification(r.Context(), subscriptionID, req.Kind)
+		if err != nil {
+			s.respondError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		s.auditLog(r.Context(), audit.NewEvent(audit.EventBillingSubscriptionChanged, audit.SeverityInfo, "subscription_notify", "subscription notification queued").
+			WithResource(subscriptionID, "subscription").WithResult("success").WithMetadata("kind", result.Metadata["kind"]))
+		s.respondJSON(w, http.StatusAccepted, result)
 	default:
 		http.NotFound(w, r)
 	}
+}
+
+func (s *Server) queueSubscriptionNotification(ctx context.Context, subscriptionID, kind string) (*email.EmailMessage, error) {
+	sub, err := s.lm.Storage().GetSubscription(ctx, strings.TrimSpace(subscriptionID))
+	if err != nil {
+		return nil, err
+	}
+	client, err := s.lm.Storage().GetClient(ctx, sub.ClientID)
+	if err != nil {
+		return nil, err
+	}
+	product, err := s.lm.Storage().GetProduct(ctx, sub.ProductID)
+	if err != nil {
+		return nil, err
+	}
+	plan, err := s.lm.Storage().GetPlan(ctx, sub.PlanID)
+	if err != nil {
+		return nil, err
+	}
+
+	kind = strings.TrimSpace(kind)
+	if kind == "" {
+		if sub.Status == SubscriptionStatusPastDue {
+			kind = "payment_retry"
+		} else {
+			kind = "renewal_reminder"
+		}
+	}
+	templateName := "billing_renewal_reminder"
+	subject := "Subscription renewal reminder"
+	renewalDate := sub.NextBillingDate
+	if renewalDate.IsZero() {
+		renewalDate = sub.EndDate
+	}
+	if renewalDate.IsZero() {
+		renewalDate = time.Now()
+	}
+	text := fmt.Sprintf("Your %s subscription on the %s plan renews on %s.", product.Name, plan.Name, renewalDate.Format("2006-01-02"))
+	if kind == "payment_retry" || sub.Status == SubscriptionStatusPastDue {
+		kind = "payment_retry"
+		templateName = "billing_payment_retry"
+		subject = "Payment retry reminder"
+		text = fmt.Sprintf("Your %s subscription payment is past due. Please update payment before %s.", product.Name, sub.EndDate.AddDate(0, 0, sub.GracePeriodDays).Format("2006-01-02"))
+	}
+
+	clientLabel := client.Name
+	if clientLabel == "" {
+		clientLabel = client.Email
+	}
+	productLabel := product.Name
+	if productLabel == "" {
+		productLabel = product.Slug
+	}
+	planLabel := plan.Name
+	if planLabel == "" {
+		planLabel = plan.Slug
+	}
+	data := EmailTemplateData{
+		ClientName:  clientLabel,
+		ProductName: productLabel,
+		PlanName:    planLabel,
+		Email:       client.Email,
+		CompanyName: "Licensing Team",
+		SupportURL:  "https://support.example.com",
+		DocsURL:     "https://docs.example.com",
+	}
+	htmlBody, err := s.emailTemplateLoader.RenderTemplate(templateName, data)
+	if err != nil {
+		htmlBody = "<p>" + html.EscapeString(text) + "</p>"
+	}
+	now := time.Now()
+	msg := &email.EmailMessage{
+		ID:           uuid.New().String(),
+		To:           client.Email,
+		Subject:      subject,
+		RenderedText: text,
+		RenderedHTML: htmlBody,
+		Variables: map[string]any{
+			"subscription_id":   sub.ID,
+			"next_billing_date": sub.NextBillingDate,
+			"status":            sub.Status,
+			"kind":              kind,
+		},
+		Metadata: map[string]string{
+			"category":        "billing",
+			"kind":            kind,
+			"subscription_id": sub.ID,
+			"client_id":       sub.ClientID,
+			"product_id":      sub.ProductID,
+			"plan_id":         sub.PlanID,
+		},
+		Status:        email.MessageStatusQueued,
+		MaxRetries:    3,
+		NextAttemptAt: now,
+		CreatedAt:     now,
+		UpdatedAt:     now,
+	}
+	if err := s.lm.Storage().EnqueueEmail(ctx, msg); err != nil {
+		return nil, err
+	}
+	sub.LastReminderAt = now
+	sub.NextReminderAt = now.Add(24 * time.Hour)
+	_ = s.lm.Storage().UpdateSubscription(ctx, sub)
+	return msg, nil
 }
 
 func (s *Server) billingManager() *BillingManager {
@@ -3213,7 +3386,7 @@ func (s *Server) handleBillingGateways(w http.ResponseWriter, r *http.Request) {
 		if gateways == nil {
 			gateways = []*PaymentGatewayConfig{}
 		}
-		s.respondJSON(w, http.StatusOK, gateways)
+		s.respondJSON(w, http.StatusOK, redactPaymentGateways(gateways))
 	case http.MethodPost:
 		var gateway PaymentGatewayConfig
 		if !s.decodeJSONBody(w, r, &gateway, maxAdminPayloadBytes) {
@@ -3235,7 +3408,7 @@ func (s *Server) handleBillingGateways(w http.ResponseWriter, r *http.Request) {
 		}
 		s.auditLog(ctx, audit.NewEvent(audit.EventBillingGatewayChanged, audit.SeverityInfo, "billing_gateway_create", "billing gateway created").
 			WithResource(gateway.ID, "billing_gateway").WithResult("success"))
-		s.respondJSON(w, http.StatusCreated, gateway)
+		s.respondJSON(w, http.StatusCreated, redactPaymentGateway(&gateway))
 	default:
 		s.respondError(w, http.StatusMethodNotAllowed, "Method not allowed")
 	}
@@ -3265,7 +3438,7 @@ func (s *Server) handleBillingGatewayActions(w http.ResponseWriter, r *http.Requ
 			s.respondError(w, http.StatusNotFound, err.Error())
 			return
 		}
-		s.respondJSON(w, http.StatusOK, gateway)
+		s.respondJSON(w, http.StatusOK, redactPaymentGateway(gateway))
 	case http.MethodPut, http.MethodPatch:
 		var gateway PaymentGatewayConfig
 		if !s.decodeJSONBody(w, r, &gateway, maxAdminPayloadBytes) {
@@ -3278,7 +3451,7 @@ func (s *Server) handleBillingGatewayActions(w http.ResponseWriter, r *http.Requ
 		}
 		s.auditLog(ctx, audit.NewEvent(audit.EventBillingGatewayChanged, audit.SeverityInfo, "billing_gateway_update", "billing gateway updated").
 			WithResource(gateway.ID, "billing_gateway").WithResult("success"))
-		s.respondJSON(w, http.StatusOK, gateway)
+		s.respondJSON(w, http.StatusOK, redactPaymentGateway(&gateway))
 	default:
 		s.respondError(w, http.StatusMethodNotAllowed, "Method not allowed")
 	}
@@ -3421,6 +3594,89 @@ func (s *Server) handleBillingInvoiceActions(w http.ResponseWriter, r *http.Requ
 	}
 }
 
+func (s *Server) handleBillingPaymentMethods(w http.ResponseWriter, r *http.Request) {
+	if !s.enforceRateLimit(w, r) {
+		return
+	}
+	if !s.authorizeAdmin(w, r) {
+		return
+	}
+	if r.Method != http.MethodGet {
+		s.respondError(w, http.StatusMethodNotAllowed, "Method not allowed")
+		return
+	}
+	clientID := strings.TrimSpace(r.URL.Query().Get("client_id"))
+	if clientID == "" {
+		s.respondError(w, http.StatusBadRequest, "client_id is required")
+		return
+	}
+	methods, err := s.lm.Storage().ListPaymentMethodsByClient(r.Context(), clientID)
+	if err != nil {
+		s.respondError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if methods == nil {
+		methods = []*PaymentMethod{}
+	}
+	s.respondJSON(w, http.StatusOK, methods)
+}
+
+func (s *Server) handleBillingPaymentMethodActions(w http.ResponseWriter, r *http.Request) {
+	if !strings.HasPrefix(r.URL.Path, "/api/billing/payment-methods/") {
+		http.NotFound(w, r)
+		return
+	}
+	if !s.enforceRateLimit(w, r) {
+		return
+	}
+	if !s.authorizeAdmin(w, r) {
+		return
+	}
+	tail := strings.Trim(strings.TrimPrefix(r.URL.Path, "/api/billing/payment-methods/"), "/")
+	parts := strings.Split(tail, "/")
+	if len(parts) < 2 || parts[0] == "" {
+		http.NotFound(w, r)
+		return
+	}
+	if r.Method != http.MethodPost {
+		s.respondError(w, http.StatusMethodNotAllowed, "Method not allowed")
+		return
+	}
+	ctx := r.Context()
+	method, err := s.lm.Storage().GetPaymentMethod(ctx, parts[0])
+	if err != nil {
+		s.respondError(w, http.StatusNotFound, "payment method not found")
+		return
+	}
+	switch parts[1] {
+	case "disable":
+		method.Status = PaymentMethodStatusDisabled
+		method.IsDefault = false
+	case "enable":
+		method.Status = PaymentMethodStatusActive
+	case "default":
+		methods, _ := s.lm.Storage().ListPaymentMethodsByClient(ctx, method.ClientID)
+		for _, other := range methods {
+			if other.ID != method.ID && other.IsDefault {
+				other.IsDefault = false
+				_ = s.lm.Storage().UpdatePaymentMethod(ctx, other)
+			}
+		}
+		method.Status = PaymentMethodStatusActive
+		method.IsDefault = true
+	default:
+		http.NotFound(w, r)
+		return
+	}
+	if err := s.lm.Storage().UpdatePaymentMethod(ctx, method); err != nil {
+		s.respondError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	s.auditLog(ctx, audit.NewEvent(audit.EventBillingPaymentChanged, audit.SeverityInfo, "billing_payment_method_update", "payment method updated").
+		WithResource(method.ID, "payment_method").WithResult(method.Status))
+	s.respondJSON(w, http.StatusOK, method)
+}
+
 func (s *Server) handleBillingApprovals(w http.ResponseWriter, r *http.Request) {
 	if !s.enforceRateLimit(w, r) {
 		return
@@ -3456,6 +3712,7 @@ func (s *Server) handleBillingApprovals(w http.ResponseWriter, r *http.Request) 
 			s.respondError(w, http.StatusBadRequest, err.Error())
 			return
 		}
+		_ = s.queueBillingApprovalNotification(ctx, &approval, "requested")
 		s.respondJSON(w, http.StatusCreated, approval)
 	default:
 		s.respondError(w, http.StatusMethodNotAllowed, "Method not allowed")
@@ -3514,6 +3771,7 @@ func (s *Server) handleBillingApprovalActions(w http.ResponseWriter, r *http.Req
 	}
 	s.auditLog(ctx, audit.NewEvent(audit.EventBillingApproval, audit.SeverityInfo, "billing_approval_decision", "billing approval decided").
 		WithResource(approval.ID, "billing_approval").WithResult(approval.Status))
+	_ = s.queueBillingApprovalNotification(ctx, approval, "decided")
 	s.respondJSON(w, http.StatusOK, approval)
 }
 
@@ -3648,16 +3906,40 @@ func (s *Server) handleBillingJobs(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) reconcileBillingWebhook(ctx context.Context, event *BillingWebhookEvent) error {
-	if event == nil || event.Metadata == nil {
+	if event == nil {
 		return nil
 	}
-	invoiceID := strings.TrimSpace(event.Metadata["invoice_id"])
+	metadata := cloneStringMap(event.Metadata)
+	if metadata == nil {
+		metadata = map[string]string{}
+	}
+	s.mergeBillingWebhookPayloadMetadata(event.Payload, metadata)
+	invoiceID := strings.TrimSpace(firstNonEmpty(metadata["invoice_id"], metadata["billing_invoice_id"], metadata["client_reference_id"]))
 	if invoiceID == "" {
 		return nil
 	}
 	eventType := strings.ToLower(event.EventType)
 	switch {
 	case strings.Contains(eventType, "paid") || strings.Contains(eventType, "succeeded"):
+		invoice, err := s.lm.Storage().GetBillingInvoice(ctx, invoiceID)
+		if err != nil {
+			return err
+		}
+		attempt := &PaymentAttempt{
+			ID:                     uuid.New().String(),
+			InvoiceID:              invoice.ID,
+			SubscriptionID:         invoice.SubscriptionID,
+			GatewayID:              event.GatewayID,
+			Status:                 PaymentAttemptStatusSucceeded,
+			Amount:                 invoice.TotalAmount,
+			Currency:               invoice.Currency,
+			GatewayPaymentIntentID: firstNonEmpty(metadata["payment_intent_id"], metadata["charge_id"], event.EventID),
+			AttemptedAt:            time.Now(),
+			Metadata:               metadata,
+			CreatedAt:              time.Now(),
+			UpdatedAt:              time.Now(),
+		}
+		_ = s.lm.Storage().SavePaymentAttempt(ctx, attempt)
 		return s.billingManager().MarkInvoicePaid(ctx, invoiceID, event.EventID)
 	case strings.Contains(eventType, "failed"):
 		invoice, err := s.lm.Storage().GetBillingInvoice(ctx, invoiceID)
@@ -3667,10 +3949,164 @@ func (s *Server) reconcileBillingWebhook(ctx context.Context, event *BillingWebh
 		invoice.Status = InvoiceStatusPaymentFailed
 		invoice.AttemptCount++
 		invoice.NextPaymentAttemptAt = time.Now().Add(24 * time.Hour)
-		return s.lm.Storage().UpdateBillingInvoice(ctx, invoice)
+		if err := s.lm.Storage().UpdateBillingInvoice(ctx, invoice); err != nil {
+			return err
+		}
+		attempt := &PaymentAttempt{
+			ID:             uuid.New().String(),
+			InvoiceID:      invoice.ID,
+			SubscriptionID: invoice.SubscriptionID,
+			GatewayID:      event.GatewayID,
+			Status:         PaymentAttemptStatusFailed,
+			Amount:         invoice.TotalAmount,
+			Currency:       invoice.Currency,
+			ErrorCode:      metadata["failure_code"],
+			ErrorMessage:   firstNonEmpty(metadata["failure_message"], metadata["error_message"]),
+			AttemptedAt:    time.Now(),
+			NextRetryAt:    invoice.NextPaymentAttemptAt,
+			Metadata:       metadata,
+			CreatedAt:      time.Now(),
+			UpdatedAt:      time.Now(),
+		}
+		_ = s.lm.Storage().SavePaymentAttempt(ctx, attempt)
+		return s.billingManager().markSubscriptionPastDue(ctx, invoice.SubscriptionID)
+	case strings.Contains(eventType, "subscription") && (strings.Contains(eventType, "deleted") || strings.Contains(eventType, "canceled") || strings.Contains(eventType, "cancelled")):
+		subID := strings.TrimSpace(firstNonEmpty(metadata["subscription_id"], metadata["local_subscription_id"]))
+		if subID == "" {
+			return nil
+		}
+		sub, err := s.lm.Storage().GetSubscription(ctx, subID)
+		if err != nil {
+			return err
+		}
+		sub.Status = SubscriptionStatusCancelled
+		sub.AutoRenew = false
+		sub.CancelledAt = time.Now()
+		if sub.CancelReason == "" {
+			sub.CancelReason = "gateway webhook"
+		}
+		return s.lm.Storage().UpdateSubscription(ctx, sub)
 	default:
 		return nil
 	}
+}
+
+func (s *Server) mergeBillingWebhookPayloadMetadata(payload string, metadata map[string]string) {
+	if strings.TrimSpace(payload) == "" {
+		return
+	}
+	var body map[string]any
+	if err := json.Unmarshal([]byte(payload), &body); err != nil {
+		return
+	}
+	candidates := []map[string]any{body}
+	if data, ok := body["data"].(map[string]any); ok {
+		candidates = append(candidates, data)
+		if object, ok := data["object"].(map[string]any); ok {
+			candidates = append(candidates, object)
+		}
+	}
+	for _, candidate := range candidates {
+		mergeStringValue(metadata, "invoice_id", candidate["invoice_id"])
+		mergeStringValue(metadata, "invoice_id", candidate["client_reference_id"])
+		mergeStringValue(metadata, "payment_intent_id", candidate["payment_intent"])
+		mergeStringValue(metadata, "payment_intent_id", candidate["payment_intent_id"])
+		mergeStringValue(metadata, "charge_id", candidate["charge"])
+		mergeStringValue(metadata, "subscription_id", candidate["subscription_id"])
+		mergeStringValue(metadata, "local_subscription_id", candidate["local_subscription_id"])
+		mergeStringValue(metadata, "failure_code", candidate["failure_code"])
+		mergeStringValue(metadata, "failure_message", candidate["failure_message"])
+		if nested, ok := candidate["metadata"].(map[string]any); ok {
+			for key, value := range nested {
+				mergeStringValue(metadata, key, value)
+			}
+		}
+	}
+}
+
+func mergeStringValue(dst map[string]string, key string, value any) {
+	if strings.TrimSpace(dst[key]) != "" || value == nil {
+		return
+	}
+	switch v := value.(type) {
+	case string:
+		dst[key] = v
+	case float64:
+		dst[key] = strconv.FormatInt(int64(v), 10)
+	}
+}
+
+func (s *Server) queueBillingApprovalNotification(ctx context.Context, approval *BillingApprovalRequest, event string) error {
+	if approval == nil || strings.TrimSpace(approval.ClientID) == "" {
+		return nil
+	}
+	client, err := s.lm.Storage().GetClient(ctx, approval.ClientID)
+	if err != nil || strings.TrimSpace(client.Email) == "" {
+		return err
+	}
+	now := time.Now()
+	subject := "Billing approval requested"
+	body := fmt.Sprintf("A billing approval is requested for %s %s.", approval.SubjectType, approval.SubjectID)
+	if event == "decided" {
+		subject = "Billing approval " + approval.Status
+		body = fmt.Sprintf("Your billing approval for %s %s was %s.", approval.SubjectType, approval.SubjectID, approval.Status)
+	}
+	msg := &email.EmailMessage{
+		ID:           uuid.New().String(),
+		To:           client.Email,
+		Subject:      subject,
+		RenderedText: body,
+		RenderedHTML: "<p>" + html.EscapeString(body) + "</p>",
+		Variables: map[string]any{
+			"approval_id":  approval.ID,
+			"subject_type": approval.SubjectType,
+			"subject_id":   approval.SubjectID,
+			"status":       approval.Status,
+		},
+		Metadata: map[string]string{
+			"category":    "billing",
+			"kind":        "approval_" + event,
+			"approval_id": approval.ID,
+			"client_id":   approval.ClientID,
+		},
+		Status:        email.MessageStatusQueued,
+		MaxRetries:    3,
+		NextAttemptAt: now,
+		CreatedAt:     now,
+		UpdatedAt:     now,
+	}
+	return s.lm.Storage().EnqueueEmail(ctx, msg)
+}
+
+func redactPaymentGateways(gateways []*PaymentGatewayConfig) []*PaymentGatewayConfig {
+	out := make([]*PaymentGatewayConfig, 0, len(gateways))
+	for _, gateway := range gateways {
+		out = append(out, redactPaymentGateway(gateway))
+	}
+	return out
+}
+
+func redactPaymentGateway(gateway *PaymentGatewayConfig) *PaymentGatewayConfig {
+	clone := clonePaymentGatewayConfig(gateway)
+	if clone == nil || clone.Config == nil {
+		return clone
+	}
+	for key, value := range clone.Config {
+		if isSensitiveConfigKey(key) && strings.TrimSpace(value) != "" {
+			clone.Config[key] = "********"
+		}
+	}
+	return clone
+}
+
+func isSensitiveConfigKey(key string) bool {
+	key = strings.ToLower(key)
+	for _, part := range []string{"secret", "token", "password", "private", "api_key", "apikey", "access_key", "webhook"} {
+		if strings.Contains(key, part) {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *Server) handleClientBilling(w http.ResponseWriter, r *http.Request) {
@@ -4965,6 +5401,8 @@ func (s *Server) Start() error {
 	mux.HandleFunc("/api/billing/gateways/", s.handleBillingGatewayActions)
 	mux.HandleFunc("/api/billing/invoices", s.handleBillingInvoices)
 	mux.HandleFunc("/api/billing/invoices/", s.handleBillingInvoiceActions)
+	mux.HandleFunc("/api/billing/payment-methods", s.handleBillingPaymentMethods)
+	mux.HandleFunc("/api/billing/payment-methods/", s.handleBillingPaymentMethodActions)
 	mux.HandleFunc("/api/billing/approvals", s.handleBillingApprovals)
 	mux.HandleFunc("/api/billing/approvals/", s.handleBillingApprovalActions)
 	mux.HandleFunc("/api/billing/jobs", s.handleBillingJobs)

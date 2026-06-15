@@ -3,6 +3,9 @@ package licensing
 import (
 	"context"
 	"fmt"
+	"math"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -194,6 +197,13 @@ func (bm *BillingManager) NewInvoiceFromSubscription(ctx context.Context, sub *S
 		unit = plan.Price
 	}
 	subtotal := unit * int64(quantity)
+	discount, discountLabel := calculateBillingAdjustment(subtotal, plan.Metadata, sub.CollectionMethod, "discount")
+	taxBase := subtotal - discount
+	if taxBase < 0 {
+		taxBase = 0
+	}
+	tax, taxLabel := calculateBillingAdjustment(taxBase, plan.Metadata, sub.CollectionMethod, "tax")
+	total := taxBase + tax
 	start := sub.NextBillingDate
 	if start.IsZero() {
 		start = sub.EndDate
@@ -207,6 +217,20 @@ func (bm *BillingManager) NewInvoiceFromSubscription(ctx context.Context, sub *S
 	if sub.CollectionMethod == CollectionMethodManual || sub.ApprovalStatus == ApprovalStatusPending {
 		status = InvoiceStatusPendingPayment
 	}
+	metadata := map[string]string{
+		"billing_cycle":       sub.BillingCycle,
+		"collection_method":   sub.CollectionMethod,
+		"quantity":            fmt.Sprintf("%d", quantity),
+		"unit_amount":         fmt.Sprintf("%d", unit),
+		"tax_hook":            firstNonEmpty(plan.Metadata["tax_hook"], plan.Metadata["tax_provider"], "metadata"),
+		"discount_source":     firstNonEmpty(discountLabel, "none"),
+		"tax_source":          firstNonEmpty(taxLabel, "none"),
+		"price_source":        "plan",
+		"gateway_customer_id": sub.GatewayCustomerID,
+	}
+	if coupon := strings.TrimSpace(plan.Metadata["coupon_code"]); coupon != "" {
+		metadata["coupon_code"] = coupon
+	}
 	return &BillingInvoice{
 		ID:             uuid.New().String(),
 		SubscriptionID: sub.ID,
@@ -216,17 +240,16 @@ func (bm *BillingManager) NewInvoiceFromSubscription(ctx context.Context, sub *S
 		Status:         status,
 		Currency:       plan.Currency,
 		SubtotalAmount: subtotal,
-		TotalAmount:    subtotal,
+		DiscountAmount: discount,
+		TaxAmount:      tax,
+		TotalAmount:    total,
 		PeriodStart:    start,
 		PeriodEnd:      end,
 		DueAt:          start,
 		GatewayID:      sub.GatewayID,
-		Metadata: map[string]string{
-			"collection_method": sub.CollectionMethod,
-			"quantity":          fmt.Sprintf("%d", quantity),
-		},
-		CreatedAt: now,
-		UpdatedAt: now,
+		Metadata:       metadata,
+		CreatedAt:      now,
+		UpdatedAt:      now,
 	}, nil
 }
 
@@ -443,4 +466,66 @@ func addBillingCycle(start time.Time, cycle string) time.Time {
 	default:
 		return start.AddDate(0, 1, 0)
 	}
+}
+
+func calculateBillingAdjustment(base int64, metadata map[string]string, collectionMethod, kind string) (int64, string) {
+	if base <= 0 || metadata == nil {
+		return 0, ""
+	}
+	keys := []string{kind + "_amount", kind + "_amount_cents"}
+	if collectionMethod != "" {
+		keys = append([]string{collectionMethod + "_" + kind + "_amount", collectionMethod + "_" + kind + "_amount_cents"}, keys...)
+	}
+	for _, key := range keys {
+		if value, ok := parseIntMetadata(metadata[key]); ok {
+			if value < 0 {
+				value = 0
+			}
+			if kind == "discount" && value > base {
+				value = base
+			}
+			return value, key
+		}
+	}
+	percentKeys := []string{kind + "_percent", kind + "_rate"}
+	if collectionMethod != "" {
+		percentKeys = append([]string{collectionMethod + "_" + kind + "_percent", collectionMethod + "_" + kind + "_rate"}, percentKeys...)
+	}
+	for _, key := range percentKeys {
+		if percent, ok := parsePercentMetadata(metadata[key]); ok {
+			amount := int64(math.Round(float64(base) * percent / 100))
+			if kind == "discount" && amount > base {
+				amount = base
+			}
+			return amount, key
+		}
+	}
+	return 0, ""
+}
+
+func parseIntMetadata(value string) (int64, bool) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return 0, false
+	}
+	parsed, err := strconv.ParseInt(value, 10, 64)
+	return parsed, err == nil
+}
+
+func parsePercentMetadata(value string) (float64, bool) {
+	value = strings.TrimSuffix(strings.TrimSpace(value), "%")
+	if value == "" {
+		return 0, false
+	}
+	parsed, err := strconv.ParseFloat(value, 64)
+	return parsed, err == nil && parsed > 0
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return value
+		}
+	}
+	return ""
 }
