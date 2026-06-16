@@ -94,6 +94,39 @@ func TestGenerateFingerprintRejectsOnlyContainerControlledStorage(t *testing.T) 
 	}
 }
 
+func TestGenerateFingerprintRejectsPlaceholderHardwareIdentifiers(t *testing.T) {
+	ids := map[string]string{
+		"dmi_uuid":       "00000000-0000-0000-0000-000000000000",
+		"board_serial":   "To Be Filled By O.E.M.",
+		"product_serial": "default string",
+		"machine_id":     "ffffffffffffffffffffffffffffffff",
+	}
+
+	if got, err := generateFingerprint(ids); err == nil {
+		t.Fatalf("expected placeholder hardware identifiers to be rejected, got %s", got)
+	}
+}
+
+func TestGenerateFingerprintCanonicalizesIdentifierValues(t *testing.T) {
+	idsA := map[string]string{
+		"dmi_uuid": " ABCDEF12-3456-7890-ABCD-EF1234567890 ",
+	}
+	idsB := map[string]string{
+		"dmi_uuid": "abcdef12-3456-7890-abcd-ef1234567890",
+	}
+	first, err := generateFingerprint(idsA)
+	if err != nil {
+		t.Fatalf("generateFingerprint idsA failed: %v", err)
+	}
+	second, err := generateFingerprint(idsB)
+	if err != nil {
+		t.Fatalf("generateFingerprint idsB failed: %v", err)
+	}
+	if first != second {
+		t.Fatalf("expected canonicalized identifiers to match, got %s then %s", first, second)
+	}
+}
+
 func TestKubernetesPVCIDDoesNotFallbackToPodName(t *testing.T) {
 	t.Setenv("POD_NAME", "ephemeral-pod")
 	t.Setenv("POD_NAMESPACE", "default")

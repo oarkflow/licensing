@@ -166,19 +166,21 @@ func hasSufficientEntropy(ids map[string]string) bool {
 }
 
 func generateFingerprint(ids map[string]string) (string, error) {
+	ids = canonicalIdentifierSet(ids)
 	if !hasSufficientEntropy(ids) {
 		return "", fmt.Errorf("insufficient entropy for fingerprint generation")
 	}
 
 	identifiers := make([]Identifier, 0, len(ids))
 	for key, value := range ids {
-		if strings.TrimSpace(value) == "" {
+		value, ok := canonicalIdentifierValue(key, value)
+		if !ok {
 			continue
 		}
 		priority := getIdentifierPriority(key)
 		identifiers = append(identifiers, Identifier{
 			Key:      key,
-			Value:    strings.TrimSpace(value),
+			Value:    value,
 			Priority: priority,
 		})
 	}
@@ -225,9 +227,73 @@ func selectFingerprintIdentifiers(identifiers []Identifier) []Identifier {
 	return nil
 }
 
+func canonicalIdentifierSet(ids map[string]string) map[string]string {
+	cleaned := make(map[string]string, len(ids))
+	for key, value := range ids {
+		canonical, ok := canonicalIdentifierValue(key, value)
+		if !ok {
+			continue
+		}
+		cleaned[key] = canonical
+	}
+	return cleaned
+}
+
+func canonicalIdentifierValue(key, value string) (string, bool) {
+	value = strings.TrimSpace(strings.ReplaceAll(value, "\x00", ""))
+	value = strings.Join(strings.Fields(value), " ")
+	if len(value) < 4 || isPlaceholderSerial(value) || isLowEntropyIdentifier(value) {
+		return "", false
+	}
+	switch {
+	case isHardwareUUIDKey(key), isMachineIDKey(key), key == "host_machine_id":
+		value = strings.ToLower(value)
+	}
+	return value, true
+}
+
+func isLowEntropyIdentifier(value string) bool {
+	normalized := strings.ToUpper(strings.TrimSpace(value))
+	if normalized == "" {
+		return true
+	}
+	allSame := true
+	for _, r := range normalized {
+		if r != rune(normalized[0]) {
+			allSame = false
+			break
+		}
+	}
+	if allSame {
+		return true
+	}
+	compact := strings.NewReplacer("-", "", "_", "", " ", "", ":", "").Replace(normalized)
+	if len(compact) >= 8 {
+		allZero := true
+		allF := true
+		for _, r := range compact {
+			if r != '0' {
+				allZero = false
+			}
+			if r != 'F' {
+				allF = false
+			}
+		}
+		if allZero || allF {
+			return true
+		}
+	}
+	for _, marker := range []string{"UNKNOWN", "UNSPECIFIED", "DEFAULT", "PLACEHOLDER", "INVALID"} {
+		if strings.Contains(normalized, marker) {
+			return true
+		}
+	}
+	return false
+}
+
 func isHardwareUUIDKey(key string) bool {
 	switch key {
-	case "bios_uuid", "platform_uuid", "dmi_uuid", "hardware_uuid":
+	case "bios_uuid", "platform_uuid", "dmi_uuid", "hardware_uuid", "host_dmi_uuid":
 		return true
 	default:
 		return false
@@ -236,7 +302,7 @@ func isHardwareUUIDKey(key string) bool {
 
 func isHardwareSerialKey(key string) bool {
 	switch key {
-	case "system_serial", "baseboard_serial", "board_serial", "product_serial":
+	case "system_serial", "baseboard_serial", "board_serial", "product_serial", "host_serial":
 		return true
 	default:
 		return false
@@ -245,7 +311,7 @@ func isHardwareSerialKey(key string) bool {
 
 func isMachineIDKey(key string) bool {
 	switch key {
-	case "machine_guid", "dbus_machine_id", "machine_id":
+	case "machine_guid", "dbus_machine_id", "machine_id", "host_machine_id":
 		return true
 	default:
 		return false

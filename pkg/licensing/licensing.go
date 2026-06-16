@@ -311,8 +311,8 @@ func VerifyDeviceProofSignature(proof *DeviceProof, payload DeviceProofPayload) 
 		return nil, fmt.Errorf("device proof key id mismatch")
 	}
 	expectedFingerprint := DeviceProofFingerprint(algorithm, publicKey)
-	legacyFingerprint := expectedKeyID
-	if strings.TrimSpace(proof.Fingerprint) != "" && strings.TrimSpace(proof.Fingerprint) != expectedFingerprint && !strings.EqualFold(strings.TrimSpace(proof.Fingerprint), legacyFingerprint) {
+	proofFingerprint := normalizeDeviceFingerprint(proof.Fingerprint)
+	if proofFingerprint != "" && proofFingerprint != expectedFingerprint {
 		return nil, fmt.Errorf("device proof fingerprint mismatch")
 	}
 	return publicKey, nil
@@ -420,9 +420,10 @@ func licenseIdentityKey(email string) string {
 }
 
 var (
-	emailRegex       = regexp.MustCompile(`^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$`)
-	licenseKeyRegex  = regexp.MustCompile(`^[A-Z2-7]{5}(?:-?[A-Z2-7]{5}){7}$`)
-	fingerprintRegex = regexp.MustCompile(`^(?:[A-Za-z0-9_-]{16,128}|fp:v[0-9]+:[A-Za-z0-9_-]+:[a-f0-9]{64})$`)
+	emailRegex               = regexp.MustCompile(`^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$`)
+	licenseKeyRegex          = regexp.MustCompile(`^[A-Z2-7]{5}(?:-?[A-Z2-7]{5}){7}$`)
+	proofFingerprintRegex    = regexp.MustCompile(`^fp:v2:[a-z0-9][a-z0-9-]{1,31}:[a-f0-9]{64}$`)
+	hardwareFingerprintRegex = regexp.MustCompile(`^hw:v1:[a-f0-9]{64}$`)
 )
 
 const maxActivationPayloadBytes = 1 << 20
@@ -432,6 +433,35 @@ func normalizeLicenseKey(key string) string {
 	cleaned = strings.ReplaceAll(cleaned, "-", "")
 	cleaned = strings.ReplaceAll(cleaned, " ", "")
 	return cleaned
+}
+
+func normalizeDeviceFingerprint(fingerprint string) string {
+	parts := strings.Split(strings.TrimSpace(fingerprint), ":")
+	if len(parts) != 4 {
+		return strings.TrimSpace(fingerprint)
+	}
+	return strings.ToLower(parts[0]) + ":" + strings.ToLower(parts[1]) + ":" + strings.ToLower(parts[2]) + ":" + strings.ToLower(parts[3])
+}
+
+func validateProofDeviceFingerprint(fingerprint string) error {
+	fingerprint = normalizeDeviceFingerprint(fingerprint)
+	if !proofFingerprintRegex.MatchString(fingerprint) {
+		return errors.New("invalid device fingerprint format")
+	}
+	algorithm := strings.Split(fingerprint, ":")[2]
+	switch algorithm {
+	case DeviceProofAlgorithmEd25519, DeviceProofAlgorithmRSAPSSSHA256:
+		return nil
+	default:
+		return errors.New("unsupported device fingerprint algorithm")
+	}
+}
+
+func validateHardwareFingerprint(fingerprint string) error {
+	if !hardwareFingerprintRegex.MatchString(strings.ToLower(strings.TrimSpace(fingerprint))) {
+		return errors.New("invalid hardware fingerprint format")
+	}
+	return nil
 }
 
 func validateActivationRequest(req *ActivationRequest) error {
@@ -451,8 +481,9 @@ func validateActivationRequest(req *ActivationRequest) error {
 	if !licenseKeyRegex.MatchString(keyCandidate) {
 		return errors.New("invalid license key format")
 	}
-	if !fingerprintRegex.MatchString(strings.TrimSpace(req.DeviceFingerprint)) {
-		return errors.New("invalid device fingerprint format")
+	req.DeviceFingerprint = normalizeDeviceFingerprint(req.DeviceFingerprint)
+	if err := validateProofDeviceFingerprint(req.DeviceFingerprint); err != nil {
+		return err
 	}
 	return nil
 }

@@ -17,15 +17,17 @@ import (
 )
 
 const (
-	exitTamper = 1
-	exitError  = 2
-	sigSize    = ed25519.SignatureSize
-	pubKeySize = ed25519.PublicKeySize
+	exitTamper     = 1
+	exitError      = 2
+	sigSize        = ed25519.SignatureSize
+	pubKeySize     = ed25519.PublicKeySize
+	signatureMagic = "LICFP-SIG-V2\x00\x00\x00\x00"
+	footerSize     = sigSize + len(signatureMagic)
 )
 
 var (
-	version            = "dev"
-	embeddedPubKeyHex  = ""
+	version           = "dev"
+	embeddedPubKeyHex = ""
 )
 
 type output struct {
@@ -120,14 +122,19 @@ func selfVerify() error {
 	if err != nil {
 		return fmt.Errorf("cannot stat executable: %w", err)
 	}
-	bodyLen := st.Size() - sigSize
+	bodyLen := st.Size() - int64(footerSize)
 	if bodyLen <= 0 {
-		return errors.New("binary is too small to contain an appended signature")
+		return errors.New("binary is too small to contain an appended signature footer")
 	}
 
-	sig := make([]byte, sigSize)
-	if _, err := f.ReadAt(sig, bodyLen); err != nil {
-		return fmt.Errorf("cannot read appended signature: %w", err)
+	footer := make([]byte, footerSize)
+	if _, err := f.ReadAt(footer, bodyLen); err != nil {
+		return fmt.Errorf("cannot read appended signature footer: %w", err)
+	}
+	sig := footer[:sigSize]
+	magic := string(footer[sigSize:])
+	if magic != signatureMagic {
+		return errors.New("binary signature footer is missing or invalid")
 	}
 
 	h := sha256.New()

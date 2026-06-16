@@ -1261,9 +1261,9 @@ func (lm *LicenseManager) GenerateTrialLicense(ctx context.Context, req *TrialLi
 	if !emailRegex.MatchString(email) {
 		return nil, fmt.Errorf("invalid email address")
 	}
-	fingerprint := strings.TrimSpace(req.DeviceFingerprint)
-	if !fingerprintRegex.MatchString(fingerprint) {
-		return nil, fmt.Errorf("invalid device fingerprint format")
+	fingerprint := normalizeDeviceFingerprint(req.DeviceFingerprint)
+	if err := validateProofDeviceFingerprint(fingerprint); err != nil {
+		return nil, err
 	}
 	proofReq := &ActivationRequest{
 		Email:             email,
@@ -1818,7 +1818,18 @@ func verifyRequestDeviceProof(req *ActivationRequest, purpose string, existing *
 	if proof == nil {
 		return nil, fmt.Errorf("device proof required")
 	}
-	if strings.TrimSpace(proof.Fingerprint) != strings.TrimSpace(req.DeviceFingerprint) {
+	req.DeviceFingerprint = normalizeDeviceFingerprint(req.DeviceFingerprint)
+	proof.Fingerprint = normalizeDeviceFingerprint(proof.Fingerprint)
+	if err := validateProofDeviceFingerprint(req.DeviceFingerprint); err != nil {
+		return nil, err
+	}
+	if normalizeDeviceProofPurpose(proof.Purpose) != normalizeDeviceProofPurpose(purpose) {
+		return nil, fmt.Errorf("device proof purpose mismatch")
+	}
+	if strings.TrimSpace(proof.ChallengeID) == "" || strings.TrimSpace(proof.Nonce) == "" {
+		return nil, fmt.Errorf("device proof challenge missing")
+	}
+	if proof.Fingerprint != req.DeviceFingerprint {
 		return nil, fmt.Errorf("device proof fingerprint mismatch")
 	}
 	payload := DeviceProofPayload{
@@ -2011,6 +2022,9 @@ func (lm *LicenseManager) consumeReplacementToken(ctx context.Context, license *
 }
 
 func (lm *LicenseManager) ActivateLicense(ctx context.Context, req *ActivationRequest) (*ActivationResponse, error) {
+	if err := validateActivationRequest(req); err != nil {
+		return &ActivationResponse{Success: false, Message: err.Error()}, nil
+	}
 	req.LicenseKey = normalizeLicenseKey(req.LicenseKey)
 	license, err := lm.storage.GetLicenseByKey(ctx, req.LicenseKey)
 	if err != nil {
@@ -2235,6 +2249,9 @@ func (lm *LicenseManager) issueEncryptedLicenseResponse(license *License, identi
 }
 
 func (lm *LicenseManager) VerifyLicense(ctx context.Context, req *ActivationRequest) (*ActivationResponse, error) {
+	if err := validateActivationRequest(req); err != nil {
+		return &ActivationResponse{Success: false, Message: err.Error()}, nil
+	}
 	req.LicenseKey = normalizeLicenseKey(req.LicenseKey)
 	license, err := lm.storage.GetLicenseByKey(ctx, req.LicenseKey)
 	if err != nil {

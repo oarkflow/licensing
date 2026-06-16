@@ -9,8 +9,13 @@ import (
 	"encoding/pem"
 	"flag"
 	"fmt"
-	"io"
 	"os"
+)
+
+const (
+	signatureMagic = "LICFP-SIG-V2\x00\x00\x00\x00"
+	signatureSize  = ed25519.SignatureSize
+	footerSize     = signatureSize + len(signatureMagic)
 )
 
 func main() {
@@ -124,22 +129,30 @@ func signBinary(binPath, keyPath string) {
 		fmt.Fprintf(os.Stderr, "read binary %s: %v\n", binPath, err)
 		os.Exit(1)
 	}
+	bin = stripSignatureFooter(bin)
 
 	digest := sha256.Sum256(bin)
 	sig := ed25519.Sign(priv, digest[:])
+	signed := make([]byte, 0, len(bin)+footerSize)
+	signed = append(signed, bin...)
+	signed = append(signed, sig...)
+	signed = append(signed, signatureMagic...)
 
-	f, err := os.OpenFile(binPath, os.O_APPEND|os.O_WRONLY, 0)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "open binary for append: %v\n", err)
-		os.Exit(1)
-	}
-	defer f.Close()
-
-	if _, err := f.Write(sig); err != nil {
-		fmt.Fprintf(os.Stderr, "append signature: %v\n", err)
+	if err := os.WriteFile(binPath, signed, 0o755); err != nil {
+		fmt.Fprintf(os.Stderr, "write signed binary: %v\n", err)
 		os.Exit(1)
 	}
 
-	_ = io.Discard
-	fmt.Printf("Signed %s (%d-byte signature appended)\n", binPath, len(sig))
+	fmt.Printf("Signed %s (%d-byte signature footer appended)\n", binPath, len(sig))
+}
+
+func stripSignatureFooter(bin []byte) []byte {
+	if len(bin) < footerSize {
+		return bin
+	}
+	footer := bin[len(bin)-footerSize:]
+	if string(footer[signatureSize:]) != signatureMagic {
+		return bin
+	}
+	return bin[:len(bin)-footerSize]
 }

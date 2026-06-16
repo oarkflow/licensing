@@ -23,6 +23,15 @@ go build -ldflags "-s -w -X main.version=$VERSION -X main.embeddedPubKeyHex=$PUB
 echo "=== Signing binary ==="
 go run scripts/sign-fingerprint.go -sign "$OUTPUT" -key "$SIGNING_KEY"
 
+# Step 5: Verify the signed binary can validate itself
+RUN_OUTPUT="$OUTPUT"
+case "$RUN_OUTPUT" in
+  */*) ;;
+  *) RUN_OUTPUT="./$RUN_OUTPUT" ;;
+esac
+echo "=== Verifying signed binary ==="
+"$RUN_OUTPUT" --version >/dev/null
+
 echo ""
 echo "=== Build complete ==="
 ls -lh "$OUTPUT"

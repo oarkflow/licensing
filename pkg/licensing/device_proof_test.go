@@ -128,6 +128,31 @@ func TestDeviceProofFingerprintContract(t *testing.T) {
 	}
 }
 
+func TestValidateProofDeviceFingerprintRejectsLegacyAndUnsupportedFormats(t *testing.T) {
+	for _, fp := range []string{
+		"abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890",
+		"hw:v1:abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890",
+		"fp:v2:md5:abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890",
+		"fp:v1:ed25519:abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890",
+	} {
+		if err := validateProofDeviceFingerprint(fp); err == nil {
+			t.Fatalf("expected %q to be rejected", fp)
+		}
+	}
+}
+
+func TestValidateProofDeviceFingerprintAcceptsSupportedCanonicalFormats(t *testing.T) {
+	hash := "abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890"
+	for _, fp := range []string{
+		"fp:v2:ed25519:" + hash,
+		"fp:v2:rsa-pss-sha256:" + hash,
+	} {
+		if err := validateProofDeviceFingerprint(fp); err != nil {
+			t.Fatalf("expected %q to be accepted: %v", fp, err)
+		}
+	}
+}
+
 func seedProofLicenseManager(t *testing.T, maxDevices int) (*LicenseManager, *Client, *License) {
 	t.Helper()
 	t.Setenv("HOME", t.TempDir())
@@ -161,7 +186,7 @@ func TestDeviceProofRejectsFakeActivationWithoutProof(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ActivateLicense failed: %v", err)
 	}
-	if resp.Success || resp.Message != "device proof required" {
+	if resp.Success || resp.Message != "invalid device fingerprint format" {
 		t.Fatalf("expected fake activation without proof to be rejected, got %+v", resp)
 	}
 }
@@ -180,8 +205,8 @@ func TestDeviceProofRejectsSpoofedDeviceCapAttemptsWithoutProof(t *testing.T) {
 			if err != nil {
 				t.Fatalf("ActivateLicense(%s) failed unexpectedly: %v", fp, err)
 			}
-			if resp.Message != "device proof required" {
-				t.Fatalf("expected fake fingerprint %s to be rejected for missing proof, got %+v", fp, resp)
+			if resp.Message != "invalid device fingerprint format" {
+				t.Fatalf("expected fake fingerprint %s to be rejected by format validation, got %+v", fp, resp)
 			}
 			continue
 		}
@@ -203,8 +228,8 @@ func TestDeviceProofRejectsTrialBypassWithRotatedFakeFingerprintsWithoutProof(t 
 			TrialDurationDays: 7,
 		})
 		if err != nil {
-			if err.Error() != "device proof required" {
-				t.Fatalf("expected missing proof rejection for %s, got %v", fp, err)
+			if err.Error() != "invalid device fingerprint format" {
+				t.Fatalf("expected fingerprint format rejection for %s, got %v", fp, err)
 			}
 			continue
 		}

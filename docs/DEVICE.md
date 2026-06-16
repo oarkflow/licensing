@@ -1,6 +1,6 @@
 # Device Fingerprinting Tool
 
-Standalone, tamper-proof device fingerprint binary for hardware-bound license activation. Delivered as a small, self-verifying CLI.
+Standalone, tamper-resistant device fingerprint tooling for hardware diagnostics and proof-key-bound license activation. Delivered as a small, self-verifying CLI.
 
 ## File Map
 
@@ -29,9 +29,9 @@ make fingerprint-build
 
 ## Authentication modes
 
-1. **Hardware-only** (`device-fingerprint` alone): Identifies the machine by stable hardware identifiers (DMI UUID, machine-id, board serials). Fingerprint format: `hw:v1:<sha256>`.
+1. **Hardware-only** (`device-fingerprint` alone): Identifies the machine by stable hardware identifiers (DMI UUID, machine-id, board serials). Fingerprint format: `hw:v1:<sha256>`. This is diagnostic/risk metadata and is not accepted as the primary activation identity.
 
-2. **Proof-key** (with `device-keygen`): Binds identity to an Ed25519 key pair stored on disk. Fingerprint format: `fp:v2:ed25519:<sha256(pubkey)>`. Use this for server-side device registration with challenge-response.
+2. **Proof-key** (with `device-keygen`, SDK clients, or `licensing-server device-fingerprint`): Binds identity to an Ed25519 or TPM/RSA key pair stored on the device. Fingerprint format: `fp:v2:<algorithm>:<sha256(pubkey)>`. This is the canonical server-side device identity and must be proven with challenge-response on activation, verification, and trials.
 
 ## Tamper-proof architecture
 
@@ -55,7 +55,8 @@ The binary signs itself at build time and verifies the signature at startup. Any
 ┌──────────────────────────────────────────────────┐
 │ 3. Hash the built binary (SHA-256)               │
 │ 4. Sign hash with Ed25519 private key             │
-│ 5. Append 64-byte signature to binary             │
+│ 5. Append signature footer to binary              │
+│    64-byte Ed25519 signature + magic marker       │
 └──────────────────────────────────────────────────┘
 ```
 
@@ -64,10 +65,11 @@ The binary signs itself at build time and verifies the signature at startup. Any
 ```
 ┌──────────────────────────────────────────────────┐
 │ 1. Read own executable path (os.Executable)      │
-│ 2. Open binary, read last 64 bytes → signature   │
-│ 3. Hash remaining content (SHA-256)               │
-│ 4. Verify hash + signature against embedded pubkey │
-│ 5. Fail → exit 1 with "SECURITY FAILURE"          │
+│ 2. Open binary, read signed footer                │
+│ 3. Verify footer magic marker                     │
+│ 4. Hash remaining content (SHA-256)               │
+│ 5. Verify hash + signature against embedded pubkey │
+│ 6. Fail → exit 1 with "SECURITY FAILURE"          │
 │    Pass → continue to fingerprint collection       │
 └──────────────────────────────────────────────────┘
 ```
@@ -140,11 +142,11 @@ upx --best device-fingerprint
 
 ## Threat model
 
-The appended-signature approach prevents:
+The signed-footer approach detects:
 
 - Binary patching (modifying instructions or data)
 - Checksum bypass (modifying the self-verify logic or embedded key)
-- Debugger attachment before verification (verification runs first in `main()`)
+- Accidental or repeated signing mistakes (the signer replaces an existing footer)
 
 It does **not** prevent:
 
@@ -152,5 +154,6 @@ It does **not** prevent:
 - LD_PRELOAD / DLL injection at the OS level
 - Filesystem-level modification of the binary followed by running a separate verifier
 - Full memory dumping after startup
+- Compromise of the signing private key or build pipeline
 
 Defense-in-depth (runtime monitoring, OS-level controls, TPM-backed storage) should be layered on for high-security deployments.
