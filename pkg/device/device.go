@@ -24,7 +24,7 @@ const (
 type Identifier struct {
 	Key      string
 	Value    string
-	Priority int // Higher = more stable (UUIDs=10, Serials=5, Machine IDs=1)
+	Priority int // Higher = more stable (UUIDs=10, serials=7)
 }
 
 type DeviceInfo struct {
@@ -35,6 +35,11 @@ type DeviceInfo struct {
 	Identifiers          map[string]string `json:"identifiers"`
 	IdentifierConfidence map[string]string `json:"identifier_confidence"`
 	IsContainer          bool              `json:"is_container"`
+}
+
+type hostMount struct {
+	sysRoot string
+	etcRoot string
 }
 
 func GetInfo() (*DeviceInfo, error) {
@@ -165,7 +170,6 @@ func generateFingerprint(ids map[string]string) (string, error) {
 		return "", fmt.Errorf("insufficient entropy for fingerprint generation")
 	}
 
-	// Convert to prioritized identifiers for consistent ordering
 	identifiers := make([]Identifier, 0, len(ids))
 	for key, value := range ids {
 		if strings.TrimSpace(value) == "" {
@@ -178,8 +182,22 @@ func generateFingerprint(ids map[string]string) (string, error) {
 			Priority: priority,
 		})
 	}
+	selected := selectFingerprintIdentifiers(identifiers)
+	if len(selected) == 0 {
+		return "", fmt.Errorf("no valid identifiers available")
+	}
 
-	// Sort by priority (highest first), then by key name for consistency
+	var parts []string
+	for _, id := range selected {
+		parts = append(parts, id.Key+"="+id.Value)
+	}
+
+	data := strings.Join(append([]string{appSalt}, parts...), "|")
+	hash := sha256.Sum256([]byte(data))
+	return "hw:v1:" + fmt.Sprintf("%x", hash), nil
+}
+
+func selectFingerprintIdentifiers(identifiers []Identifier) []Identifier {
 	sort.Slice(identifiers, func(i, j int) bool {
 		if identifiers[i].Priority == identifiers[j].Priority {
 			return identifiers[i].Key < identifiers[j].Key
@@ -187,70 +205,68 @@ func generateFingerprint(ids map[string]string) (string, error) {
 		return identifiers[i].Priority > identifiers[j].Priority
 	})
 
-	// For containers, prefer only the highest priority identifier if it's sufficiently stable
-	if len(identifiers) > 0 && identifiers[0].Priority >= 8 {
-		// If we have a volume ID (priority 8+), use only that for stability
-		var parts []string
-		parts = append(parts, identifiers[0].Value)
-
-		// Include application salt for security
-		data := strings.Join(append([]string{appSalt}, parts...), "|")
-		hash := sha256.Sum256([]byte(data))
-		return "hw:v1:" + fmt.Sprintf("%x", hash), nil
+	groups := []func(Identifier) bool{
+		func(id Identifier) bool { return strings.HasPrefix(id.Key, "host_") },
+		func(id Identifier) bool { return isHardwareUUIDKey(id.Key) },
+		func(id Identifier) bool { return isHardwareSerialKey(id.Key) },
+		func(id Identifier) bool { return isMachineIDKey(id.Key) },
 	}
-
-	// Filter out ephemeral identifiers (priority < 3) for better stability
-	stableIdentifiers := make([]Identifier, 0, len(identifiers))
-	for _, id := range identifiers {
-		if id.Priority >= 3 {
-			stableIdentifiers = append(stableIdentifiers, id)
+	for _, matches := range groups {
+		var selected []Identifier
+		for _, id := range identifiers {
+			if id.Priority >= 3 && matches(id) {
+				selected = append(selected, id)
+			}
+		}
+		if len(selected) > 0 {
+			return selected
 		}
 	}
+	return nil
+}
 
-	// If we have stable identifiers, use only those
-	if len(stableIdentifiers) > 0 {
-		var parts []string
-		for _, id := range stableIdentifiers {
-			parts = append(parts, id.Value)
-		}
-
-		// Include application salt for security
-		data := strings.Join(append([]string{appSalt}, parts...), "|")
-		hash := sha256.Sum256([]byte(data))
-		return "hw:v1:" + fmt.Sprintf("%x", hash), nil
+func isHardwareUUIDKey(key string) bool {
+	switch key {
+	case "bios_uuid", "platform_uuid", "dmi_uuid", "hardware_uuid":
+		return true
+	default:
+		return false
 	}
+}
 
-	// Last resort: use all identifiers if no stable ones are available
-	var parts []string
-	for _, id := range identifiers {
-		parts = append(parts, id.Value)
+func isHardwareSerialKey(key string) bool {
+	switch key {
+	case "system_serial", "baseboard_serial", "board_serial", "product_serial":
+		return true
+	default:
+		return false
 	}
+}
 
-	if len(parts) == 0 {
-		return "", fmt.Errorf("no valid identifiers available")
+func isMachineIDKey(key string) bool {
+	switch key {
+	case "machine_guid", "dbus_machine_id", "machine_id":
+		return true
+	default:
+		return false
 	}
-
-	// Include application salt for security
-	data := strings.Join(append([]string{appSalt}, parts...), "|")
-	hash := sha256.Sum256([]byte(data))
-	return "hw:v1:" + fmt.Sprintf("%x", hash), nil
 }
 
 // getIdentifierPriority returns the stability priority of an identifier
 func getIdentifierPriority(key string) int {
 	switch key {
-	case "configured_device_id":
-		return 9 // Operator-provided stable device identity for containers/VMs
 	case "bios_uuid", "platform_uuid", "dmi_uuid", "hardware_uuid", "host_dmi_uuid":
 		return 10 // Highest priority - hardware UUIDs
 	case "system_serial", "baseboard_serial", "board_serial", "product_serial", "host_serial":
-		return 5 // Medium priority - hardware serials
-	case "machine_guid", "dbus_machine_id", "machine_id", "host_machine_id":
+		return 7 // Hardware serials
+	case "host_machine_id":
+		return 6 // Host machine ID exposed to containers
+	case "machine_guid", "dbus_machine_id", "machine_id":
 		return 3 // Machine IDs from host
 	case "docker_volume_id", "persistent_volume_id":
-		return 8 // High priority - Persistent storage identifiers (higher than machine IDs)
+		return 1 // Container-controlled storage is diagnostic only
 	case "persistent_fallback_id":
-		return 6 // High-medium priority - Application-level persistent identifiers
+		return 1 // Application-level storage is diagnostic only
 	case "container_id", "pod_uid":
 		return 1 // Lowest priority - ephemeral container IDs (now filtered out)
 	default:
@@ -260,11 +276,11 @@ func getIdentifierPriority(key string) int {
 
 func getIdentifierConfidence(key string) string {
 	switch key {
-	case "configured_device_id", "docker_volume_id", "persistent_volume_id", "persistent_fallback_id", "bios_uuid", "platform_uuid", "dmi_uuid", "hardware_uuid", "host_dmi_uuid":
+	case "bios_uuid", "platform_uuid", "dmi_uuid", "hardware_uuid", "host_dmi_uuid":
 		return "high"
 	case "system_serial", "baseboard_serial", "board_serial", "product_serial", "host_serial", "machine_guid", "dbus_machine_id", "machine_id", "host_machine_id":
 		return "medium"
-	case "container_id", "pod_uid":
+	case "docker_volume_id", "persistent_volume_id", "persistent_fallback_id", "container_id", "pod_uid":
 		return "low"
 	default:
 		return "low"
@@ -282,15 +298,6 @@ func getWindowsIdentifiers(isContainer bool) (map[string]string, error) {
 			}
 		}
 
-		// Get container-specific persistent identifiers
-		if volID := getWindowsDockerVolumeID(); volID != "" {
-			ids["docker_volume_id"] = volID
-		}
-
-		// Persistent storage fallback for Windows containers
-		if fallbackID := getPersistentStorageFallback(); fallbackID != "" {
-			ids["persistent_fallback_id"] = fallbackID
-		}
 	}
 
 	// BIOS/UEFI UUID - survives reboots, restarts, hardware upgrades
@@ -351,10 +358,6 @@ func getMacIdentifiers(isContainer bool) (map[string]string, error) {
 			}
 		}
 
-		// Persistent storage fallback for macOS containers
-		if fallbackID := getPersistentStorageFallback(); fallbackID != "" {
-			ids["persistent_fallback_id"] = fallbackID
-		}
 	}
 
 	// IOPlatformUUID - stable hardware UUID
@@ -421,30 +424,16 @@ func getLinuxIdentifiers(isContainer bool) (map[string]string, error) {
 	ids := make(map[string]string)
 
 	if isContainer {
-		// Strategy 1: Get persistent volume identifiers (most reliable for containers)
-		if volID := getDockerVolumeID(); volID != "" {
-			ids["docker_volume_id"] = volID
-		}
-
-		// Strategy 2: Kubernetes persistent volume claim UUID
-		if pvcID := getKubernetesPVCID(); pvcID != "" {
-			ids["persistent_volume_id"] = pvcID
-		}
-
-		// Strategy 3: Get host machine identifiers (if accessible)
+		// Prefer host identifiers exposed through a read-only host filesystem mount.
 		if hostIDs := getHostIdentifiers(); len(hostIDs) > 0 {
 			for k, v := range hostIDs {
-				ids[k] = v // Don't prefix with "host_" since getHostIdentifiers already does this
+				ids[k] = v
 			}
 		}
 
-		// Strategy 4: Persistent storage fallback (application-level)
-		if fallbackID := getPersistentStorageFallback(); fallbackID != "" {
-			ids["persistent_fallback_id"] = fallbackID
-		}
-
-		// Strategy 5: Container ID (ephemeral, only as last resort - skip for now)
-		// Removed to improve stability - container IDs change on restart
+		// Deliberately ignore Docker/PVC/application storage IDs for the
+		// hardware fingerprint. They are controlled by the container runtime
+		// and are too easy to spoof.
 	}
 
 	// DMI product UUID - BIOS/motherboard-tied, survives VM restarts
@@ -455,19 +444,21 @@ func getLinuxIdentifiers(isContainer bool) (map[string]string, error) {
 		}
 	}
 
-	// D-Bus machine ID - more stable than /etc/machine-id for containers/VMs
-	if data, err := os.ReadFile("/var/lib/dbus/machine-id"); err == nil {
-		dbusID := strings.TrimSpace(string(data))
-		if dbusID != "" {
-			ids["dbus_machine_id"] = dbusID
+	if !isContainer {
+		// D-Bus machine ID - stable on normal Linux hosts, but container-local.
+		if data, err := os.ReadFile("/var/lib/dbus/machine-id"); err == nil {
+			dbusID := strings.TrimSpace(string(data))
+			if dbusID != "" {
+				ids["dbus_machine_id"] = dbusID
+			}
 		}
-	}
 
-	// Fallback to systemd machine ID
-	if data, err := os.ReadFile("/etc/machine-id"); err == nil {
-		machineID := strings.TrimSpace(string(data))
-		if machineID != "" && len(machineID) >= 32 {
-			ids["machine_id"] = machineID
+		// Fallback to systemd machine ID on non-container hosts.
+		if data, err := os.ReadFile("/etc/machine-id"); err == nil {
+			machineID := strings.TrimSpace(string(data))
+			if machineID != "" && len(machineID) >= 32 {
+				ids["machine_id"] = machineID
+			}
 		}
 	}
 
@@ -497,45 +488,63 @@ func getLinuxIdentifiers(isContainer bool) (map[string]string, error) {
 func getHostIdentifiers() map[string]string {
 	ids := make(map[string]string)
 
-	// Common Docker/Kubernetes host mounts - but be graceful if they don't exist
 	hostPaths := []string{
-		"/host",     // Custom mount
-		"/hostfs",   // Common convention
-		"/rootfs",   // Some monitoring tools
-		"/host/etc", // Partial mount
+		"/host",
+		"/hostfs",
+		"/rootfs",
+		"/mnt/host",
+		"/run/host",
 	}
 
 	for _, basePath := range hostPaths {
-		// Check if the base path exists before trying to read from it
 		if _, err := os.Stat(basePath); err != nil {
-			continue // Skip paths that don't exist
+			continue
 		}
-
-		// Try to read host DMI UUID
-		uuidPath := basePath + "/sys/class/dmi/id/product_uuid"
-		if data, err := os.ReadFile(uuidPath); err == nil {
-			uuid := strings.TrimSpace(string(data))
-			if uuid != "" && !isPlaceholderSerial(uuid) {
-				ids["host_dmi_uuid"] = uuid // Prefix with "host_" to distinguish from container IDs
-			}
-		}
-
-		// Try to read host machine-id
-		machineIDPath := basePath + "/etc/machine-id"
-		if data, err := os.ReadFile(machineIDPath); err == nil {
-			machineID := strings.TrimSpace(string(data))
-			if machineID != "" && len(machineID) >= 32 {
-				ids["host_machine_id"] = machineID // Prefix with "host_" to distinguish from container IDs
-			}
-		}
-
-		// If we found identifiers, break
+		mount := hostMount{sysRoot: basePath + "/sys", etcRoot: basePath + "/etc"}
+		readHostMountIdentifiers(ids, mount)
 		if len(ids) > 0 {
-			break
+			return ids
+		}
+	}
+
+	for _, mount := range []hostMount{
+		{etcRoot: "/host/etc"},
+		{etcRoot: "/hostfs/etc"},
+		{etcRoot: "/rootfs/etc"},
+		{etcRoot: "/mnt/host/etc"},
+	} {
+		readHostMountIdentifiers(ids, mount)
+		if len(ids) > 0 {
+			return ids
 		}
 	}
 
 	return ids
+}
+
+func readHostMountIdentifiers(ids map[string]string, mount hostMount) {
+	if mount.sysRoot != "" {
+		if data, err := os.ReadFile(mount.sysRoot + "/class/dmi/id/product_uuid"); err == nil {
+			uuid := strings.TrimSpace(string(data))
+			if uuid != "" && !isPlaceholderSerial(uuid) {
+				ids["host_dmi_uuid"] = uuid
+			}
+		}
+		if data, err := os.ReadFile(mount.sysRoot + "/class/dmi/id/product_serial"); err == nil {
+			serial := strings.TrimSpace(string(data))
+			if serial != "" && !isPlaceholderSerial(serial) {
+				ids["host_serial"] = serial
+			}
+		}
+	}
+	if mount.etcRoot != "" {
+		if data, err := os.ReadFile(mount.etcRoot + "/machine-id"); err == nil {
+			machineID := strings.TrimSpace(string(data))
+			if machineID != "" && len(machineID) >= 32 {
+				ids["host_machine_id"] = machineID
+			}
+		}
+	}
 }
 
 // getDockerVolumeID gets a stable identifier from Docker volume
@@ -725,21 +734,6 @@ func getPersistentStorageFallback() string {
 				return "persistent-" + deviceID
 			}
 		}
-	}
-
-	// Method 2: Generate based on stable system properties
-	// This deliberately avoids hostnames, pod names, MAC addresses, and CPU
-	// metadata so fallback hardware fingerprints do not bind to unstable IDs.
-	systemProps := []string{
-		runtime.GOOS,
-		runtime.GOARCH,
-	}
-
-	// Create a deterministic hash based on system properties
-	propsString := strings.Join(systemProps, "|")
-	if propsString != "" {
-		hash := sha256.Sum256([]byte(appSalt + "|" + propsString))
-		return "system-" + fmt.Sprintf("%x", hash)[:16] // Use first 16 chars for brevity
 	}
 
 	return ""

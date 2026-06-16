@@ -234,12 +234,12 @@ func TestDeviceKeyEnvironmentDoesNotOverrideConfiguredPath(t *testing.T) {
 
 func TestFormatIdentifierConfidenceIsStable(t *testing.T) {
 	got := formatIdentifierConfidence(map[string]string{
-		"machine_id":           "medium",
-		"dmi_uuid":             "high",
-		"container_id":         "low",
-		"configured_device_id": "high",
+		"machine_id":    "medium",
+		"dmi_uuid":      "high",
+		"container_id":  "low",
+		"host_dmi_uuid": "high",
 	})
-	want := "configured_device_id:high,container_id:low,dmi_uuid:high,machine_id:medium"
+	want := "container_id:low,dmi_uuid:high,host_dmi_uuid:high,machine_id:medium"
 	if got != want {
 		t.Fatalf("unexpected confidence format: got %q want %q", got, want)
 	}

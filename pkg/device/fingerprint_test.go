@@ -58,12 +58,39 @@ func TestGenerateFingerprintIgnoresLowConfidenceWhenStableExists(t *testing.T) {
 	}
 }
 
-func TestConfiguredDeviceIDClassificationIsHighConfidence(t *testing.T) {
-	if priority := getIdentifierPriority("configured_device_id"); priority < 8 {
-		t.Fatalf("expected configured_device_id to have high priority, got %d", priority)
+func TestGenerateFingerprintPrefersHostIdentifiersOverContainerStorage(t *testing.T) {
+	hostOnly := map[string]string{
+		"host_machine_id": "host-machine-abcdef1234567890abcdef1234567890",
 	}
-	if confidence := getIdentifierConfidence("configured_device_id"); confidence != "high" {
-		t.Fatalf("expected configured_device_id high confidence, got %s", confidence)
+	withContainerStorage := map[string]string{
+		"host_machine_id":        "host-machine-abcdef1234567890abcdef1234567890",
+		"docker_volume_id":       "volume-that-should-not-win",
+		"persistent_volume_id":   "pvc-that-should-not-win",
+		"persistent_fallback_id": "persistent-that-should-not-win",
+	}
+
+	first, err := generateFingerprint(hostOnly)
+	if err != nil {
+		t.Fatalf("generateFingerprint hostOnly failed: %v", err)
+	}
+	second, err := generateFingerprint(withContainerStorage)
+	if err != nil {
+		t.Fatalf("generateFingerprint withContainerStorage failed: %v", err)
+	}
+	if first != second {
+		t.Fatalf("expected host identifiers to define container fingerprint, got %s then %s", first, second)
+	}
+}
+
+func TestGenerateFingerprintRejectsOnlyContainerControlledStorage(t *testing.T) {
+	ids := map[string]string{
+		"docker_volume_id":       "volume-that-is-container-controlled",
+		"persistent_volume_id":   "pvc-that-is-container-controlled",
+		"persistent_fallback_id": "persistent-that-is-container-controlled",
+	}
+
+	if got, err := generateFingerprint(ids); err == nil {
+		t.Fatalf("expected container-controlled storage to be rejected, got %s", got)
 	}
 }
 
@@ -90,5 +117,11 @@ func TestEnvironmentVariablesDoNotCreateHardwareIdentifiers(t *testing.T) {
 	}
 	if got := getKubernetesPVCID(); strings.HasPrefix(got, "k8s-env-") || strings.Contains(got, "pvc-from-env") {
 		t.Fatalf("environment variable produced kubernetes pvc id: %s", got)
+	}
+}
+
+func TestPersistentStorageFallbackDoesNotUseGenericSystemProperties(t *testing.T) {
+	if got := getPersistentStorageFallback(); strings.HasPrefix(got, "system-") {
+		t.Fatalf("generic system properties produced fallback identifier: %s", got)
 	}
 }
