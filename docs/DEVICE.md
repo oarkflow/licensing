@@ -6,7 +6,7 @@ Standalone, tamper-resistant device fingerprint tooling for hardware diagnostics
 
 | File | Role |
 |------|------|
-| `cmd/device-fingerprint/main.go` | Fingerprint binary — collects hardware identifiers, outputs fingerprint, runs self-verification |
+| `cmd/device-fingerprint/main.go` | Fingerprint binary — outputs proof-key identity plus hardware diagnostics, runs self-verification |
 | `cmd/device-keygen/main.go` | Device Ed25519 key pair generator (optional, for proof-key fingerprinting) |
 | `scripts/sign-fingerprint.go` | Build-time signing tool — generates signing keys, signs binaries |
 | `scripts/build-fingerprint.sh` | Build orchestration — key gen → embed → build → sign |
@@ -29,9 +29,11 @@ make fingerprint-build
 
 ## Authentication modes
 
-1. **Hardware-only** (`device-fingerprint` alone): Identifies the machine by stable hardware identifiers (DMI UUID, machine-id, board serials). Fingerprint format: `hw:v1:<sha256>`. This is diagnostic/risk metadata and is not accepted as the primary activation identity.
+1. **Proof-key identity** (`device-fingerprint`, SDK clients, or `licensing-server device-fingerprint`): Binds identity to an Ed25519 or TPM/RSA key pair stored on the device. Fingerprint format: `fp:v2:<algorithm>:<sha256(pubkey)>`. This is the canonical server-side device identity and must be proven with challenge-response on activation, verification, and trials.
 
-2. **Proof-key** (with `device-keygen`, SDK clients, or `licensing-server device-fingerprint`): Binds identity to an Ed25519 or TPM/RSA key pair stored on the device. Fingerprint format: `fp:v2:<algorithm>:<sha256(pubkey)>`. This is the canonical server-side device identity and must be proven with challenge-response on activation, verification, and trials.
+2. **Hardware diagnostics**: The same output may include `hardware_fingerprint` in `hw:v1:<sha256>` format, derived from stable hardware identifiers such as DMI UUID, machine-id, and board serials. This is diagnostic/risk metadata only and is not accepted as the primary activation identity.
+
+The standalone `./device-fingerprint` binary and `go run ./cmd device-fingerprint` intentionally use the same proof-key identity path, so their primary `Fingerprint` values should match when they use the same config directory and device key file.
 
 ## Tamper-proof architecture
 

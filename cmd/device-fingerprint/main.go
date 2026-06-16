@@ -13,7 +13,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/oarkflow/licensing/pkg/device"
+	licensingclient "github.com/oarkflow/licensing/pkg/client"
 )
 
 const (
@@ -30,21 +30,17 @@ var (
 	embeddedPubKeyHex = ""
 )
 
-type output struct {
-	Fingerprint string            `json:"fingerprint"`
-	Platform    string            `json:"platform"`
-	Hostname    string            `json:"hostname"`
-	Label       string            `json:"label"`
-	Identifiers map[string]string `json:"identifiers"`
-	IsContainer bool              `json:"is_container"`
-}
-
 func main() {
 	if err := selfVerify(); err != nil {
 		fmt.Fprintf(os.Stderr, "SECURITY FAILURE: %v\n", err)
 		os.Exit(exitTamper)
 	}
 
+	configDir := flag.String("config-dir", "", fmt.Sprintf("Directory for local licensing data (default $HOME/%s)", licensingclient.DefaultConfigDir))
+	deviceKeyProvider := flag.String("device-key-provider", "software", "Device proof key provider: software, os, tpm, or auto")
+	deviceKeyFile := flag.String("device-key-file", "", "Software device proof key file; use a persistent mounted path for containers")
+	deviceKeyName := flag.String("device-key-name", "", "OS keyring account/key label")
+	tpmDevice := flag.String("tpm-device", "", "TPM device path for device proof")
 	flagJSON := flag.Bool("json", false, "output device identity as JSON")
 	flagVersion := flag.Bool("version", false, "print version and exit")
 	flag.Parse()
@@ -54,43 +50,52 @@ func main() {
 		return
 	}
 
-	info, err := device.GetInfo()
+	client, err := licensingclient.New(licensingclient.Config{
+		ConfigDir:         strings.TrimSpace(*configDir),
+		DeviceKeyProvider: strings.TrimSpace(*deviceKeyProvider),
+		DeviceKeyFile:     strings.TrimSpace(*deviceKeyFile),
+		DeviceKeyName:     strings.TrimSpace(*deviceKeyName),
+		TPMDevice:         strings.TrimSpace(*tpmDevice),
+	})
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "fingerprint error: %v\n", err)
+		os.Exit(exitError)
+	}
+	identity, err := client.CurrentDeviceIdentity()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "fingerprint error: %v\n", err)
 		os.Exit(exitError)
 	}
 
-	out := output{
-		Fingerprint: info.Fingerprint,
-		Platform:    info.Platform,
-		Hostname:    info.Name,
-		Label:       info.Label,
-		Identifiers: info.Identifiers,
-		IsContainer: info.IsContainer,
-	}
-
 	if *flagJSON {
 		enc := json.NewEncoder(os.Stdout)
 		enc.SetIndent("", "  ")
-		if err := enc.Encode(out); err != nil {
+		if err := enc.Encode(identity); err != nil {
 			fmt.Fprintf(os.Stderr, "json encode error: %v\n", err)
 			os.Exit(exitError)
 		}
 		return
 	}
 
-	fmt.Println("Device Fingerprint")
-	fmt.Println("==================")
-	fmt.Printf("Fingerprint: %s\n", info.Fingerprint)
-	fmt.Printf("Platform:     %s\n", info.Platform)
-	fmt.Printf("Hostname:     %s\n", info.Name)
-	fmt.Printf("Label:        %s\n", info.Label)
-	fmt.Printf("Container:    %t\n", info.IsContainer)
-	fmt.Println()
-	fmt.Println("Identifiers:")
-	for k, v := range info.Identifiers {
-		fmt.Printf("  %s: %s\n", k, v)
+	fmt.Println("Device Fingerprint Info")
+	fmt.Println("-----------------------")
+	fmt.Printf("Fingerprint:          %s\n", identity.Fingerprint)
+	fmt.Printf("Key ID:               %s\n", identity.KeyID)
+	fmt.Printf("Key provider:         %s\n", identity.KeyProvider)
+	fmt.Printf("Proof algorithm:      %s\n", identity.PublicKeyAlgorithm)
+	if strings.TrimSpace(identity.HardwareFingerprint) != "" {
+		fmt.Printf("Hardware fingerprint: %s\n", identity.HardwareFingerprint)
 	}
+	if strings.TrimSpace(identity.HardwareConfidence) != "" {
+		fmt.Printf("Hardware confidence:  %s\n", identity.HardwareConfidence)
+	}
+	if strings.TrimSpace(identity.Platform) != "" {
+		fmt.Printf("Platform:             %s\n", identity.Platform)
+	}
+	if strings.TrimSpace(identity.Label) != "" {
+		fmt.Printf("Label:                %s\n", identity.Label)
+	}
+	fmt.Printf("Container:            %t\n", identity.IsContainer)
 }
 
 func selfVerify() error {

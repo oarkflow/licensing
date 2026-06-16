@@ -195,7 +195,7 @@ $configDir = $_SERVER['HOME'] . '/.licensing';
 The Go SDK uses Device Proof v2 for the licensing fingerprint. The fingerprint sent to the server is:
 
 ```
-fingerprint = SHA256(device_proof_public_key)
+fingerprint = "fp:v2:" + public_key_algorithm + ":" + lowercase_hex(SHA256(device_proof_public_key_bytes))
 ```
 
 The device private key is selected in this order:
@@ -232,7 +232,7 @@ Licenses are stored locally in JSON format:
   "nonce": "<base64>",
   "signature": "<base64>",
   "public_key": "<base64 DER>",
-  "device_fingerprint": "<hex>",
+  "device_fingerprint": "fp:v2:ed25519:<sha256-public-key>",
   "expires_at": "2026-01-01T00:00:00Z"
 }
 ```
@@ -657,7 +657,7 @@ type LicenseData struct {
     RevokedAt          time.Time           // Revocation timestamp
     RevokeReason       string              // Revocation reason
     Devices            []LicenseDevice     // Registered devices
-    DeviceFingerprint  string              // Current device fingerprint
+    DeviceFingerprint  string              // Current fp:v2 proof-key device fingerprint
     CheckMode          string              // Verification schedule
     CheckIntervalSecs  int64               // Custom interval (seconds)
     NextCheckAt        time.Time           // Next scheduled check

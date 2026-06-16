@@ -26,7 +26,7 @@ Both endpoints accept and return JSON. Requests must include the following heade
   "email": "owner@example.com",           // required, validated via regex
   "client_id": "client-123",             // required for direct + delegated flows
   "license_key": "ABCD-...-1234",        // 40 characters after normalization
-  "device_fingerprint": "<sha256-hex>"   // 32-64 chars, see Section 2
+  "device_fingerprint": "fp:v2:ed25519:<sha256-public-key>" // see Section 2
 }
 ```
 
@@ -92,7 +92,7 @@ To prevent plaintext license data from crossing the wire, the client may encrypt
   "nonce": "<bytes>",
   "signature": "<bytes>",
   "public_key": "<bytes>",
-  "device_fingerprint": "<hex>",
+  "device_fingerprint": "fp:v2:<algorithm>:<sha256-public-key>",
   "expires_at": "RFC3339 timestamp"
 }
 ```

@@ -168,11 +168,48 @@ These endpoints require additional headers instead of `X-API-Key`:
   "email": "owner@example.com",
   "client_id": "client-123",
   "license_key": "AAAA-BBBB-CCCC-DDDD-...",
-  "device_fingerprint": "abcdef1234..."
+  "device_fingerprint": "fp:v2:ed25519:abcdef1234..."
 }
 ```
 
 See `docs/api/README.md` for more examples and `docs/api/licensing_openapi.yaml` for the full OpenAPI spec.
+
+### Secure Device Fingerprint Process
+
+The trusted device identity is not a hardware hash and is not just a hex string. The server accepts the versioned proof-key fingerprint format:
+
+```text
+fp:v2:<algorithm>:<sha256-public-key>
+```
+
+Supported algorithms are `ed25519` and `rsa-pss-sha256`. The `<sha256-public-key>` segment is hex-encoded for transport, but hex encoding is only representation; trust comes from proving possession of the matching private key.
+
+Use this process for spoof-resistant activation and verification:
+
+1. **Create or load a persistent private key on the device.**
+   Prefer TPM-backed keys, then OS keyring/keychain keys, then a software Ed25519 key file with `0600` permissions. In containers, store this key on a mounted persistent volume.
+
+2. **Derive the canonical fingerprint from the public key.**
+   ```text
+   fingerprint = "fp:v2:" + algorithm + ":" + lowercase_hex(SHA256(public_key_bytes))
+   ```
+
+3. **Request a one-time device challenge from the server.**
+   The challenge includes an ID, nonce, purpose (`activate`, `verify`, or `trial`), and short expiry.
+
+4. **Sign the canonical proof payload with the device private key.**
+   The signed payload binds the challenge, nonce, license key, client ID, email, product ID, device fingerprint, and public key hash. A copied or invented fingerprint is useless without the private key that matches the public key hash.
+
+5. **Send the activation or verification request with `device_proof`.**
+   The request includes `device_fingerprint` plus the proof public key, algorithm, key ID, nonce, challenge ID, and signature.
+
+6. **Server-side validation recomputes and verifies everything.**
+   The server verifies the one-time challenge, validates the signature, recomputes `fp:v2:<algorithm>:<hash>` from the submitted public key, and requires it to match `device_fingerprint`. Existing device records also require the same registered public key.
+
+7. **Store hardware fingerprints only as diagnostic metadata.**
+   `hw:v1:<sha256>` values are derived from local hardware identifiers and can help with audit, labels, support, and suspicious-drift analysis, but they are not authorization roots. A caller must not be trusted merely because it sends a valid-looking `hw:v1` or arbitrary hex value.
+
+With this flow, spoofing the device identity requires stealing or using the registered private key, not merely guessing or copying a fingerprint string.
 
 ## Client Setup
 

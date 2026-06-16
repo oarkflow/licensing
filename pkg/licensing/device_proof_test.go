@@ -14,6 +14,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -611,5 +612,178 @@ func TestSQLiteDeviceProofColumnsAddedToExistingLicenseDevicesTable(t *testing.T
 	var tableName string
 	if err := storage.db.QueryRow(`SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'device_replacement_tokens'`).Scan(&tableName); err != nil {
 		t.Fatalf("expected device_replacement_tokens table to exist: %v", err)
+	}
+}
+
+func TestValidateHardwareFingerprintAcceptsValidFormats(t *testing.T) {
+	validHash := "abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890"
+	validHashUpper := "ABCDEF1234567890ABCDEF1234567890ABCDEF1234567890ABCDEF1234567890"
+	for _, fp := range []string{
+		"hw:v1:" + validHash,
+		"hw:v1:" + validHashUpper,
+	} {
+		if err := validateHardwareFingerprint(fp); err != nil {
+			t.Fatalf("expected valid hardware fingerprint %q to be accepted: %v", fp, err)
+		}
+	}
+}
+
+func TestValidateHardwareFingerprintRejectsSpoofedAndFakeFormats(t *testing.T) {
+	shortHash := "abcdef1234567890"
+	validHash := "abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890"
+	for _, fp := range []string{
+		"",
+		"arbitrary-string",
+		"spoofed-hw-fingerprint-001",
+		"hw:v1:" + shortHash,
+		"hw:v1:" + validHash + "extra",
+		"hw:v1:gggggg1234567890abcdef1234567890abcdef1234567890abcdef1234567890",
+		"fp:v2:ed25519:" + validHash,
+		"hw:v2:ed25519:abcdef1234567890abcdef1234567890",
+		"hw:v1:",
+		"hw:v1:" + strings.Repeat("z", 64),
+	} {
+		if err := validateHardwareFingerprint(fp); err == nil {
+			t.Fatalf("expected spoofed hardware fingerprint %q to be rejected", fp)
+		}
+	}
+}
+
+func TestValidateProofDeviceFingerprintRejectsArbitraryAndSpoofedFormats(t *testing.T) {
+	validHash := "abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890"
+	shortHash := "abcd1234abcd1234"
+	for _, fp := range []string{
+		"",
+		"   ",
+		"attackerchosenfp01",
+		"some-arbitrary-value",
+		"fp:v2:ed25519:" + shortHash,
+		"fp:v2:ed25519:" + shortHash + shortHash + shortHash,
+		"fp:v2:ed25519:abcdefgh1234567890abcdef1234567890abcdef1234567890abcdef1234567890",
+		"fp:v2:ed25519:" + strings.Repeat("x", 64),
+		"fp:v3:ed25519:" + validHash,
+		"fp:v2:bad-alg:" + validHash,
+		"fp:v2:" + validHash,
+		"fp:v2:ed25519:ed25519:abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890",
+		"fake:prefix:value",
+		"hw:v1:" + validHash,
+	} {
+		if err := validateProofDeviceFingerprint(fp); err == nil {
+			t.Fatalf("expected spoofed proof fingerprint %q to be rejected", fp)
+		}
+	}
+}
+
+func TestDeviceProofRejectsSpoofedHardwareFingerprintInAttestation(t *testing.T) {
+	lm, client, license := seedProofLicenseManager(t, 1)
+	_, priv, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatalf("GenerateKey failed: %v", err)
+	}
+	fp := testEd25519Fingerprint(priv)
+
+	req := &ActivationRequest{
+		Email:             client.Email,
+		ClientID:          client.ID,
+		LicenseKey:        license.LicenseKey,
+		DeviceFingerprint: fp,
+	}
+	proof := testDeviceProof(t, DeviceProofPurposeActivate, &DeviceChallenge{ID: "ch-hw-spoof", Nonce: "nonce-hw-spoof"}, req, priv)
+	proof.Attestation = map[string]string{
+		"hardware_fingerprint": "spoofed-hw-fingerprint-value",
+		"type":                 "software",
+		"status":               "test",
+	}
+	req.DeviceProof = proof
+
+	resp, err := lm.ActivateLicense(context.Background(), req)
+	if err != nil {
+		t.Fatalf("ActivateLicense failed: %v", err)
+	}
+	if !resp.Success {
+		t.Fatalf("activation should still succeed despite spoofed hw fingerprint, got %+v", resp)
+	}
+
+	updated, err := lm.storage.GetLicense(context.Background(), license.ID)
+	if err != nil {
+		t.Fatalf("GetLicense failed: %v", err)
+	}
+	device := updated.Devices[fp]
+	if device == nil {
+		t.Fatalf("device not found")
+	}
+	if device.AttestationStatus != "rejected" {
+		t.Fatalf("expected attestation status to be 'rejected' for spoofed hw fingerprint, got %q", device.AttestationStatus)
+	}
+	if device.HardwareFingerprint != "" {
+		t.Fatalf("expected hardware fingerprint to be cleared for spoofed value, got %q", device.HardwareFingerprint)
+	}
+	if device.AttestationType != "" {
+		t.Fatalf("expected attestation type to be cleared for spoofed hw fingerprint, got %q", device.AttestationType)
+	}
+}
+
+func TestDeviceProofRejectsSpoofedFingerprintFormatDeepScan(t *testing.T) {
+	lm, client, license := seedProofLicenseManager(t, 1)
+	_, priv, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatalf("GenerateKey failed: %v", err)
+	}
+
+	spoofedFP := "fp:v2:ed25519:0000000000000000000000000000000000000000000000000000000000000000"
+	req := &ActivationRequest{
+		Email:             client.Email,
+		ClientID:          client.ID,
+		LicenseKey:        license.LicenseKey,
+		DeviceFingerprint: spoofedFP,
+	}
+	req.DeviceProof = testDeviceProof(t, DeviceProofPurposeActivate, &DeviceChallenge{ID: "ch-deepspoof", Nonce: "nonce-deepspoof"}, req, priv)
+	req.DeviceProof.Fingerprint = spoofedFP
+
+	resp, err := lm.ActivateLicense(context.Background(), req)
+	if err != nil {
+		t.Fatalf("ActivateLicense returned unexpected error: %v", err)
+	}
+	if resp.Success {
+		t.Fatalf("expected spoofed fingerprint (valid format, wrong key hash) to be rejected, got %+v", resp)
+	}
+	if resp.Message != "device proof fingerprint mismatch" {
+		t.Fatalf("expected fingerprint mismatch error, got %q", resp.Message)
+	}
+}
+
+func TestValidateHardwareFingerprintRejectsPlaceholderIdentifiers(t *testing.T) {
+	for _, fp := range []string{
+		"hw:v1:0000000000000000000000000000000000000000000000000000000000000000",
+		"hw:v1:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+	} {
+		if err := validateHardwareFingerprint(fp); err != nil {
+			t.Fatalf("expected all-zero/placeholder hw:v1 fingerprint %q to be accepted as valid format (content is a server-side risk signal)", fp)
+		}
+	}
+}
+
+func TestEmptyOrMissingFingerprintIsRejectedByActivation(t *testing.T) {
+	lm, client, license := seedProofLicenseManager(t, 1)
+	_, priv, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatalf("GenerateKey failed: %v", err)
+	}
+
+	for _, fp := range []string{"", "   ", "\t", "\n"} {
+		req := &ActivationRequest{
+			Email:             client.Email,
+			ClientID:          client.ID,
+			LicenseKey:        license.LicenseKey,
+			DeviceFingerprint: fp,
+		}
+		req.DeviceProof = testDeviceProof(t, DeviceProofPurposeActivate, &DeviceChallenge{ID: "ch-empty-" + fp, Nonce: "nonce-empty"}, req, priv)
+		resp, err := lm.ActivateLicense(context.Background(), req)
+		if err != nil {
+			t.Fatalf("ActivateLicense returned unexpected error: %v", err)
+		}
+		if resp.Success {
+			t.Fatalf("expected empty fingerprint %q to be rejected, got %+v", fp, resp)
+		}
 	}
 }

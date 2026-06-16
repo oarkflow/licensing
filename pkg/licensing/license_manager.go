@@ -1865,7 +1865,13 @@ func applyDeviceProof(device *LicenseDevice, proof *DeviceProof, publicKey []byt
 		device.AttestationType = strings.TrimSpace(proof.Attestation["type"])
 		device.AttestationStatus = strings.TrimSpace(proof.Attestation["status"])
 		if hardwareFingerprint := strings.TrimSpace(proof.Attestation["hardware_fingerprint"]); hardwareFingerprint != "" {
-			device.HardwareFingerprint = hardwareFingerprint
+			if err := validateHardwareFingerprint(hardwareFingerprint); err != nil {
+				device.HardwareFingerprint = ""
+				device.AttestationType = ""
+				device.AttestationStatus = "rejected"
+			} else {
+				device.HardwareFingerprint = hardwareFingerprint
+			}
 		}
 		if hardwareConfidence := strings.TrimSpace(proof.Attestation["hardware_confidence"]); hardwareConfidence != "" {
 			device.HardwareConfidence = hardwareConfidence
