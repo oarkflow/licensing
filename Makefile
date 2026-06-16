@@ -55,5 +55,16 @@ single-node-run:
 single-node-backup:
 	LICENSE_SERVER_ENV_FILE="$(LOCAL_SINGLE_NODE_ENV)" LICENSE_SERVER_BACKUP_MARKER_FILE="$(LOCAL_SINGLE_NODE_DIR)/backups/latest.json" scripts/backup_sqlite.sh "$(LOCAL_SINGLE_NODE_DIR)/data/licensing.db" "$(LOCAL_SINGLE_NODE_DIR)/backups"
 
+# Device fingerprinting tool
+fingerprint-keygen:
+	go build -ldflags "-s -w" -o device-keygen ./cmd/device-keygen
+
+fingerprint-build:
+	bash scripts/build-fingerprint.sh
+
+fingerprint: fingerprint-build
+
+fingerprint-all: fingerprint-keygen fingerprint-build
+
 single-node-rehearse:
 	APP_ENV=production LICENSE_SERVER_ENV_FILE="$(LOCAL_SINGLE_NODE_ENV)" SQLITE_DB="$(LOCAL_SINGLE_NODE_DIR)/data/licensing.db" BACKUP_DIR="$(LOCAL_SINGLE_NODE_DIR)/backups" AUDIT_DB="$(LOCAL_SINGLE_NODE_DIR)/data/audit.db" MIGRATOR_DIR="$(LOCAL_SINGLE_NODE_DIR)" LICENSING_SERVER_BIN="$(LOCAL_SINGLE_NODE_DIR)/licensing-server" scripts/production_rehearsal.sh
